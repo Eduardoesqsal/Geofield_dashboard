@@ -1,0 +1,466 @@
+from __future__ import annotations
+
+import io
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+import numpy as np
+import pyproj
+import rasterio
+from affine import Affine
+from PIL import Image
+from rasterio.enums import Resampling
+from rasterio.features import geometry_mask
+from rasterio.transform import array_bounds
+from rasterio.warp import calculate_default_transform, reproject, transform_bounds
+from rasterio.windows import Window, from_bounds, transform as window_transform
+from shapely.geometry import mapping
+from shapely.ops import transform as project_geometry
+
+from geofield.config import Settings
+from geofield.errors import RasterNotConfiguredError
+
+
+class RasterService:
+    """Procesamiento geoespacial; no conoce detalles de FastAPI."""
+
+    INDEX_RAMPS = {
+        "NDVI": ["ff0000", "ff2800", "ff5500", "ff8800", "ffcc00", "ffff00", "aadd00", "55bb00", "228b00", "003200"],
+        "NDWI": ["c0003a", "e01a00", "ff5500", "ffaa00", "ffe066", "a8e6a0", "4dd4e0", "2b9aff", "1a4fff", "0000ff"],
+        "NDRE": ["000000", "1b0a2a", "3d0965", "6b0d8a", "9b1f9e", "c43c7e", "e06030", "f08c00", "f5b800", "ffe000"],
+    }
+    INDEX_DOMAINS = {"NDVI": (-0.2, 0.8), "NDWI": (-0.5, 0.5), "NDRE": (-0.2, 0.8)}
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.rgb_stretch: tuple[float, float] | None = None
+        self.overlay: tuple[int, int, Affine] | None = None
+        self.active_path: Path | None = None
+        self.sensor: str | None = None
+        self.crop_geometries: dict[str, Any] = {}
+
+    def _path(self) -> Path:
+        path = self.active_path or self.settings.raster_path
+        if not path:
+            raise RasterNotConfiguredError("No se encontro un raster GeoTIFF")
+        return path
+
+    def _ndvi_bands(self, path: Path | None = None, sensor: str | None = None) -> tuple[int, int]:
+        """Return the red and NIR band indexes configured in the raster."""
+        selected_sensor = sensor or self.sensor
+        if selected_sensor == "mavic3m":
+            with rasterio.open(path or self._path()) as src:
+                if src.count < 4:
+                    raise ValueError("DJI Mavic 3M requiere al menos 4 bandas: Green, Red, Red Edge y NIR.")
+                # Exportación DJI/Pix4D habitual: Blue, Green, Red, RedEdge, NIR.
+                # Algunos mosaicos omiten Blue y conservan: Green, Red, RedEdge, NIR.
+                return (3, 5) if src.count >= 5 else (2, 4)
+        if selected_sensor == "micasense":
+            with rasterio.open(path or self._path()) as src:
+                names = {name.strip().lower(): index for index, name in enumerate(src.descriptions, 1) if name}
+                red = next((names[name] for name in ("red", "red band", "b04", "band 4") if name in names), None)
+                nir = next((names[name] for name in ("nir", "near infrared", "near-infrared", "b08", "band 6") if name in names), None)
+                if red and nir:
+                    return red, nir
+                if src.count >= 6:
+                    # Blue, Green, Pan, Red, RedEdge, NIR, Alpha.
+                    return 4, 6
+                if src.count >= 5:
+                    # RedEdge-MX: Blue, Green, Red, NIR, RedEdge.
+                    return 3, 4
+                raise ValueError("MicaSense requiere bandas Red y NIR; el archivo tiene menos de 5 bandas.")
+        with rasterio.open(path or self._path()) as src:
+            names = {name.strip().lower(): index for index, name in enumerate(src.descriptions, 1) if name}
+            red = next((names[name] for name in ("red", "b04", "band 4") if name in names), None)
+            nir = next((names[name] for name in ("nir", "near infrared", "b08", "band 6") if name in names), None)
+
+            # Pix4D multispectral exports commonly use Red=4 and NIR=6.
+            if red is None and src.count >= 4:
+                red = 4
+            if nir is None and src.count >= 6:
+                nir = 6
+            if red is None or nir is None:
+                raise ValueError(
+                    f"El raster '{(path or self._path()).name}' no contiene bandas Red y NIR; "
+                    f"tiene {src.count} banda(s): {', '.join(src.descriptions)}. "
+                    "Para NDVI se requiere un GeoTIFF multiespectral."
+                )
+            return red, nir
+
+    def _rgb_bands(self) -> tuple[int, int, int]:
+        """Return raster bands in display order: Red, Green, Blue."""
+        if self.sensor == "micasense":
+            return 4, 2, 1
+        return 1, 2, 3
+
+    def _index_bands(self, name: str) -> tuple[int, int]:
+        """Return bands as (positive, negative) for the normalized difference."""
+        if name == "NDVI":
+            red, nir = self._ndvi_bands()
+            return nir, red
+        if self.sensor == "mavic3m":
+            bands = {"NDWI": (1, 4), "NDRE": (4, 3)}.get(name)
+        elif self.sensor == "micasense":
+            bands = {"NDWI": (2, 6), "NDRE": (6, 5)}.get(name)
+        else:
+            bands = None
+        if not bands:
+            raise ValueError("El indice requiere un ortomosaico multiespectral compatible.")
+        return bands
+
+    @staticmethod
+    def _calculate_index(positive: np.ndarray, negative: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        positive = positive.astype(np.float32, copy=False)
+        negative = negative.astype(np.float32, copy=False)
+        denominator = positive + negative
+        valid = (positive > 0) & (negative > 0) & np.isfinite(positive) & np.isfinite(negative) & (denominator != 0)
+        values = np.divide(positive - negative, denominator, out=np.zeros_like(denominator), where=valid)
+        return values, valid
+
+    @classmethod
+    def _colorize_index(
+        cls,
+        name: str,
+        values: np.ndarray,
+        valid: np.ndarray,
+        low: float | None = None,
+        high: float | None = None,
+    ) -> np.ndarray:
+        colors = np.array(
+            [[int(color[i:i + 2], 16) for i in (0, 2, 4)] for color in cls.INDEX_RAMPS[name]],
+            dtype=np.uint8,
+        )
+        minimum, maximum = cls.INDEX_DOMAINS[name]
+        position = np.clip(
+            ((values - minimum) / (maximum - minimum) * (len(colors) - 1)).round().astype(np.int16),
+            0,
+            len(colors) - 1,
+        )
+        visible = valid & np.isfinite(values)
+        if low is not None or high is not None:
+            range_low = -np.inf if low is None else low
+            range_high = np.inf if high is None else high
+            range_low, range_high = sorted((range_low, range_high))
+            visible &= (values >= range_low) & (values <= range_high)
+        return np.dstack((colors[position], np.where(visible, 255, 0).astype(np.uint8)))
+
+    def analyze_uploaded(self, content: bytes, kind: str, filename: str = "upload.tif", sensor: str | None = None) -> dict[str, Any]:
+        """Analyze one uploaded raster using the same RGB/NDVI preparation as the configured raster."""
+        suffix = Path(filename).suffix.lower() or ".tif"
+        uploaded_path = self.settings.output_dir / f"active_ortho{suffix}"
+        if self.active_path and self.active_path != uploaded_path and self.active_path.parent == self.settings.output_dir:
+            self.active_path.unlink(missing_ok=True)
+        uploaded_path.write_bytes(content)
+        self.active_path = uploaded_path
+        self.sensor = sensor
+        self.rgb_stretch = None
+        self.overlay = None
+        try:
+            with rasterio.open(uploaded_path) as src:
+                if src.count < 3:
+                    raise ValueError("El ortomosaico debe contener al menos tres bandas.")
+                max_pixels = self.settings.ndvi_max_pixels if kind == "multispectral" else self.settings.rgb_max_pixels
+                scale = self.scale(src, max_pixels)
+                source_height = max(1, src.height // scale)
+                source_width = max(1, src.width // scale)
+                source_transform = src.transform * Affine.scale(src.width / source_width, src.height / source_height)
+                height, width = source_height, source_width
+                rgb = np.stack([src.read(index, out_shape=(source_height, source_width), resampling=Resampling.average) for index in self._rgb_bands()]).astype(np.float32)
+                red, green, blue = self.stretch_rgb(*rgb)
+                mask = np.any(rgb > 0, axis=0)
+                if src.crs and src.crs.to_string() != "EPSG:4326":
+                    transform, width, height = calculate_default_transform(src.crs, "EPSG:4326", width, height, *src.bounds)
+                    projected = []
+                    for band in (red, green, blue):
+                        destination = np.zeros((height, width), dtype=np.uint8)
+                        reproject(band, destination, src_transform=source_transform, src_crs=src.crs, dst_transform=transform, dst_crs="EPSG:4326", resampling=Resampling.bilinear)
+                        projected.append(destination)
+                    red, green, blue = projected
+                    mask = np.any(np.stack(projected) > 0, axis=0)
+                bounds = array_bounds(height, width, transform if src.crs and src.crs.to_string() != "EPSG:4326" else src.transform * Affine.scale(src.width / width, src.height / height))
+                response: dict[str, Any] = {
+                    "status": "ok",
+                    "bounds": [[bounds[1], bounds[0]], [bounds[3], bounds[2]]],
+                    "rgb_matrix": np.moveaxis(np.stack((red, green, blue)), 0, -1).tolist(),
+                    "mask": mask.astype(np.uint8).tolist(),
+                }
+                if kind == "multispectral":
+                    red_band, nir_band = self._ndvi_bands(uploaded_path, sensor)
+                    ndvi_resampling = Resampling.nearest if sensor == "micasense" else Resampling.average
+                    red_values = src.read(red_band, out_shape=(source_height, source_width), resampling=ndvi_resampling).astype(np.float32)
+                    nir_values = src.read(nir_band, out_shape=(source_height, source_width), resampling=ndvi_resampling).astype(np.float32)
+                    if src.crs and src.crs.to_string() != "EPSG:4326":
+                        projected_values = []
+                        for band in (red_values, nir_values):
+                            destination = np.zeros((height, width), dtype=np.float32)
+                            reproject(band, destination, src_transform=source_transform, src_crs=src.crs, src_nodata=src.nodata, dst_transform=transform, dst_crs="EPSG:4326", dst_nodata=0, resampling=ndvi_resampling)
+                            projected_values.append(destination)
+                        red_values, nir_values = projected_values
+                    valid = (red_values > 0) & (nir_values > 0)
+                    denominator = nir_values + red_values
+                    ndvi = np.divide(nir_values - red_values, denominator, out=np.zeros_like(denominator), where=valid & (denominator != 0))
+                    response["ndvi_matrix"] = (np.clip((ndvi + 1) / 2, 0, 1) * 255).astype(np.uint8).tolist()
+                    response["mask"] = valid.astype(np.uint8).tolist()
+                return response
+        except Exception:
+            raise
+
+    @staticmethod
+    def scale(src: Any, max_pixels: int) -> int:
+        return max(1, int((src.width * src.height / max_pixels) ** 0.5))
+
+    @staticmethod
+    def normalize(band: np.ndarray) -> np.ndarray:
+        band = band.astype(np.float32)
+        valid = band > 0
+        if not np.any(valid):
+            return np.zeros_like(band, dtype=np.uint8)
+        low, high = np.nanmin(band[valid]), np.nanmax(band[valid])
+        return np.zeros_like(band, dtype=np.uint8) if low == high else ((band - low) / (high - low) * 255).clip(0, 255).astype(np.uint8)
+
+    def stretch_rgb(self, r: np.ndarray, g: np.ndarray, b: np.ndarray, limits: tuple[float, float] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        stack = np.stack([r, g, b]).astype(np.float32)
+        valid = np.any(stack > 0, axis=0)
+        low, high = limits or (tuple(np.percentile(stack[:, valid].reshape(-1), [2, 98])) if np.any(valid) else (0, 1))
+        if low == high:
+            return tuple(np.zeros_like(band, dtype=np.uint8) for band in (r, g, b))  # type: ignore[return-value]
+        def stretch(band: np.ndarray) -> np.ndarray:
+            return ((np.clip(band.astype(np.float32), low, high) - low) / (high - low) * 255).clip(0, 255).astype(np.uint8)
+        return stretch(r), stretch(g), stretch(b)
+
+    def ensure_overlay(self) -> tuple[int, int, Affine]:
+        if self.overlay and self.rgb_stretch:
+            return self.overlay
+        with rasterio.open(self._path()) as src:
+            scale = self.scale(src, self.settings.rgb_max_pixels)
+            height, width = max(1, src.height // scale), max(1, src.width // scale)
+            bands = np.stack([src.read(i, out_shape=(height, width), resampling=Resampling.average) for i in self._rgb_bands()]).astype(np.float32)
+            valid = np.any(bands > 0, axis=0)
+            self.rgb_stretch = tuple(np.percentile(bands[:, valid].reshape(-1), [2, 98])) if np.any(valid) else (0, 1)
+            if src.crs and src.crs.to_string() != "EPSG:4326":
+                transform, width, height = calculate_default_transform(src.crs, "EPSG:4326", width, height, *src.bounds)
+            else:
+                transform = src.transform * Affine.scale(src.width / width, src.height / height)
+            self.overlay = (width, height, transform)
+            bounds = array_bounds(height, width, transform)
+            (self.settings.output_dir / "bounds_overlay.txt").write_text(repr([[bounds[1], bounds[0]], [bounds[3], bounds[2]]]), encoding="utf-8")
+            return self.overlay
+
+    @staticmethod
+    def tile_bounds(z: int, x: int, y: int) -> tuple[float, float, float, float]:
+        n = 2 ** z
+        left, right = x / n * 360 - 180, (x + 1) / n * 360 - 180
+        top = np.degrees(np.arctan(np.sinh(np.pi * (1 - 2 * y / n))))
+        bottom = np.degrees(np.arctan(np.sinh(np.pi * (1 - 2 * (y + 1) / n))))
+        return left, bottom, right, top
+
+    def tile(self, kind: str, z: int, x: int, y: int, low: float = -0.05, high: float = 1.0) -> bytes:
+        with rasterio.open(self._path()) as src:
+            bounds = self.tile_bounds(z, x, y)
+            if src.crs and src.crs.to_string() != "EPSG:4326":
+                bounds = transform_bounds("EPSG:4326", src.crs, *bounds, densify_pts=21)
+            window = from_bounds(*bounds, transform=src.transform)
+            size, resampling = (512, Resampling.bilinear) if kind == "rgb" else (512, Resampling.nearest)
+            if window.width <= 0 or window.height <= 0:
+                rgba = np.zeros((size, size, 4), dtype=np.uint8)
+            elif kind == "rgb":
+                rgb = [src.read(i, window=window, out_shape=(size, size), resampling=resampling, boundless=True, fill_value=0) for i in self._rgb_bands()]
+                r, g, b = self.stretch_rgb(*rgb, self.rgb_stretch)
+                rgba = np.dstack((r, g, b, np.where((r == 0) & (g == 0) & (b == 0), 0, 255).astype(np.uint8)))
+            else:
+                positive_band, negative_band = self._index_bands("NDVI")
+                positive, negative = [src.read(i, window=window, out_shape=(size, size), resampling=resampling, boundless=True, fill_value=0).astype(np.float32) for i in (positive_band, negative_band)]
+                ndvi, valid = self._calculate_index(positive, negative)
+                rgba = self._colorize_index("NDVI", ndvi, valid, low, high)
+            output = io.BytesIO()
+            Image.fromarray(rgba, mode="RGBA").save(output, format="PNG")
+            return output.getvalue()
+
+    def begin_crop_tiles(self, geom: Any) -> dict[str, Any]:
+        """Registra una ROI para enmascarar tiles RGB sin remuestrear el raster."""
+        crop_id = uuid4().hex
+        self.crop_geometries[crop_id] = geom
+        minx, miny, maxx, maxy = geom.bounds
+        return {"crop_id": crop_id, "bounds": [[miny, minx], [maxy, maxx]]}
+
+    def crop_tile(self, crop_id: str, z: int, x: int, y: int) -> bytes:
+        geom = self.crop_geometries.get(crop_id)
+        if geom is None:
+            raise ValueError("El recorte ya no está disponible. Selecciona el ROI nuevamente.")
+        with rasterio.open(self._path()) as src:
+            bounds = self.tile_bounds(z, x, y)
+            source_geom = geom
+            if src.crs and src.crs.to_string() != "EPSG:4326":
+                bounds = transform_bounds("EPSG:4326", src.crs, *bounds, densify_pts=21)
+                source_geom = project_geometry(pyproj.Transformer.from_crs("EPSG:4326", src.crs, always_xy=True).transform, geom)
+            window = from_bounds(*bounds, transform=src.transform)
+            size = 512
+            if window.width <= 0 or window.height <= 0:
+                rgba = np.zeros((size, size, 4), dtype=np.uint8)
+            else:
+                rgb = [src.read(i, window=window, out_shape=(size, size), resampling=Resampling.bilinear, boundless=True, fill_value=0) for i in self._rgb_bands()]
+                r, g, b = self.stretch_rgb(*rgb, self.rgb_stretch)
+                transform = window_transform(window, src.transform) * Affine.scale(window.width / size, window.height / size)
+                mask = geometry_mask([mapping(source_geom)], out_shape=(size, size), transform=transform, invert=True)
+                rgba = np.dstack((r, g, b, np.where(mask, 255, 0).astype(np.uint8)))
+            output = io.BytesIO()
+            Image.fromarray(rgba, mode="RGBA").save(output, format="PNG")
+            return output.getvalue()
+
+    def crop_index_tile(self, name: str, crop_id: str, z: int, x: int, y: int, low: float | None = None, high: float | None = None) -> bytes:
+        geom = self.crop_geometries.get(crop_id)
+        if geom is None:
+            raise ValueError("El recorte ya no está disponible. Selecciona el ROI nuevamente.")
+        bands = self._index_bands(name)
+        if not bands:
+            raise ValueError("El índice requiere un ortomosaico multiespectral compatible.")
+        with rasterio.open(self._path()) as src:
+            bounds = self.tile_bounds(z, x, y)
+            source_geom = geom
+            if src.crs and src.crs.to_string() != "EPSG:4326":
+                bounds = transform_bounds("EPSG:4326", src.crs, *bounds, densify_pts=21)
+                source_geom = project_geometry(pyproj.Transformer.from_crs("EPSG:4326", src.crs, always_xy=True).transform, geom)
+            window = from_bounds(*bounds, transform=src.transform)
+            size = 512
+            positive, negative = [src.read(i, window=window, out_shape=(size, size), resampling=Resampling.nearest, boundless=True, fill_value=0).astype(np.float32) for i in bands]
+            transform = window_transform(window, src.transform) * Affine.scale(window.width / size, window.height / size)
+            mask = geometry_mask([mapping(source_geom)], out_shape=(size, size), transform=transform, invert=True)
+            values, valid = self._calculate_index(positive, negative)
+            # Debe usar la misma regla que el índice completo: NoData y
+            # reflectancias inválidas no se interpretan como suelo rojo.
+            rgba = self._colorize_index(name, values, valid & mask, low, high)
+            output = io.BytesIO()
+            Image.fromarray(rgba, mode="RGBA").save(output, format="PNG")
+            return output.getvalue()
+
+    def index_tile(
+        self,
+        name: str,
+        z: int,
+        x: int,
+        y: int,
+        low: float | None = None,
+        high: float | None = None,
+    ) -> bytes:
+        bands = self._index_bands(name)
+        if not bands:
+            raise ValueError("El índice requiere un ortomosaico multiespectral compatible.")
+        with rasterio.open(self._path()) as src:
+            bounds = self.tile_bounds(z, x, y)
+            if src.crs and src.crs.to_string() != "EPSG:4326": bounds = transform_bounds("EPSG:4326", src.crs, *bounds, densify_pts=21)
+            window = from_bounds(*bounds, transform=src.transform)
+            positive, negative = [src.read(i, window=window, out_shape=(512, 512), resampling=Resampling.nearest, boundless=True, fill_value=0).astype(np.float32) for i in bands]
+            values, valid = self._calculate_index(positive, negative)
+            rgba = self._colorize_index(name, values, valid, low, high)
+            output = io.BytesIO(); Image.fromarray(rgba, mode="RGBA").save(output, format="PNG")
+            return output.getvalue()
+
+    def geometry_window(self, geom: Any, bands: list[int]) -> tuple[np.ndarray, Affine, np.ndarray, dict[str, Any]] | None:
+        with rasterio.open(self._path()) as src:
+            if src.crs and src.crs.to_string() != "EPSG:4326":
+                geom = project_geometry(pyproj.Transformer.from_crs("EPSG:4326", src.crs, always_xy=True).transform, geom)
+            bounds = geom.bounds
+            if bounds[0] >= bounds[2] or bounds[1] >= bounds[3]: return None
+            try: window = from_bounds(*bounds, transform=src.transform).intersection(Window(0, 0, src.width, src.height))
+            except Exception: return None
+            if window.width <= 0 or window.height <= 0: return None
+            scale = self.scale(src, self.settings.ndvi_max_pixels)
+            width, height = max(1, round(window.width / scale)), max(1, round(window.height / scale))
+            data = src.read(bands, window=window, out_shape=(len(bands), height, width), resampling=Resampling.average)
+            transform = window_transform(window, src.transform) * Affine.scale(window.width / width, window.height / height)
+            mask = geometry_mask([mapping(geom)], out_shape=(height, width), transform=transform, invert=True)
+            source_bounds = array_bounds(height, width, transform)
+            response_bounds = transform_bounds(src.crs, "EPSG:4326", *source_bounds) if src.crs and src.crs.to_string() != "EPSG:4326" else source_bounds
+            return data, transform, mask, {"col_off": window.col_off, "row_off": window.row_off, "scale": scale, "src_width": src.width, "src_height": src.height, "response_bounds": response_bounds}
+
+    def crop(self, geom: Any) -> dict[str, Any]:
+        result = self.geometry_window(geom, list(self._rgb_bands()))
+        if result is None: raise ValueError("El recorte no intersecta el raster.")
+        data, transform, mask, meta = result
+        # La máscara geométrica define el área del recorte. No se debe volver
+        # transparente un píxel válido solo porque sus bandas RGB sean oscuras.
+        rgba = np.dstack((*[self.normalize(data[i]) for i in range(3)], np.where(mask, 255, 0).astype(np.uint8)))
+        Image.fromarray(rgba, mode="RGBA").save(self.settings.output_dir / "recorte_overlay.png")
+        return self._bounds_response(transform, data.shape[1], data.shape[2], meta) | {"overlay_path": "/static/recorte_overlay.png"}
+
+    def ndvi_data(self) -> dict[str, Any]:
+        width, height, overlay_transform = self.ensure_overlay()
+        red_band, nir_band = self._ndvi_bands()
+        with rasterio.open(self._path()) as src:
+            scale = self.scale(src, self.settings.ndvi_max_pixels)
+            coarse_height, coarse_width = max(1, src.height // scale), max(1, src.width // scale)
+            source_transform = src.transform * Affine.scale(src.width / coarse_width, src.height / coarse_height)
+            red = src.read(red_band, out_shape=(coarse_height, coarse_width), resampling=Resampling.average).astype(np.float32)
+            nir = src.read(nir_band, out_shape=(coarse_height, coarse_width), resampling=Resampling.average).astype(np.float32)
+            if src.crs and src.crs.to_string() != "EPSG:4326":
+                red_wgs84 = np.zeros((height, width), dtype=np.float32)
+                nir_wgs84 = np.zeros((height, width), dtype=np.float32)
+                for source, destination in ((red, red_wgs84), (nir, nir_wgs84)):
+                    reproject(source=source, destination=destination, src_transform=source_transform, src_crs=src.crs, dst_transform=overlay_transform, dst_crs="EPSG:4326", resampling=Resampling.average)
+                red, nir = red_wgs84, nir_wgs84
+            ndvi = (nir - red) / (nir + red + 1e-6)
+            bounds = array_bounds(height, width, overlay_transform)
+            return {"status": "ok", "ndvi_matrix": (np.clip((ndvi + 1) / 2, 0, 1) * 255).astype(np.uint8).tolist(), "ndvi_mask": ((red > 0) & (nir > 0)).astype(np.uint8).tolist(), "bounds": [[bounds[1], bounds[0]], [bounds[3], bounds[2]]]}
+
+    def vegetation_index_data(self, name: str) -> dict[str, Any]:
+        if self.sensor == "mavic3m":
+            bands = {"green": 1, "red": 2, "rededge": 3, "nir": 4}
+        elif self.sensor == "micasense":
+            bands = {"green": 2, "red": 4, "rededge": 5, "nir": 6}
+        else:
+            raise ValueError("NDWI y NDRE requieren un ortomosaico multiespectral compatible.")
+        formulas = {"NDWI": ("green", "nir"), "NDRE": ("nir", "rededge")}
+        if name not in formulas:
+            raise ValueError("Índice no soportado. Usa NDWI o NDRE.")
+        first_name, second_name = formulas[name]
+        width, height, overlay_transform = self.ensure_overlay()
+        with rasterio.open(self._path()) as src:
+            scale = self.scale(src, self.settings.ndvi_max_pixels)
+            coarse_height, coarse_width = max(1, src.height // scale), max(1, src.width // scale)
+            source_transform = src.transform * Affine.scale(src.width / coarse_width, src.height / coarse_height)
+            first = src.read(bands[first_name], out_shape=(coarse_height, coarse_width), resampling=Resampling.average).astype(np.float32)
+            second = src.read(bands[second_name], out_shape=(coarse_height, coarse_width), resampling=Resampling.average).astype(np.float32)
+            if src.crs and src.crs.to_string() != "EPSG:4326":
+                projected = []
+                for source in (first, second):
+                    destination = np.zeros((height, width), dtype=np.float32)
+                    reproject(source=source, destination=destination, src_transform=source_transform, src_crs=src.crs, dst_transform=overlay_transform, dst_crs="EPSG:4326", resampling=Resampling.average)
+                    projected.append(destination)
+                first, second = projected
+            values = (first - second) / (first + second + 1e-6)
+            bounds = array_bounds(height, width, overlay_transform)
+            return {"status": "ok", "matrix": values.tolist(), "mask": ((first > 0) & (second > 0)).astype(np.uint8).tolist(), "bounds": [[bounds[1], bounds[0]], [bounds[3], bounds[2]]]}
+
+    def roi_ndvi(self, geom: Any) -> dict[str, Any]:
+        result = self.geometry_window(geom, list(self._ndvi_bands()))
+        if result is None: raise ValueError("El ROI no intersecta el raster.")
+        data, transform, mask, meta = result
+        red, nir = data.astype(np.float32)
+        ndvi = (nir - red) / (nir + red + 1e-6)
+        return {"status": "ok", "ndvi_matrix": (np.clip((ndvi + 1) / 2, 0, 1) * 255).astype(np.uint8).tolist(), "ndvi_mask": ((red > 0) & (nir > 0) & mask).astype(np.uint8).tolist(), **self._bounds_response(transform, data.shape[1], data.shape[2], meta)}
+
+    def roi_vegetation_index(self, geom: Any, name: str) -> dict[str, Any]:
+        """Calcula un índice únicamente dentro de una geometría de interés."""
+        if name == "NDVI":
+            return self.roi_ndvi(geom)
+        if self.sensor == "mavic3m":
+            bands = {"NDWI": (1, 4), "NDRE": (4, 3)}.get(name)
+        elif self.sensor == "micasense":
+            bands = {"NDWI": (2, 6), "NDRE": (6, 5)}.get(name)
+        else:
+            bands = None
+        if not bands:
+            raise ValueError(f"{name} requiere un ortomosaico multiespectral compatible.")
+        result = self.geometry_window(geom, list(bands))
+        if result is None:
+            raise ValueError("El ROI no intersecta el raster.")
+        data, transform, mask, meta = result
+        first, second = data.astype(np.float32)
+        values = (first - second) / (first + second + 1e-6)
+        return {"status": "ok", "matrix": values.tolist(), "mask": ((first > 0) & (second > 0) & mask).astype(np.uint8).tolist(), **self._bounds_response(transform, data.shape[1], data.shape[2], meta)}
+
+    @staticmethod
+    def _bounds_response(transform: Affine, height: int, width: int, meta: dict[str, Any]) -> dict[str, Any]:
+        minx, miny, maxx, maxy = meta.get("response_bounds", array_bounds(height, width, transform))
+        return {"bounds": [[miny, minx], [maxy, maxx]], "offset_x": round(meta["col_off"] / meta["scale"]), "offset_y": round(meta["row_off"] / meta["scale"]), "base_width": max(1, round(meta["src_width"] / meta["scale"])), "base_height": max(1, round(meta["src_height"] / meta["scale"]))}

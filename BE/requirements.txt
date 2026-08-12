@@ -1,0 +1,12 @@
+flask
+fastapi
+uvicorn
+rasterio
+shapely
+pyproj
+numpy
+pillow
+matplotlib
+supabase
+python-multipart
+python-dotenv

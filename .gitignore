@@ -1,0 +1,51 @@
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.local.example
+credenciales_supabase.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+BE/.venv/
+BE/venv/
+
+# Node
+node_modules/
+FE/node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+FE/dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime artifacts
+BE/uploads/
+BE/cache/
+BE/static/active_ortho.tif
+BE/static/recorte_overlay.png
+BE/static/bounds_overlay.txt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
