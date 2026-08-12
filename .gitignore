@@ -29,6 +29,7 @@ FE/node_modules/
 dist/
 FE/dist/
 build/
+FE/.vite/
 
 # Logs
 *.log
@@ -43,6 +44,8 @@ BE/cache/
 BE/static/active_ortho.tif
 BE/static/recorte_overlay.png
 BE/static/bounds_overlay.txt
+BE/*.tif
+BE/*.tif.aux.xml
 
 # OS / editor
 .DS_Store
