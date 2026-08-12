@@ -63,7 +63,7 @@ export function createInitialMapState() {
     visibleTreeSizes: { small: true, medium: true, large: true },
     detectionEditMode: null,
     error: null,
-  } as const;
+  };
 }
 
 export function createEmptyNdviAnalysis() {
