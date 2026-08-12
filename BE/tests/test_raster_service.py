@@ -1,3 +1,5 @@
+"""Pruebas unitarias del servicio raster y sus cálculos espectrales."""
+
 from __future__ import annotations
 
 import io

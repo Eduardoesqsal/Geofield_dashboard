@@ -1,3 +1,5 @@
+"""Excepciones de dominio del backend geoespacial."""
+
 class RasterNotConfiguredError(RuntimeError):
     """El backend no tiene un GeoTIFF disponible."""
 

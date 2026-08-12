@@ -1,3 +1,8 @@
+/**
+ * Diálogo reutilizable de confirmación para operaciones sensibles.
+ * Se usa como capa de seguridad antes de eliminar registros o ejecutar
+ * acciones que alteran el estado persistido de la app.
+ */
 import {
   IconAlertTriangle,
   IconLoader2,

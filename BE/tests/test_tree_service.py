@@ -1,3 +1,5 @@
+"""Pruebas de normalización y estadísticas para árboles detectados."""
+
 from __future__ import annotations
 
 import unittest

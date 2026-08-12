@@ -1,3 +1,8 @@
+/**
+ * Utilidades para detecciones arbóreas.
+ * Normalizan atributos, calculan diámetros, clasifican tamaños y generan
+ * estadísticas para el mapa y el panel de control.
+ */
 import type { TreeCollection, TreeFeature, TreeStats } from "../types/geo";
 
 export type TreeSize = "small" | "medium" | "large" | "unknown";

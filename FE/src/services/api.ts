@@ -1,3 +1,8 @@
+/**
+ * Cliente HTTP tipado del frontend.
+ * Expone contratos y funciones para hablar con el backend sin dispersar URLs,
+ * payloads ni transformaciones de respuesta por toda la aplicación.
+ */
 import type { TreeCollection } from "../types/geo";
 
 // Contratos serializados por la API FastAPI.

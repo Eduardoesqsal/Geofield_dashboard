@@ -1,3 +1,5 @@
+"""Pruebas de contrato para rutas FastAPI críticas del backend."""
+
 from __future__ import annotations
 
 import tempfile

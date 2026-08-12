@@ -1,3 +1,8 @@
+/**
+ * Diálogo breve para capturar o editar datos descriptivos del ROI.
+ * Sirve de paso previo cuando se desea persistir la zona o reutilizarla
+ * en el flujo comparativo entre vuelos.
+ */
 import { useRef } from "react";
 import {
   IconDatabase,

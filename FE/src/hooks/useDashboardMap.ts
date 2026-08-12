@@ -1,3 +1,8 @@
+/**
+ * Hook central del dashboard geoespacial.
+ * Coordina mapa Leaflet, ortomosaicos, ROI, índices, histogramas, diálogos,
+ * trazabilidad y sincronización con el backend.
+ */
 import { useCallback, useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import type { Feature } from "geojson";

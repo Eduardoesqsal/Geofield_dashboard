@@ -1,3 +1,9 @@
+"""Configuración centralizada del backend.
+
+Este módulo resuelve variables de entorno, rutas de trabajo y defaults de
+desarrollo para que servicios y rutas operen con una única fuente de verdad.
+"""
+
 from __future__ import annotations
 
 import os

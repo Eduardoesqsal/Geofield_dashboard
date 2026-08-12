@@ -1,3 +1,8 @@
+/**
+ * Utilidades puras del hook del mapa.
+ * Reúnen funciones auxiliares de estado, filtrado, formateo y construcción
+ * de popups para mantener el hook principal más legible.
+ */
 import type { Feature, FeatureCollection } from "geojson";
 import type { OrthoMode, OrthoSensor } from "../services/api";
 import type { TreeCollection, TreeFeature } from "../types/geo";

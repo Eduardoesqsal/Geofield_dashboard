@@ -1,3 +1,8 @@
+/**
+ * Dashboard comparativo del ROI.
+ * Presenta el historial persistido por índice, sus métricas de resumen
+ * y la trazabilidad temporal usada para comparar vuelos guardados.
+ */
 import {
   IconArrowDownRight,
   IconArrowUpRight,

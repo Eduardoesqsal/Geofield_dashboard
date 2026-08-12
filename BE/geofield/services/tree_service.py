@@ -1,3 +1,9 @@
+"""Servicio para normalizar colecciones de árboles.
+
+Convierte entradas heterogéneas a una estructura uniforme con métricas y
+clases de tamaño listas para consumirse desde el frontend.
+"""
+
 from __future__ import annotations
 
 from typing import Any

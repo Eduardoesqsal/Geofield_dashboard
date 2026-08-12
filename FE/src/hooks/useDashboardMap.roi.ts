@@ -1,3 +1,8 @@
+/**
+ * Helpers específicos del flujo ROI.
+ * Aíslan la limpieza de overlays del recorte y la reinstalación de la capa
+ * base para que el hook principal no concentre toda la lógica visual.
+ */
 import type { MutableRefObject, RefObject } from "react";
 import L from "leaflet";
 import type { NdviResponse } from "../services/api";

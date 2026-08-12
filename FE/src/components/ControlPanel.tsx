@@ -1,3 +1,8 @@
+/**
+ * Panel lateral principal del análisis.
+ * Aquí se muestran histogramas, sliders, estadísticas, toggles de índices
+ * y acciones de guardado/comparación vinculadas al ROI activo.
+ */
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   IconChartLine,

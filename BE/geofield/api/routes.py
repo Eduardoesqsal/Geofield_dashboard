@@ -1,3 +1,9 @@
+"""Capa HTTP del backend.
+
+Traduce requests web a operaciones de servicios para ortomosaicos, ROI,
+índices, recortes y comparación persistida de análisis.
+"""
+
 from __future__ import annotations
 
 import ast

@@ -1,3 +1,8 @@
+/**
+ * Diálogo de importación para detecciones arbóreas y archivos auxiliares.
+ * Resuelve la experiencia de selección, arrastre y validación previa antes
+ * de enviar la información al flujo principal del mapa.
+ */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent } from "react";
 import {

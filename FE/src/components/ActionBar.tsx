@@ -1,3 +1,8 @@
+/**
+ * Barra superior de acciones rápidas del dashboard geoespacial.
+ * Centraliza accesos a capas, herramientas y diálogos sin mezclar esa UI
+ * con la lógica imperativa del mapa.
+ */
 import {
   IconLeaf,
   IconMap2,

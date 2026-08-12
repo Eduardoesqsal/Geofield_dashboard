@@ -1,3 +1,9 @@
+"""Adaptador de persistencia hacia Supabase.
+
+Aquí se centraliza la conexión, lectura y escritura de ortomosaicos, zonas,
+ROI y estadísticas históricas consumidas por el dashboard.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -1,3 +1,8 @@
+/**
+ * Diálogo de carga de ortomosaicos.
+ * Permite escoger archivo, sensor y tipo de procesamiento antes de delegar
+ * el análisis al backend FastAPI.
+ */
 import { useRef, useState } from "react";
 import {
   IconAperture,

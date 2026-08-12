@@ -1,3 +1,9 @@
+"""Servicios de aplicación para ortomosaicos y ROI.
+
+Coordinan validaciones, flujos de persistencia y operaciones de alto nivel
+entre las rutas HTTP y la infraestructura concreta.
+"""
+
 from __future__ import annotations
 
 from datetime import date

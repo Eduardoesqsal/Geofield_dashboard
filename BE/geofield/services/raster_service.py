@@ -1,3 +1,9 @@
+"""Servicio principal de procesamiento raster.
+
+Encapsula lectura de ortomosaicos, tiles, recortes, reproyección y cálculo de
+índices espectrales completos o acotados al ROI.
+"""
+
 from __future__ import annotations
 
 import io

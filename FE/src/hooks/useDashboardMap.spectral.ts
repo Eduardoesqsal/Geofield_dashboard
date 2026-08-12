@@ -1,3 +1,8 @@
+/**
+ * Helpers de capas espectrales.
+ * Se encargan de crear, reemplazar y retirar overlays NDVI/NDWI/NDRE sobre
+ * Leaflet sin duplicar manipulación de capas en otros módulos.
+ */
 import type { MutableRefObject, RefObject } from "react";
 import L from "leaflet";
 import type { NdviResponse } from "../services/api";

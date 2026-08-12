@@ -1,3 +1,9 @@
+"""Factory de FastAPI para GeoField.
+
+Construye la aplicación, registra middleware y conecta servicios de raster,
+persistencia y rutas HTTP en un único punto de ensamblaje.
+"""
+
 from __future__ import annotations
 
 from fastapi import FastAPI

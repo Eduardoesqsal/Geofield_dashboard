@@ -1,3 +1,8 @@
+/**
+ * Punto de entrada del frontend React.
+ * Monta la SPA, carga estilos globales y conecta el componente raíz con
+ * el contenedor HTML provisto por Vite.
+ */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "leaflet/dist/leaflet.css";

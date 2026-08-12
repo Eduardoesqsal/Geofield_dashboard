@@ -1,3 +1,8 @@
+/**
+ * Helpers del ciclo de vida del ortomosaico dentro del mapa.
+ * Encapsulan limpieza de capas previas, montaje de vuelos cargados y
+ * restauración de la capa base cuando cambia el contexto visual.
+ */
 import type { MutableRefObject, RefObject } from "react";
 import L from "leaflet";
 import type { NdviResponse } from "../services/api";

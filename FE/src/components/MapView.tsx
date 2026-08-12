@@ -1,3 +1,8 @@
+/**
+ * Contenedor principal de la aplicación.
+ * Ensambla el hook geoespacial, el mapa Leaflet y todos los paneles de UI
+ * visibles para el usuario final.
+ */
 import { useRef, useState } from "react";
 import {
   IconActivity,
