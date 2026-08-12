@@ -6,6 +6,7 @@
 import type { Feature, FeatureCollection } from "geojson";
 import type { OrthoMode, OrthoSensor } from "../services/api";
 import type { TreeCollection, TreeFeature } from "../types/geo";
+import type { MapState } from "./useDashboardMap";
 import {
   diameterOf,
   filterTreesByDiameter,
@@ -41,7 +42,7 @@ export function filterVisibleTrees(
   };
 }
 
-export function createInitialMapState() {
+export function createInitialMapState(): MapState {
   return {
     orthoMode: null,
     sensor: null,
