@@ -6,14 +6,17 @@ Aplicación geoespacial para visualización y análisis de ortomosaicos RGB y mu
 
 GeoField Dashboard permite:
 
+- Crear y seleccionar ciclos agrícolas para organizar los vuelos.
 - Cargar ortomosaicos RGB o multiespectrales.
+- Consultar, activar, editar y eliminar ortomosaicos guardados.
 - Visualizar capas sobre mapa con Leaflet.
-- Dibujar un ROI y trabajar solo sobre esa zona.
+- Dibujar, importar, guardar y seleccionar ROI asociados al ciclo activo.
 - Calcular índices espectrales:
   - `NDVI`
   - `NDWI`
   - `NDRE`
 - Ajustar rangos mínimos y máximos desde el histograma.
+- Generar sobre el ROI analizado de cada vuelo un mapa de prescripción NDVI con 2 a 10 zonas y grilla métrica configurable (4 zonas y celdas de 3 × 3 m por defecto).
 - Ver estadísticas dinámicas del índice filtrado:
   - mínimo
   - máximo
@@ -24,7 +27,9 @@ GeoField Dashboard permite:
   - píxeles válidos
 - Guardar resultados por ROI y por vuelo.
 - Consultar un dashboard comparativo con trazabilidad histórica.
-- Importar geometrías y detecciones arbóreas.
+- Exportar y eliminar observaciones del historial comparativo.
+- Importar geometrías y detecciones arbóreas desde GeoJSON, KML/KMZ o Shapefile.
+- Filtrar y editar detecciones arbóreas desde el mapa.
 
 ## Estructura del proyecto
 
@@ -44,7 +49,10 @@ Geofield_dashboard/
 │   │       └── tree_service.py
 │   ├── sql/
 │   │   ├── 001_create_rois.sql
-│   │   └── 002_create_roi_analyses.sql
+│   │   ├── 002_create_roi_analyses.sql
+│   │   ├── 003_create_agricultural_cycles.sql
+│   │   ├── 004_link_rois_to_agricultural_cycles.sql
+│   │   └── 005_add_orthomosaic_display_order.sql
 │   └── tests/
 ├── FE/                      Frontend React + Vite + TypeScript
 │   ├── package.json
@@ -56,7 +64,6 @@ Geofield_dashboard/
 │       ├── utils/
 │       └── styles.css
 ├── GeoField-Dashboard-Demo.html
-├── gra.jpg
 └── README.md
 ```
 
@@ -93,16 +100,20 @@ Geofield_dashboard/
 El frontend se encarga de:
 
 - renderizar el mapa;
-- manejar la interacción del usuario;
+- manejar ciclos agrícolas y bibliotecas de vuelos;
+- cargar, activar, editar y eliminar ortomosaicos;
 - mostrar ROI, histogramas, estadísticas y dashboard;
 - consumir el backend vía HTTP;
-- representar resultados por índice;
-- administrar el flujo visual de comparación entre vuelos.
+- representar simultáneamente NDVI, NDWI y NDRE;
+- importar y editar detecciones arbóreas;
+- administrar el guardado, exportación y eliminación de comparaciones entre vuelos.
 
 Puntos clave del frontend:
 
 - [FE/src/hooks/useDashboardMap.ts](C:/Users/Geo/Desktop/DESARROLLO/Geofield_dashboard/FE/src/hooks/useDashboardMap.ts)
   Estado principal del mapa, capas, ROI, índices y overlays.
+- [FE/src/components/MapView.tsx](C:/Users/Geo/Desktop/DESARROLLO/Geofield_dashboard/FE/src/components/MapView.tsx)
+  Coordinación de ciclos, vuelos, diálogos y análisis persistidos.
 - [FE/src/services/api.ts](C:/Users/Geo/Desktop/DESARROLLO/Geofield_dashboard/FE/src/services/api.ts)
   Contrato HTTP con el backend.
 - [FE/src/components/ControlPanel.tsx](C:/Users/Geo/Desktop/DESARROLLO/Geofield_dashboard/FE/src/components/ControlPanel.tsx)
@@ -117,6 +128,7 @@ El backend se encarga de:
 - procesar ortomosaicos;
 - generar bounds y tiles;
 - calcular índices por raster completo o por ROI;
+- clasificar por cuantiles el NDVI contenido en el ROI y rango de histograma activos, y construir su grilla métrica de prescripción;
 - recortar ROI;
 - persistir ROI y análisis;
 - guardar y recuperar estadísticas desde Supabase;
@@ -138,17 +150,17 @@ Puntos clave del backend:
 1. Se levanta el backend.
 2. Se levanta el frontend.
 3. El usuario abre la app en `http://localhost:3000`.
-4. Carga un ortomosaico o usa uno ya disponible.
-5. El backend calcula información base del raster.
-6. El frontend muestra RGB sobre mapa.
-7. El usuario selecciona `NDVI`, `NDWI` o `NDRE`.
-8. La app calcula el índice seleccionado.
-9. Se pinta el color map.
-10. Se muestran estadísticas e histograma.
-11. El usuario puede mover sliders de rango mínimo/máximo.
-12. La tabla dinámica se actualiza con los píxeles válidos.
-13. Si desea, guarda las estadísticas.
-14. El dashboard comparativo consulta los registros persistidos y los muestra por índice.
+4. Selecciona o crea un ciclo agrícola.
+5. Carga un ortomosaico o activa uno disponible en la biblioteca del ciclo.
+6. El backend procesa el raster y el frontend muestra sus tiles sobre el mapa.
+7. El usuario activa uno o varios índices: `NDVI`, `NDWI` o `NDRE`.
+8. Puede dibujar, importar o seleccionar un ROI persistido.
+9. La app muestra las capas, histogramas y estadísticas correspondientes.
+10. Los sliders de rango actualizan la visualización y las estadísticas dinámicas.
+11. Con un ROI y un ortomosaico activos, puede guardar el análisis.
+12. El dashboard comparativo consulta el historial por ROI e índice.
+13. El historial puede actualizarse, exportarse o depurarse desde la interfaz.
+14. Tras recortar un ROI y abrir su histograma NDVI, puede generar su prescripción, configurar zonas y tamaño de celda, o salir de ella para retirar la capa del mapa.
 
 ## Índices implementados
 
@@ -353,11 +365,17 @@ La app puede funcionar con archivos locales, pero el flujo de ROI/análisis comp
 
 - [BE/sql/001_create_rois.sql](C:/Users/Geo/Desktop/DESARROLLO/Geofield_dashboard/BE/sql/001_create_rois.sql)
 - [BE/sql/002_create_roi_analyses.sql](C:/Users/Geo/Desktop/DESARROLLO/Geofield_dashboard/BE/sql/002_create_roi_analyses.sql)
+- [BE/sql/003_create_agricultural_cycles.sql](C:/Users/Geo/Desktop/DESARROLLO/Geofield_dashboard/BE/sql/003_create_agricultural_cycles.sql)
+- [BE/sql/004_link_rois_to_agricultural_cycles.sql](C:/Users/Geo/Desktop/DESARROLLO/Geofield_dashboard/BE/sql/004_link_rois_to_agricultural_cycles.sql)
+- [BE/sql/005_add_orthomosaic_display_order.sql](C:/Users/Geo/Desktop/DESARROLLO/Geofield_dashboard/BE/sql/005_add_orthomosaic_display_order.sql)
 
 ### Qué debes ejecutar en Supabase
 
 1. Crear las tablas y objetos para ROI.
 2. Crear las tablas y objetos para análisis guardados.
+3. Crear los ciclos agrícolas y su relación con ortomosaicos.
+4. Vincular los ROI existentes y nuevos con un ciclo agrícola.
+5. Agregar el orden persistente de los ortomosaicos dentro de cada ciclo.
 
 Si el guardado de estadísticas falla con `502`, `422` o errores de esquema, revisa primero que esos scripts ya fueron ejecutados en la base de datos correcta.
 
@@ -375,16 +393,25 @@ Los endpoints más usados actualmente son:
 | Método | Ruta | Descripción |
 | --- | --- | --- |
 | `GET` | `/health` | Verifica que el backend esté arriba |
+| `GET`, `POST` | `/agricultural_cycles` | Lista o crea ciclos agrícolas |
+| `PATCH` | `/agricultural_cycles/{id}` | Renombra un ciclo |
+| `DELETE` | `/agricultural_cycles/{id}` | Elimina el ciclo y todo su contenido asociado |
+| `PATCH` | `/agricultural_cycles/{id}/orthomosaics/order` | Guarda el orden manual de los vuelos del ciclo |
 | `GET` | `/bounds` | Bounds del raster activo |
 | `GET` | `/tiles/rgb/{z}/{x}/{y}.png` | Tiles RGB |
-| `GET` | `/tiles/ndvi/{z}/{x}/{y}.png` | Tiles NDVI |
+| `GET` | `/tiles/index/{name}/{z}/{x}/{y}.png` | Tiles de NDVI, NDWI o NDRE |
+| `GET` | `/tiles/crop-index/{name}/{crop_id}/{z}/{x}/{y}.png` | Tiles de un índice recortado por ROI |
+| `POST` | `/prescriptions` | Genera por zonas la prescripción NDVI del ROI y rango de histograma activos |
 | `POST` | `/ortho_analysis` | Procesa ortomosaico cargado |
+| `POST` | `/orthomosaics/upload` | Carga y asocia un vuelo a un ciclo |
+| `POST` | `/orthomosaics/{id}/activate` | Activa un ortomosaico guardado |
 | `POST` | `/roi_ndvi` | NDVI por ROI |
 | `POST` | `/roi_indices/{index}` | Índice por ROI (`NDVI`, `NDWI`, `NDRE`) |
-| `POST` | `/recortar` | Recorte por geometría |
-| `GET` | `/orthomosaics` | Lista ortomosaicos |
-| `POST` | `/rois/.../analyses` | Guarda estadísticas del ROI |
-| `GET` | `/rois/.../analyses` | Consulta trazabilidad/dashboard |
+| `POST` | `/crop_tiles` | Genera tiles de recorte por geometría |
+| `GET` | `/orthomosaics?cycle_id=...` | Lista ortomosaicos del ciclo |
+| `GET`, `POST` | `/rois` | Lista o guarda ROI |
+| `GET`, `POST` | `/rois/{id}/analyses` | Consulta o guarda estadísticas del ROI |
+| `DELETE` | `/rois/{roi_id}/analyses/{analysis_id}` | Elimina una observación histórica |
 
 ## Qué archivos no debes subir a GitHub
 
@@ -482,10 +509,12 @@ A la fecha de este README:
 
 - el backend local por defecto usa `8005`;
 - el frontend local por defecto usa `3000`;
+- los vuelos y ROI se organizan por ciclo agrícola;
 - el dashboard comparativo trabaja por índice;
-- el guardado correcto debe tomar las estadísticas dinámicas del histograma;
+- el guardado toma las estadísticas dinámicas del histograma;
+- NDVI, NDWI y NDRE pueden mostrarse simultáneamente;
 - el archivo visual de referencia del dashboard existe como `GeoField-Dashboard-Demo.html`;
-- la referencia visual de la gráfica existe como `gra.jpg`.
+- la documentación detallada del frontend está en `FE/README.MD`.
 
 ## Recomendación para GitHub
 

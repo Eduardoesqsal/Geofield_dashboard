@@ -30,8 +30,36 @@ class FakeSupabaseService:
     def delete_orthomosaic(self, orthomosaic_id: str) -> dict[str, Any]:
         return self.record
 
+    def delete_agricultural_cycle(self, cycle_id: str) -> dict[str, Any]:
+        return {
+            "cycle": {"id": cycle_id, "name": "Ciclo prueba"},
+            "orthomosaics": [self.record],
+            "deleted_orthomosaics": 1,
+            "deleted_rois": 2,
+        }
+
 
 class RoutesDeleteOrthomosaicTests(unittest.TestCase):
+    def test_deleting_cycle_resets_its_active_orthomosaic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            raster_path = root / "active.tif"
+            raster_path.write_bytes(b"fake-raster")
+            raster = FakeRasterService(raster_path)
+            supabase = FakeSupabaseService(
+                {"id": "ortho-1", "file_path": str(raster_path)},
+                root / "cache",
+            )
+            app = FastAPI()
+            app.include_router(create_router(raster, root, root, supabase))  # type: ignore[arg-type]
+
+            response = TestClient(app).delete("/agricultural_cycles/cycle-1")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["deleted_orthomosaics"], 1)
+            self.assertEqual(response.json()["deleted_rois"], 2)
+            self.assertIsNone(raster.active_path)
+
     def test_deleting_active_orthomosaic_resets_raster_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

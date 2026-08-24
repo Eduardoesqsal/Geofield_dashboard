@@ -3,14 +3,17 @@
  * Ensambla el hook geoespacial, el mapa Leaflet y todos los paneles de UI
  * visibles para el usuario final.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   IconActivity,
   IconArrowsHorizontal,
   IconChartHistogram,
+  IconCalendarEvent,
+  IconCheck,
   IconDatabase,
   IconDroplet,
   IconEyeOff,
+  IconGripVertical,
   IconLeaf,
   IconMapPin,
   IconPhoto,
@@ -19,6 +22,7 @@ import {
 } from "@tabler/icons-react";
 import { useDashboardMap } from "../hooks/useDashboardMap";
 import { ActionBar } from "./ActionBar";
+import { AgriculturalCycleDialog } from "./AgriculturalCycleDialog";
 import { ControlPanel } from "./ControlPanel";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DetectionDialog } from "./DetectionDialog";
@@ -26,7 +30,12 @@ import { ImportDialog } from "./ImportDialog";
 import { RoiDialog } from "./RoiDialog";
 import { RoiComparisonDialog } from "./RoiComparisonDialog";
 import {
+  PrescriptionDialog,
+  PrescriptionLegend,
+} from "./PrescriptionDialog";
+import {
   dashboardApi,
+  type AgriculturalCycleRecord,
   type OrthomosaicRecord,
   type OrthoSensor,
   type RoiAnalysisRecord,
@@ -36,10 +45,12 @@ import {
 } from "../services/api";
 
 type DeleteTarget =
+  | { kind: "cycle"; record: AgriculturalCycleRecord }
   | { kind: "orthomosaic"; record: OrthomosaicRecord }
   | { kind: "roi"; record: RoiRecord }
   | { kind: "analysis"; record: RoiAnalysisRecord };
 type ComparisonIndex = "NDVI" | "NDWI" | "NDRE";
+type CycleDialogMode = "entry" | "import" | "library";
 
 const sameMetric = (
   left: number | null | undefined,
@@ -61,7 +72,7 @@ const statsForIndex = (
       : analysis.ndre;
 
 const chronologicalKey = (analysis: RoiAnalysisRecord) =>
-  `${analysis.orthomosaics?.capture_date ?? analysis.created_at}|${analysis.created_at}`;
+  `${analysis.orthomosaics?.capture_date ?? analysis.created_at}|${analysis.orthomosaics?.name ?? ""}|${analysis.orthomosaic_id}`;
 
 const sameStats = (
   current: RoiAnalysisStats | null,
@@ -96,24 +107,54 @@ function IndexIcon({ name }: { name: "NDVI" | "NDWI" | "NDRE" }) {
 export function MapView() {
   const mapElement = useRef<HTMLDivElement>(null);
   const divider = useRef<HTMLDivElement>(null);
-  const map = useDashboardMap(mapElement);
   // Estado puramente visual de modales, carga y confirmaciones.
   const [dragging, setDragging] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [cycleDialogOpen, setCycleDialogOpen] = useState(false);
+  const [cycleDialogMode, setCycleDialogMode] =
+    useState<CycleDialogMode>("import");
+  const [agriculturalCycles, setAgriculturalCycles] = useState<
+    AgriculturalCycleRecord[]
+  >([]);
+  const [activeCycle, setActiveCycle] = useState<AgriculturalCycleRecord | null>(
+    null,
+  );
+  const [cycleLoading, setCycleLoading] = useState(false);
+  const [cycleSaving, setCycleSaving] = useState(false);
+  const [cycleRenamingId, setCycleRenamingId] = useState<string | null>(null);
+  const [cycleError, setCycleError] = useState<string | null>(null);
+  const [cycleExitNotice, setCycleExitNotice] = useState<string | null>(null);
   const [detectionsOpen, setDetectionsOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [indicesOpen, setIndicesOpen] = useState(false);
   const [roiOpen, setRoiOpen] = useState(false);
   const [roiLibraryOpen, setRoiLibraryOpen] = useState(false);
+  const [prescriptionOpen, setPrescriptionOpen] = useState(false);
+  const [prescriptionError, setPrescriptionError] = useState<string | null>(null);
   const [rois, setRois] = useState<RoiRecord[]>([]);
   const [orthomosaics, setOrthomosaics] = useState<OrthomosaicRecord[]>([]);
   const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [editingOrthomosaicId, setEditingOrthomosaicId] = useState<
+    string | null
+  >(null);
+  const [editingCaptureDate, setEditingCaptureDate] = useState("");
+  const [updatingOrthomosaicId, setUpdatingOrthomosaicId] = useState<
+    string | null
+  >(null);
+  const [draggedOrthomosaicId, setDraggedOrthomosaicId] = useState<
+    string | null
+  >(null);
+  const [dragOverOrthomosaicId, setDragOverOrthomosaicId] = useState<
+    string | null
+  >(null);
+  const [reorderingOrthomosaics, setReorderingOrthomosaics] = useState(false);
   // El ROI de comparación se fija al abrir el dashboard para evitar que un
   // cambio posterior de selección afecte exportaciones o eliminaciones.
   const [roiAnalysisHistory, setRoiAnalysisHistory] = useState<
     RoiAnalysisRecord[]
   >([]);
   const [comparisonRoiId, setComparisonRoiId] = useState<string | null>(null);
+  const map = useDashboardMap(mapElement, activeCycle?.id ?? null);
   const [comparisonIndex, setComparisonIndex] =
     useState<ComparisonIndex>("NDVI");
   const [roiAnalysisSyncedAt, setRoiAnalysisSyncedAt] = useState<string | null>(
@@ -134,10 +175,49 @@ export function MapView() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Bibliotecas persistidas de vuelos y regiones.
-  const openLibrary = async () => {
+  useEffect(() => {
+    if (activeCycle) return;
+    void openCycleDialog("entry");
+  }, [activeCycle]);
+
+  useEffect(() => {
+    if (!cycleExitNotice) return;
+    const timeout = window.setTimeout(() => setCycleExitNotice(null), 3600);
+    return () => window.clearTimeout(timeout);
+  }, [cycleExitNotice]);
+
+  const loadAgriculturalCycles = async () => {
+    setCycleLoading(true);
     try {
-      const response = await dashboardApi.orthomosaics();
+      const response = await dashboardApi.agriculturalCycles();
+      setAgriculturalCycles(response.items);
+      setCycleError(null);
+    } catch (error) {
+      setCycleError(
+        error instanceof Error
+          ? error.message
+          : "No se pudieron consultar los ciclos agricolas.",
+      );
+    } finally {
+      setCycleLoading(false);
+    }
+  };
+
+  const openCycleDialog = async (mode: CycleDialogMode) => {
+    setCycleDialogMode(mode);
+    setCycleDialogOpen(true);
+    await loadAgriculturalCycles();
+  };
+
+  const closeCycleDialog = () => {
+    setCycleDialogOpen(false);
+    setCycleExitNotice(null);
+    setCycleError(null);
+  };
+
+  const openLibraryForCycle = async (cycle: AgriculturalCycleRecord) => {
+    try {
+      const response = await dashboardApi.orthomosaics(cycle.id);
       setOrthomosaics(response.items);
       setLibraryError(null);
       setLibraryOpen(true);
@@ -148,6 +228,197 @@ export function MapView() {
           : "No se pudo consultar la biblioteca.",
       );
       setLibraryOpen(true);
+    }
+  };
+
+  const requireActiveCycle = async (
+    callback: () => void | Promise<void>,
+    mode: CycleDialogMode = "entry",
+  ) => {
+    if (!activeCycle) {
+      await openCycleDialog(mode);
+      return;
+    }
+    await callback();
+  };
+
+  // Bibliotecas persistidas de vuelos y regiones.
+  const openLibrary = async () => {
+    if (!activeCycle) {
+      await openCycleDialog("library");
+      return;
+    }
+    await openLibraryForCycle(activeCycle);
+  };
+  const leaveActiveCycle = () => {
+    const cycleName = activeCycle?.name ?? "ciclo agrícola";
+    map.resetWorkspace();
+    setLibraryOpen(false);
+    setImportDialogOpen(false);
+    setIndicesOpen(false);
+    setRoiOpen(false);
+    setRoiLibraryOpen(false);
+    setDetectionsOpen(false);
+    setPrescriptionOpen(false);
+    setPrescriptionError(null);
+    setSelectedIndex(null);
+    setRois([]);
+    setOrthomosaics([]);
+    setRoiAnalysisHistory([]);
+    setComparisonRoiId(null);
+    setRoiComparisonOpen(false);
+    setRoiAnalysisError(null);
+    setCycleError(null);
+    setActiveCycle(null);
+    setCycleExitNotice(
+      `Saliste de ${cycleName}. El mapa volvió a la vista inicial.`,
+    );
+  };
+  const handleCycleSelected = async (cycle: AgriculturalCycleRecord) => {
+    setCycleExitNotice(null);
+    setActiveCycle(cycle);
+    setCycleDialogOpen(false);
+    setCycleError(null);
+    if (cycleDialogMode === "import") {
+      window.setTimeout(() => setImportDialogOpen(true), 0);
+      return;
+    }
+    if (cycleDialogMode === "entry") {
+      return;
+    }
+    await openLibraryForCycle(cycle);
+  };
+  const handleCycleCreated = async (payload: {
+    name: string;
+    crop_name?: string;
+    start_date: string;
+    end_date?: string;
+    notes?: string;
+  }) => {
+    setCycleSaving(true);
+    try {
+      const response = await dashboardApi.createAgriculturalCycle(payload);
+      setAgriculturalCycles((items) => [response.cycle, ...items]);
+      setCycleExitNotice(null);
+      setActiveCycle(response.cycle);
+      setCycleDialogOpen(false);
+      setCycleError(null);
+      if (cycleDialogMode === "import") {
+        window.setTimeout(() => setImportDialogOpen(true), 0);
+      } else if (cycleDialogMode === "entry") {
+        return;
+      } else {
+        await openLibraryForCycle(response.cycle);
+      }
+    } catch (error) {
+      setCycleError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo crear el ciclo agricola.",
+      );
+    } finally {
+      setCycleSaving(false);
+    }
+  };
+  const handleCycleRename = async (
+    cycle: AgriculturalCycleRecord,
+    name: string,
+  ) => {
+    const nextName = name.trim();
+    if (!nextName) {
+      setCycleError("Captura un nombre valido para el ciclo agricola.");
+      return;
+    }
+    setCycleRenamingId(cycle.id);
+    try {
+      const response = await dashboardApi.updateAgriculturalCycle(cycle.id, {
+        name: nextName,
+      });
+      setAgriculturalCycles((items) =>
+        items.map((item) => (item.id === cycle.id ? response.cycle : item)),
+      );
+      setActiveCycle((current) =>
+        current?.id === cycle.id ? response.cycle : current,
+      );
+      setCycleError(null);
+    } catch (error) {
+      setCycleError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo renombrar el ciclo agricola.",
+      );
+    } finally {
+      setCycleRenamingId(null);
+    }
+  };
+  const beginOrthomosaicDateEdit = (record: OrthomosaicRecord) => {
+    setEditingOrthomosaicId(record.id);
+    setEditingCaptureDate(record.capture_date);
+    setLibraryError(null);
+  };
+  const cancelOrthomosaicDateEdit = () => {
+    setEditingOrthomosaicId(null);
+    setEditingCaptureDate("");
+  };
+  const saveOrthomosaicDate = async (record: OrthomosaicRecord) => {
+    if (!editingCaptureDate) {
+      setLibraryError("Selecciona una fecha valida para el vuelo.");
+      return;
+    }
+    setUpdatingOrthomosaicId(record.id);
+    try {
+      const response = await dashboardApi.updateOrthomosaic(record.id, {
+        capture_date: editingCaptureDate,
+      });
+      setOrthomosaics((items) =>
+        items.map((item) =>
+          item.id === record.id ? response.orthomosaic : item,
+        ),
+      );
+      cancelOrthomosaicDateEdit();
+      setLibraryError(null);
+    } catch (error) {
+      setLibraryError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo actualizar la fecha del vuelo.",
+      );
+    } finally {
+      setUpdatingOrthomosaicId(null);
+    }
+  };
+  const moveOrthomosaic = async (sourceId: string, targetId: string) => {
+    if (!activeCycle || sourceId === targetId || reorderingOrthomosaics) return;
+    const previous = orthomosaics;
+    const sourceIndex = previous.findIndex((item) => item.id === sourceId);
+    const originalTargetIndex = previous.findIndex((item) => item.id === targetId);
+    if (sourceIndex < 0 || originalTargetIndex < 0) return;
+
+    const next = [...previous];
+    const [moved] = next.splice(sourceIndex, 1);
+    const targetIndex = next.findIndex((item) => item.id === targetId);
+    next.splice(sourceIndex < originalTargetIndex ? targetIndex + 1 : targetIndex, 0, moved);
+
+    setOrthomosaics(next);
+    setReorderingOrthomosaics(true);
+    setLibraryError(null);
+    try {
+      const response = await dashboardApi.reorderOrthomosaics(
+        activeCycle.id,
+        next.map((item) => item.id),
+      );
+      setOrthomosaics(response.items);
+    } catch (error) {
+      setOrthomosaics(previous);
+      setLibraryError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo guardar el nuevo orden de los vuelos.",
+      );
+    } finally {
+      setReorderingOrthomosaics(false);
+      setDraggedOrthomosaicId(null);
+      setDragOverOrthomosaicId(null);
     }
   };
   const toggleIndex = (name: "NDVI" | "NDWI" | "NDRE") => {
@@ -172,7 +443,7 @@ export function MapView() {
   };
   const openRoiLibrary = async () => {
     try {
-      const response = await dashboardApi.rois();
+      const response = await dashboardApi.rois(activeCycle?.id ?? null);
       setRois(response.items);
       setRoiLibraryOpen(true);
     } catch (error) {
@@ -188,7 +459,11 @@ export function MapView() {
     roiId: string,
     index: ComparisonIndex,
   ) => {
-    const response = await dashboardApi.roiAnalyses(roiId, index);
+    const response = await dashboardApi.roiAnalyses(
+      roiId,
+      index,
+      activeCycle?.id ?? null,
+    );
     setRoiAnalysisHistory(response.items);
     setRoiAnalysisSyncedAt(new Date().toISOString());
     return response.items;
@@ -242,6 +517,32 @@ export function MapView() {
       return;
     }
   };
+  const editComparisonFlight = async (orthomosaicId: string) => {
+    try {
+      let record = orthomosaics.find((item) => item.id === orthomosaicId);
+      if (!record && activeCycle) {
+        const response = await dashboardApi.orthomosaics(activeCycle.id);
+        setOrthomosaics(response.items);
+        record = response.items.find((item) => item.id === orthomosaicId);
+      }
+      if (!record)
+        throw new Error(
+          "No se encontró el ortomosaico seleccionado dentro del ciclo activo.",
+        );
+      await map.activateStoredOrtho(record);
+      setSelectedIndex(null);
+      setRoiComparisonOpen(false);
+      setLibraryOpen(false);
+      setRoiAnalysisError(null);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "No se pudo preparar el vuelo seleccionado para editarlo.";
+      setRoiAnalysisError(message);
+      throw error;
+    }
+  };
   const activeRoiIndexReady =
     selectedIndex === "NDVI"
       ? Boolean(map.ndviAnalysis.roiResponse)
@@ -262,6 +563,7 @@ export function MapView() {
       const response = await dashboardApi.saveRoiAnalysis(
         roiId,
         orthomosaicId,
+        activeCycle?.id ?? null,
         payload,
       );
       setComparisonIndex(payload.index);
@@ -446,7 +748,19 @@ export function MapView() {
     setDeleteBusy(true);
     setDeleteError(null);
     try {
-      if (target.kind === "orthomosaic") {
+      if (target.kind === "cycle") {
+        await dashboardApi.deleteAgriculturalCycle(target.record.id);
+        setAgriculturalCycles((items) =>
+          items.filter((item) => item.id !== target.record.id),
+        );
+        if (activeCycle?.id === target.record.id) {
+          leaveActiveCycle();
+          setCycleDialogOpen(true);
+          setCycleExitNotice(
+            `Se eliminó ${target.record.name} y todo su contenido asociado.`,
+          );
+        }
+      } else if (target.kind === "orthomosaic") {
         await dashboardApi.deleteOrthomosaic(target.record.id);
         setOrthomosaics((items) =>
           items.filter((item) => item.id !== target.record.id),
@@ -498,7 +812,14 @@ export function MapView() {
 
   // Un único diálogo de confirmación adapta su mensaje al tipo de registro.
   const deleteDialogContent =
-    deleteTarget?.kind === "orthomosaic"
+    deleteTarget?.kind === "cycle"
+      ? {
+          title: "¿Eliminar este ciclo agrícola?",
+          description:
+            "Se eliminarán todos sus ortomosaicos, archivos, ROI y análisis asociados. Esta acción no se puede deshacer.",
+          subject: deleteTarget.record.name,
+        }
+      : deleteTarget?.kind === "orthomosaic"
       ? {
           title: "¿Eliminar este ortomosaico?",
           description:
@@ -532,17 +853,136 @@ export function MapView() {
     }
   };
 
+  const openPrescription = () => {
+    setPrescriptionError(
+      map.state.orthomosaicId && map.ndviAnalysis.roiResponse
+        ? null
+        : "Selecciona un ROI, recórtalo y abre su histograma NDVI antes de generar la prescripción.",
+    );
+    setPrescriptionOpen(true);
+  };
+
+  const generatePrescription = async (
+    zoneCount: number,
+    cellSizeM: number,
+  ) => {
+    setPrescriptionError(null);
+    try {
+      return await map.generateZoning(zoneCount, cellSizeM);
+    } catch (error) {
+      setPrescriptionError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar el mapa de prescripción.",
+        );
+    }
+  };
+
+  const generateZoning = async (
+    zoneCount: number,
+    cellSizeM: number,
+  ) => {
+    setPrescriptionError(null);
+    try {
+      return await map.generateZoning(zoneCount, cellSizeM);
+    } catch (error) {
+      setPrescriptionError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar la zonificación NDVI.",
+      );
+      throw error;
+    }
+  };
+
+  const generatePrescriptionV2 = async (
+    zoneCount: number,
+    cellSizeM: number,
+    doses: Array<{ class_id: number; dose: number }>,
+  ) => {
+    setPrescriptionError(null);
+    try {
+      const result = await map.generatePrescription(zoneCount, cellSizeM, doses);
+      setPrescriptionOpen(false);
+      return result;
+    } catch (error) {
+      setPrescriptionError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar el mapa de prescripción.",
+      );
+      throw error;
+    }
+  };
+
   return (
     <main className="map-shell">
       <div ref={mapElement} className="map" />
       <ActionBar
         state={map.state}
-        onOrthoLibrary={() => void openLibrary()}
-        onOpenIndices={() => setIndicesOpen(true)}
-        onOpenRoi={() => setRoiOpen(true)}
-        onOpenDetections={() => setDetectionsOpen(true)}
-        onLabels={map.toggleLabels}
-        onImport={() => setImportDialogOpen(true)}
+        onOrthoLibrary={() => void requireActiveCycle(openLibrary, "library")}
+        onOpenIndices={() =>
+          void requireActiveCycle(
+            async () => setIndicesOpen(true),
+            "entry",
+          )
+        }
+        onOpenRoi={() =>
+          void requireActiveCycle(
+            async () => setRoiOpen(true),
+            "entry",
+          )
+        }
+        onOpenDetections={() =>
+          void requireActiveCycle(
+            async () => setDetectionsOpen(true),
+            "entry",
+          )
+        }
+        onLabels={() =>
+          void requireActiveCycle(async () => map.toggleLabels(), "entry")
+        }
+        onImport={() =>
+          void requireActiveCycle(
+            async () => setImportDialogOpen(true),
+            "import",
+          )
+        }
+      />
+      <AgriculturalCycleDialog
+        open={cycleDialogOpen}
+        loading={cycleLoading}
+        busy={cycleSaving}
+        error={cycleError}
+        cycles={agriculturalCycles}
+        activeCycleId={activeCycle?.id ?? null}
+        mode={cycleDialogMode}
+        renamingCycleId={cycleRenamingId}
+        onClose={closeCycleDialog}
+        onSelect={(cycle) => void handleCycleSelected(cycle)}
+        onCreate={(payload) => void handleCycleCreated(payload)}
+        onRename={(cycle, name) => void handleCycleRename(cycle, name)}
+        onDelete={(cycle) => {
+          setDeleteError(null);
+          setDeleteTarget({ kind: "cycle", record: cycle });
+        }}
+      />
+      <PrescriptionDialog
+        open={prescriptionOpen}
+        busy={map.zoningLoading || map.prescriptionLoading}
+        error={prescriptionError}
+        zoning={map.zoning}
+        prescription={map.prescription}
+        onGenerateZoning={generateZoning}
+        onGeneratePrescription={generatePrescriptionV2}
+        onClear={() => {
+          map.clearPrescription();
+          setPrescriptionOpen(false);
+          setPrescriptionError(null);
+        }}
+        onClose={() => {
+          if (!(map.zoningLoading || map.prescriptionLoading)) setPrescriptionOpen(false);
+        }}
       />
       {map.state.detectionEditMode && (
         <div className="detection-edit-banner" role="status">
@@ -569,7 +1009,14 @@ export function MapView() {
       <ImportDialog
         open={importDialogOpen}
         onClose={() => setImportDialogOpen(false)}
-        onFile={(file, sensor) => void map.importOrtho(file, sensor)}
+        onFile={(file, sensor) => {
+          if (!activeCycle) {
+            setImportDialogOpen(false);
+            void openCycleDialog("import");
+            return;
+          }
+          void map.importOrtho(file, sensor, activeCycle.id);
+        }}
       />
       <DetectionDialog
         open={detectionsOpen}
@@ -593,7 +1040,9 @@ export function MapView() {
         onClose={() => setRoiOpen(false)}
         onDraw={map.drawRoi}
         onImport={(files) => void map.importRoi(files)}
-        onManage={() => void openRoiLibrary()}
+        onManage={() =>
+          void requireActiveCycle(openRoiLibrary, "entry")
+        }
       />
       {roiLibraryOpen && (
         <div
@@ -818,20 +1267,44 @@ export function MapView() {
               </button>
             </div>
             <div className="modal-intro-row">
-              <p className="import-dialog-copy">
-                Consulta, activa o administra los ortomosaicos disponibles.
-              </p>
+              <div className="library-cycle-summary">
+                <p className="import-dialog-copy">
+                  Consulta, activa o administra los ortomosaicos disponibles.
+                </p>
+                {activeCycle && (
+                  <span className="library-cycle-badge">
+                    <IconCalendarEvent aria-hidden="true" />
+                    {activeCycle.name}
+                  </span>
+                )}
+              </div>
               <span className="modal-record-count">
-                {orthomosaics.length}{" "}
-                {orthomosaics.length === 1 ? "archivo" : "archivos"}
+                {reorderingOrthomosaics
+                  ? "Guardando orden..."
+                  : `${orthomosaics.length} ${orthomosaics.length === 1 ? "archivo" : "archivos"}`}
               </span>
             </div>
+            <div className="library-cycle-actions">
+              <button
+                type="button"
+                className="orthomosaic-date-trigger"
+                onClick={leaveActiveCycle}
+              >
+                Salir del ciclo
+              </button>
+            </div>
+            {!!orthomosaics.length && (
+              <p className="orthomosaic-reorder-help">
+                Arrastra cada vuelo desde el control de la izquierda para cambiar su posición.
+              </p>
+            )}
             {libraryError && <p className="library-error">{libraryError}</p>}
-            {!libraryError && (
+            {(
               <div className="orthomosaic-table-wrap">
                 <table className="orthomosaic-table">
                   <thead>
                     <tr>
+                      <th className="orthomosaic-drag-cell" aria-label="Reordenar" />
                       <th>Ortomosaico</th>
                       <th>Fecha</th>
                       <th>Sensor</th>
@@ -844,12 +1317,93 @@ export function MapView() {
                       const active =
                         map.state.orthomosaicId === record.id && map.state.rgb;
                       return (
-                        <tr key={record.id}>
+                        <tr
+                          key={record.id}
+                          className={`${draggedOrthomosaicId === record.id ? "is-dragging" : ""} ${dragOverOrthomosaicId === record.id ? "is-drag-over" : ""}`}
+                          onDragOver={(event) => {
+                            if (!draggedOrthomosaicId || draggedOrthomosaicId === record.id) return;
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                            setDragOverOrthomosaicId(record.id);
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            if (draggedOrthomosaicId) {
+                              void moveOrthomosaic(draggedOrthomosaicId, record.id);
+                            }
+                          }}
+                        >
+                          <td className="orthomosaic-drag-cell">
+                            <button
+                              type="button"
+                              className="orthomosaic-drag-handle"
+                              draggable={!reorderingOrthomosaics}
+                              disabled={reorderingOrthomosaics}
+                              title="Arrastra para reordenar"
+                              aria-label={`Reordenar ${record.name}`}
+                              onDragStart={(event) => {
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("text/plain", record.id);
+                                setDraggedOrthomosaicId(record.id);
+                                setLibraryError(null);
+                              }}
+                              onDragEnd={() => {
+                                setDraggedOrthomosaicId(null);
+                                setDragOverOrthomosaicId(null);
+                              }}
+                            >
+                              <IconGripVertical aria-hidden="true" />
+                            </button>
+                          </td>
                           <td>
                             <strong>{record.name}</strong>
                             <small>{record.original_filename}</small>
                           </td>
-                          <td>{record.capture_date}</td>
+                          <td>
+                            {editingOrthomosaicId === record.id ? (
+                              <div className="orthomosaic-date-editor">
+                                <input
+                                  type="date"
+                                  value={editingCaptureDate}
+                                  onChange={(event) =>
+                                    setEditingCaptureDate(event.target.value)
+                                  }
+                                  max="2026-08-19"
+                                />
+                                <div className="orthomosaic-date-actions">
+                                  <button
+                                    type="button"
+                                    className="orthomosaic-date-save"
+                                    onClick={() => void saveOrthomosaicDate(record)}
+                                    disabled={updatingOrthomosaicId === record.id}
+                                  >
+                                    {updatingOrthomosaicId === record.id
+                                      ? "Guardando..."
+                                      : "Guardar"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="orthomosaic-date-cancel"
+                                    onClick={cancelOrthomosaicDateEdit}
+                                    disabled={updatingOrthomosaicId === record.id}
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="orthomosaic-date-cell">
+                                <span>{record.capture_date}</span>
+                                <button
+                                  type="button"
+                                  className="orthomosaic-date-trigger"
+                                  onClick={() => beginOrthomosaicDateEdit(record)}
+                                >
+                                  Editar fecha
+                                </button>
+                              </div>
+                            )}
+                          </td>
                           <td>
                             <span className="sensor-table-badge">
                               {record.sensor_type}
@@ -896,8 +1450,12 @@ export function MapView() {
                 {!orthomosaics.length && (
                   <div className="modal-empty-state">
                     <IconPhoto aria-hidden="true" />
-                    <strong>No hay ortomosaicos guardados</strong>
-                    <span>Importa un vuelo para comenzar tu biblioteca.</span>
+                    <strong>Este ciclo aun no tiene ortomosaicos</strong>
+                    <span>
+                      {activeCycle
+                        ? `Importa un vuelo para comenzar la biblioteca de ${activeCycle.name}.`
+                        : "Importa un vuelo para comenzar tu biblioteca."}
+                    </span>
                   </div>
                 )}
               </div>
@@ -923,8 +1481,14 @@ export function MapView() {
         ndviVisible={map.state.ndvi}
         onToggleNdvi={() => void map.toggleNdvi()}
         onToggleIndex={map.toggleIndexLayer}
-        onHideNdvi={map.hideNdvi}
-        onHideIndex={map.hideIndex}
+        onHideNdvi={() => {
+          map.hideNdvi();
+          setSelectedIndex(null);
+        }}
+        onHideIndex={(name) => {
+          map.hideIndex(name);
+          setSelectedIndex((current) => (current === name ? null : current));
+        }}
         canSaveRoiAnalysis={Boolean(
           selectedIndex &&
           map.state.selectedRoiId &&
@@ -934,6 +1498,14 @@ export function MapView() {
         roiAnalysisSaving={roiAnalysisSaving}
         onSaveRoiAnalysis={(payload) => void saveRoiAnalysis(payload)}
         onOpenRoiComparison={(index) => void loadRoiAnalysisHistory(index)}
+        prescriptionMode={map.prescription ? "prescription" : map.zoning ? "zoning" : "idle"}
+        prescriptionLoading={map.zoningLoading || map.prescriptionLoading}
+        onOpenPrescription={openPrescription}
+        onExitPrescription={() => {
+          map.clearPrescription();
+          setPrescriptionOpen(false);
+          setPrescriptionError(null);
+        }}
       />
       <RoiComparisonDialog
         open={roiComparisonOpen}
@@ -944,6 +1516,7 @@ export function MapView() {
         deletingId={roiAnalysisDeletingId}
         error={roiAnalysisError}
         syncedAt={roiAnalysisSyncedAt}
+        activeOrthomosaicId={map.state.orthomosaicId}
         onRefresh={() =>
           comparisonRoiId
             ? refreshRoiAnalysisHistory(comparisonRoiId, comparisonIndex)
@@ -952,6 +1525,7 @@ export function MapView() {
             : Promise.resolve()
         }
         onExport={() => void exportRoiAnalysisHistory()}
+        onEditFlight={editComparisonFlight}
         onDelete={(analysis) => {
           setDeleteError(null);
           setDeleteTarget({ kind: "analysis", record: analysis });
@@ -1002,6 +1576,18 @@ export function MapView() {
         <div className="error-toast" role="alert">
           {map.state.error}
         </div>
+      )}
+      {cycleExitNotice && (
+        <div className="cycle-exit-toast" role="status" aria-live="polite">
+          <IconCheck aria-hidden="true" />
+          <span>{cycleExitNotice}</span>
+        </div>
+      )}
+      {(map.prescription || map.zoning) && (
+        <PrescriptionLegend
+          response={map.prescription ?? map.zoning!}
+          onClose={map.clearPrescription}
+        />
       )}
       {map.state.uploading && (
         <div className="uploading-overlay" role="status" aria-live="polite">

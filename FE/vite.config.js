@@ -1,3 +1,8 @@
+/**
+ * Configuración de desarrollo/build del frontend.
+ * Define el servidor local y el proxy hacia FastAPI para trabajar sin
+ * problemas de CORS en entorno de desarrollo.
+ */
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 export default defineConfig(function (_a) {
@@ -21,8 +26,11 @@ export default defineConfig(function (_a) {
                 '/tree_points': backendUrl,
                 '/ortho_analysis': backendUrl,
                 '/orthomosaics': backendUrl,
+                '/agricultural_cycles': backendUrl,
                 '/rois': backendUrl,
                 '/vegetation_indices': backendUrl,
+                '/ndvi_zoning': backendUrl,
+                '/prescriptions': backendUrl,
                 '/tiles': backendUrl,
             },
         },

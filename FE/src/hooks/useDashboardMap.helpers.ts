@@ -50,6 +50,7 @@ export function createInitialMapState(): MapState {
     ndvi: false,
     trees: false,
     labels: false,
+    prescription: false,
     vari: false,
     exg: false,
     swipe: false,

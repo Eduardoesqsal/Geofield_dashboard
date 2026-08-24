@@ -32,22 +32,30 @@ class OrthomosaicApplicationService:
         *,
         content: bytes,
         filename: str,
+        agricultural_cycle_id: str,
         capture_date: date,
         sensor_type: str,
         name: str | None,
         content_type: str | None,
         activate: bool,
     ) -> dict[str, Any]:
+        # Validar los tiles internos antes de escribir el archivo o crear su
+        # registro. Un TIFF puede tener encabezado válido y datos truncados.
+        self.raster.validate_uploaded(content)
         record = self.supabase.upload_orthomosaic(
             content=content,
             filename=filename,
+            agricultural_cycle_id=agricultural_cycle_id,
             capture_date=capture_date,
             sensor_type=sensor_type,
             name=name,
             content_type=content_type,
         )
         if activate:
-            self.supabase.activate_orthomosaic(record["id"], self.raster)
+            # El registro recién insertado ya contiene todo lo necesario para
+            # activar el archivo. Evita una segunda lectura susceptible a una
+            # conexión HTTP persistente rota después de reiniciar el backend.
+            self.supabase.activate_orthomosaic_record(record, self.raster)
         analysis = self.raster.analyze_uploaded(
             content,
             self._kind_from_sensor(sensor_type),
@@ -63,6 +71,16 @@ class OrthomosaicApplicationService:
         record = self.supabase.delete_orthomosaic(orthomosaic_id)
         self.reset_active_orthomosaic(record)
         return record
+
+    def update_orthomosaic_capture_date(
+        self,
+        orthomosaic_id: str,
+        capture_date: date,
+    ) -> dict[str, Any]:
+        return self.supabase.update_orthomosaic_capture_date(
+            orthomosaic_id,
+            capture_date,
+        )
 
     def reset_active_orthomosaic(self, record: dict[str, Any]) -> None:
         active_path = self.raster.active_path.resolve() if self.raster.active_path else None
@@ -94,8 +112,14 @@ class RoiApplicationService:
         name: str,
         geojson: dict[str, Any],
         orthomosaic_id: str | None,
+        agricultural_cycle_id: str | None,
     ) -> dict[str, Any]:
-        return self.supabase.create_roi(name, geojson, orthomosaic_id)
+        return self.supabase.create_roi(
+            name,
+            geojson,
+            orthomosaic_id,
+            agricultural_cycle_id,
+        )
 
     def save_roi_analysis(
         self,

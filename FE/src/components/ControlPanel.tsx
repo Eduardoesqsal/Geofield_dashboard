@@ -10,6 +10,7 @@ import {
   IconDeviceFloppy,
   IconEye,
   IconEyeOff,
+  IconGridDots,
   IconX,
 } from "@tabler/icons-react";
 import type { TreeCollection } from "../types/geo";
@@ -55,6 +56,10 @@ interface ControlPanelProps {
   roiAnalysisSaving: boolean;
   onSaveRoiAnalysis: (payload: SaveRoiAnalysisPayload) => void;
   onOpenRoiComparison: (index: ComparisonIndex) => void;
+  prescriptionMode: "idle" | "zoning" | "prescription";
+  prescriptionLoading: boolean;
+  onOpenPrescription: () => void;
+  onExitPrescription: () => void;
 }
 
 interface EqualizationHistogramProps {
@@ -266,6 +271,10 @@ export function ControlPanel({
   roiAnalysisSaving,
   onSaveRoiAnalysis,
   onOpenRoiComparison,
+  prescriptionMode,
+  prescriptionLoading,
+  onOpenPrescription,
+  onExitPrescription,
 }: ControlPanelProps) {
   const stats = treeStats(filteredData);
   const domainStats = treeStats(data);
@@ -358,7 +367,14 @@ export function ControlPanel({
     right: positionInRange(ndvi.maximum, activeNdviStats),
   };
   const roiAnalysisReady = canSaveRoiAnalysis && Boolean(ndvi.roiResponse);
-  const hasVisiblePanel = Boolean(selectedIndex || data);
+  const hasSelectedSpectralPanel =
+    selectedIndex === "NDVI"
+      ? Boolean(ndvi.response)
+      : selectedIndex != null
+        ? indices.some((analysis) => analysis.name === selectedIndex)
+        : false;
+  const hasVisiblePanel =
+    hasSelectedSpectralPanel || Boolean(data && detectionPanelVisible);
 
   if (!hasVisiblePanel) return null;
 
@@ -441,6 +457,29 @@ export function ControlPanel({
             aria-label="Valor maximo NDVI"
           />
         </div>
+        {ndvi.roiResponse && (
+          <button
+            type="button"
+            className={`prescription-panel-action ${prescriptionMode !== "idle" ? "is-active" : ""}`}
+            onClick={
+              prescriptionMode === "idle" ? onOpenPrescription : onExitPrescription
+            }
+            disabled={prescriptionLoading}
+          >
+            {prescriptionMode === "idle" ? (
+              <IconGridDots aria-hidden="true" />
+            ) : (
+              <IconX aria-hidden="true" />
+            )}
+            {prescriptionLoading
+              ? "Procesando zonificación..."
+              : prescriptionMode === "prescription"
+                ? "Salir de la prescripción"
+                : prescriptionMode === "zoning"
+                  ? "Salir de la zonificación"
+                  : "Generar zonificación NDVI para este ROI"}
+          </button>
+        )}
         <StatisticsDisclosure
           expanded={Boolean(expandedStatistics.ndvi)}
           onToggle={() => toggleStatistics("ndvi")}

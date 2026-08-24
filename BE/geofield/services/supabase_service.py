@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import httpx
+from postgrest import ReturnMethod
 from rasterio.io import MemoryFile
 from rasterio.warp import transform_bounds
 from shapely.geometry import box, shape
@@ -71,6 +73,83 @@ class SupabaseService:
                 "Supabase no esta configurado. Define SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY.",
             )
         return self.client
+
+    def _reconnect_client(self) -> Client:
+        """Recrea el cliente para descartar conexiones HTTP persistentes rotas."""
+        if not self.settings.supabase_url or not self.settings.supabase_service_role_key:
+            raise SupabaseNotConfiguredError(
+                "Supabase no esta configurado. Define SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY.",
+            )
+        self.client = create_client(
+            self.settings.supabase_url,
+            self.settings.supabase_service_role_key,
+        )
+        return self.client
+
+    def _upsert_orthomosaic_record(
+        self,
+        payload: dict[str, Any],
+    ) -> Any:
+        """Inserta de forma idempotente y renueva conexiones HTTP rotas."""
+        client = self.require_client()
+        for attempt in range(3):
+            try:
+                (
+                    client.table("orthomosaics")
+                    .upsert(
+                        payload,
+                        on_conflict="id",
+                        returning=ReturnMethod.minimal,
+                    )
+                    .execute()
+                )
+                # El payload ya contiene todos los campos usados para activar
+                # el raster. No dependemos de volver a leer la representación.
+                return payload
+            except httpx.TransportError as transport_error:
+                if attempt == 2:
+                    raise transport_error
+                client = self._reconnect_client()
+                try:
+                    verification = (
+                        client.table("orthomosaics")
+                        .select("id")
+                        .eq("id", payload["id"])
+                        .limit(1)
+                        .execute()
+                    )
+                    if self._payload_data(verification):
+                        return payload
+                except httpx.TransportError:
+                    client = self._reconnect_client()
+        raise RuntimeError("No se pudo guardar el registro del ortomosaico.")
+
+    def _upload_orthomosaic_object(
+        self,
+        storage_path: str,
+        content: bytes,
+        content_type: str | None,
+    ) -> None:
+        """Sube al bucket con una ruta única y reintentos seguros."""
+        client = self.require_client()
+        options = {
+            "content-type": content_type or "image/tiff",
+            # La ruta contiene UUID. Upsert permite repetir la operación si
+            # Supabase guardó el archivo pero se perdió la respuesta HTTP.
+            "upsert": "true",
+        }
+        for attempt in range(3):
+            try:
+                client.storage.from_(self.settings.supabase_bucket).upload(
+                    storage_path,
+                    content,
+                    options,
+                )
+                return
+            except httpx.TransportError:
+                if attempt == 2:
+                    raise
+                client = self._reconnect_client()
 
     @staticmethod
     def _safe_filename(filename: str) -> str:
@@ -163,6 +242,32 @@ class SupabaseService:
             "orthomosaics": row.get("orthomosaics"),
         }
 
+    @staticmethod
+    def _latest_index_results_per_flight(
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Conserva una medición por ROI, vuelo e índice, priorizando la más nueva."""
+        latest: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in rows:
+            key = (
+                str(row.get("orthomosaic_id") or ""),
+                str(row.get("index_type") or "").upper(),
+            )
+            timestamp = str(row.get("calculated_at") or row.get("created_at") or "")
+            current = latest.get(key)
+            current_timestamp = (
+                str(
+                    current.get("calculated_at")
+                    or current.get("created_at")
+                    or ""
+                )
+                if current
+                else ""
+            )
+            if current is None or timestamp > current_timestamp:
+                latest[key] = row
+        return list(latest.values())
+
     def _storage_path(self, capture_date: date, filename: str) -> str:
         return (
             f"{capture_date.isoformat()}/"
@@ -179,57 +284,227 @@ class SupabaseService:
         *,
         content: bytes,
         filename: str,
+        agricultural_cycle_id: str,
         capture_date: date,
         sensor_type: str,
         name: str | None = None,
         content_type: str | None = None,
     ) -> dict[str, Any]:
-        client = self.require_client()
+        self.require_client()
         metadata = self._metadata_from_bytes(content)
+        orthomosaic_id = str(uuid4())
         if self.uses_local_storage:
             local_path = self._local_path(capture_date, filename)
             local_path.write_bytes(content)
             file_path = str(local_path.resolve())
         else:
             storage_path = self._storage_path(capture_date, filename)
-            client.storage.from_(self.settings.supabase_bucket).upload(
+            self._upload_orthomosaic_object(
                 storage_path,
                 content,
-                {"content-type": content_type or "image/tiff", "upsert": "false"},
+                content_type,
             )
             file_path = storage_path
-        response = client.table("orthomosaics").insert(
-            {
-                "name": (name or Path(filename).stem).strip() or Path(filename).stem,
-                "original_filename": filename,
-                "capture_date": capture_date.isoformat(),
-                "sensor_type": sensor_type,
-                "file_path": file_path,
-                "bounds": metadata.bounds_wkt,
-                "raster_crs": metadata.raster_crs,
-                "width_px": metadata.width_px,
-                "height_px": metadata.height_px,
-                "bands_count": metadata.bands_count,
-                "file_size_bytes": metadata.file_size_bytes,
-                "upload_status": "uploaded",
-            },
-        ).execute()
+        payload = {
+            "id": orthomosaic_id,
+            "agricultural_cycle_id": agricultural_cycle_id,
+            "name": (name or Path(filename).stem).strip() or Path(filename).stem,
+            "original_filename": filename,
+            "capture_date": capture_date.isoformat(),
+            "sensor_type": sensor_type,
+            "file_path": file_path,
+            "bounds": metadata.bounds_wkt,
+            "raster_crs": metadata.raster_crs,
+            "width_px": metadata.width_px,
+            "height_px": metadata.height_px,
+            "bands_count": metadata.bands_count,
+            "file_size_bytes": metadata.file_size_bytes,
+            "upload_status": "uploaded",
+        }
+        response = self._upsert_orthomosaic_record(payload)
         data = self._payload_data(response)
         return data[0] if isinstance(data, list) else data
 
-    def list_orthomosaics(self, limit: int = 100) -> list[dict[str, Any]]:
+    def list_agricultural_cycles(self, limit: int = 100) -> list[dict[str, Any]]:
         client = self.require_client()
         response = (
-            client.table("orthomosaics")
-            .select(
-                "id,name,original_filename,capture_date,sensor_type,file_path,upload_status,created_at",
-            )
-            .order("capture_date", desc=True)
+            client.table("agricultural_cycles")
+            .select("id,name,crop_name,start_date,end_date,notes,created_at")
+            .order("start_date", desc=True)
             .limit(limit)
             .execute()
         )
         data = self._payload_data(response)
         return list(data or [])
+
+    def create_agricultural_cycle(
+        self,
+        *,
+        name: str,
+        crop_name: str | None,
+        start_date: date,
+        end_date: date | None,
+        notes: str | None,
+    ) -> dict[str, Any]:
+        response = (
+            self.require_client()
+            .table("agricultural_cycles")
+            .insert(
+                {
+                    "name": name,
+                    "crop_name": crop_name,
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat() if end_date else None,
+                    "notes": notes,
+                },
+            )
+            .execute()
+        )
+        data = self._payload_data(response)
+        return data[0] if isinstance(data, list) else data
+
+    def update_agricultural_cycle(
+        self,
+        cycle_id: str,
+        *,
+        name: str,
+    ) -> dict[str, Any]:
+        response = (
+            self.require_client()
+            .table("agricultural_cycles")
+            .update({"name": name})
+            .eq("id", cycle_id)
+            .select("id,name,crop_name,start_date,end_date,notes,created_at")
+            .execute()
+        )
+        data = self._payload_data(response) or []
+        if not data:
+            raise OrthomosaicNotFoundError(
+                f"No existe el ciclo agricola {cycle_id}.",
+            )
+        return data[0]
+
+    def delete_agricultural_cycle(self, cycle_id: str) -> dict[str, Any]:
+        client = self.require_client()
+        response = (
+            client.table("agricultural_cycles")
+            .select("id,name,crop_name,start_date,end_date,notes,created_at")
+            .eq("id", cycle_id)
+            .limit(1)
+            .execute()
+        )
+        cycles = list(self._payload_data(response) or [])
+        if not cycles:
+            raise OrthomosaicNotFoundError(
+                f"No existe el ciclo agricola {cycle_id}.",
+            )
+
+        rois = self.list_rois(cycle_id)
+        # Los análisis asociados se eliminan mediante sus relaciones cascade.
+        client.table("rois").delete().eq(
+            "agricultural_cycle_id",
+            cycle_id,
+        ).execute()
+
+        orthomosaics = self.list_orthomosaics(500, cycle_id)
+        for orthomosaic in orthomosaics:
+            self.delete_orthomosaic(str(orthomosaic["id"]))
+
+        deleted = (
+            client.table("agricultural_cycles")
+            .delete()
+            .eq("id", cycle_id)
+            .execute()
+        )
+        if not self._payload_data(deleted):
+            raise OrthomosaicNotFoundError(
+                f"No se pudo confirmar la eliminación del ciclo {cycle_id}.",
+            )
+        return {
+            "cycle": cycles[0],
+            "orthomosaics": orthomosaics,
+            "deleted_orthomosaics": len(orthomosaics),
+            "deleted_rois": len(rois),
+        }
+
+    def list_orthomosaics(
+        self,
+        limit: int = 100,
+        agricultural_cycle_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        client = self.require_client()
+        columns = (
+            "id,name,original_filename,capture_date,sensor_type,file_path,"
+            "upload_status,created_at,agricultural_cycle_id"
+        )
+
+        def build_query(*, include_display_order: bool) -> Any:
+            selected_columns = (
+                f"{columns},display_order" if include_display_order else columns
+            )
+            query = client.table("orthomosaics").select(selected_columns)
+            if include_display_order:
+                query = query.order(
+                    "display_order",
+                    desc=False,
+                    nullsfirst=False,
+                )
+            query = query.order("capture_date", desc=True).limit(limit)
+            if agricultural_cycle_id:
+                query = query.eq(
+                    "agricultural_cycle_id",
+                    agricultural_cycle_id,
+                )
+            return query
+
+        try:
+            response = build_query(include_display_order=True).execute()
+        except Exception as exc:
+            if "display_order" not in str(exc).lower():
+                raise
+            response = build_query(include_display_order=False).execute()
+        data = self._payload_data(response)
+        return list(data or [])
+
+    def reorder_orthomosaics(
+        self,
+        agricultural_cycle_id: str,
+        orthomosaic_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        current = self.list_orthomosaics(500, agricultural_cycle_id)
+        current_ids = [str(item.get("id") or "") for item in current]
+        if len(orthomosaic_ids) != len(set(orthomosaic_ids)):
+            raise ValueError("El orden contiene vuelos duplicados.")
+        if set(orthomosaic_ids) != set(current_ids):
+            raise ValueError(
+                "El orden debe incluir exactamente todos los ortomosaicos del ciclo.",
+            )
+
+        client = self.require_client()
+        by_id = {str(item["id"]): item for item in current}
+        ordered: list[dict[str, Any]] = []
+        for position, orthomosaic_id in enumerate(orthomosaic_ids):
+            try:
+                response = (
+                    client.table("orthomosaics")
+                    .update({"display_order": position})
+                    .eq("id", orthomosaic_id)
+                    .eq("agricultural_cycle_id", agricultural_cycle_id)
+                    .execute()
+                )
+            except Exception as exc:
+                if "display_order" in str(exc).lower():
+                    raise RuntimeError(
+                        "Falta preparar el orden de vuelos en Supabase. "
+                        "Ejecuta BE/sql/005_add_orthomosaic_display_order.sql.",
+                    ) from exc
+                raise
+            if not self._payload_data(response):
+                raise OrthomosaicNotFoundError(
+                    f"No existe el ortomosaico {orthomosaic_id} en este ciclo.",
+                )
+            ordered.append({**by_id[orthomosaic_id], "display_order": position})
+        return ordered
 
     def healthcheck(self) -> dict[str, Any]:
         client = self.require_client()
@@ -281,17 +556,47 @@ class SupabaseService:
         ).execute()
         return record
 
+    def update_orthomosaic_capture_date(
+        self,
+        orthomosaic_id: str,
+        capture_date: date,
+    ) -> dict[str, Any]:
+        client = self.require_client()
+        response = (
+            client.table("orthomosaics")
+            .update({"capture_date": capture_date.isoformat()})
+            .eq("id", orthomosaic_id)
+            .select(
+                "id,name,original_filename,capture_date,sensor_type,file_path,upload_status,created_at,agricultural_cycle_id,display_order",
+            )
+            .limit(1)
+            .execute()
+        )
+        data = self._payload_data(response) or []
+        if not data:
+            raise OrthomosaicNotFoundError(
+                f"No existe el ortomosaico {orthomosaic_id}.",
+            )
+        return data[0]
+
     def create_roi(
         self,
         name: str,
         geojson: dict[str, Any],
         orthomosaic_id: str | None,
+        agricultural_cycle_id: str | None,
     ) -> dict[str, Any]:
+        cycle_id = agricultural_cycle_id
+        if not cycle_id and orthomosaic_id:
+            cycle_id = self.get_orthomosaic(orthomosaic_id).get(
+                "agricultural_cycle_id",
+            )
         response = self.require_client().table("rois").insert(
             {
                 "name": name,
                 "geojson": geojson,
                 "orthomosaic_id": orthomosaic_id,
+                "agricultural_cycle_id": cycle_id,
             },
         ).execute()
         data = self._payload_data(response)
@@ -344,11 +649,62 @@ class SupabaseService:
             + " | ".join(errors),
         )
 
-    def list_rois(self) -> list[dict[str, Any]]:
+    def list_rois(self, agricultural_cycle_id: str | None = None) -> list[dict[str, Any]]:
+        client = self.require_client()
+        if agricultural_cycle_id:
+            columns = (
+                "id,name,geojson,orthomosaic_id,agricultural_cycle_id,is_active,created_at"
+            )
+            response = (
+                client.table("rois")
+                .select(columns)
+                .eq("agricultural_cycle_id", agricultural_cycle_id)
+                .order("created_at", desc=True)
+                .execute()
+            )
+            records = {
+                item["id"]: item for item in list(self._payload_data(response) or [])
+            }
+
+            # Compatibilidad con ROI creados antes de incorporar ciclos: los
+            # vinculados a un vuelo se resuelven mediante el ciclo del vuelo.
+            orthomosaics = self.list_orthomosaics(500, agricultural_cycle_id)
+            orthomosaic_ids = [item["id"] for item in orthomosaics]
+            if orthomosaic_ids:
+                response = (
+                    client.table("rois")
+                    .select(columns)
+                    .in_("orthomosaic_id", orthomosaic_ids)
+                    .order("created_at", desc=True)
+                    .execute()
+                )
+                for item in list(self._payload_data(response) or []):
+                    records[item["id"]] = item
+
+            # Una versión anterior del listener de dibujo podía guardar ambos
+            # vínculos como null. Esas geometrías son globales y deben seguir
+            # disponibles para reutilizarse en cualquier vuelo.
+            response = (
+                client.table("rois")
+                .select(columns)
+                .is_("agricultural_cycle_id", "null")
+                .is_("orthomosaic_id", "null")
+                .order("created_at", desc=True)
+                .execute()
+            )
+            for item in list(self._payload_data(response) or []):
+                records[item["id"]] = item
+
+            return sorted(
+                records.values(),
+                key=lambda item: str(item.get("created_at") or ""),
+                reverse=True,
+            )
         response = (
-            self.require_client()
-            .table("rois")
-            .select("id,name,geojson,orthomosaic_id,is_active,created_at")
+            client.table("rois")
+            .select(
+                "id,name,geojson,orthomosaic_id,agricultural_cycle_id,is_active,created_at",
+            )
             .order("created_at", desc=True)
             .execute()
         )
@@ -463,6 +819,16 @@ class SupabaseService:
         stats: dict[str, Any],
     ) -> dict[str, Any]:
         client = self.require_client()
+        roi = self.get_roi(roi_id)
+        orthomosaic = self.get_orthomosaic(orthomosaic_id)
+        if (
+            roi.get("agricultural_cycle_id")
+            and orthomosaic.get("agricultural_cycle_id")
+            and roi["agricultural_cycle_id"] != orthomosaic["agricultural_cycle_id"]
+        ):
+            raise ValueError(
+                "El ROI y el ortomosaico pertenecen a ciclos agricolas distintos.",
+            )
         zone = self.ensure_zone_for_roi(roi_id)
         legacy_payload = {
             "roi_id": roi_id,
@@ -532,9 +898,26 @@ class SupabaseService:
         except Exception as exc:
             modern_error = exc
             try:
-                mutation = (
+                existing_response = (
                     client.table("index_results")
-                    .insert(legacy_payload)
+                    .select(self.INDEX_RESULT_LEGACY_COLUMNS)
+                    .eq("roi_id", roi_id)
+                    .eq("orthomosaic_id", orthomosaic_id)
+                    .eq("index_type", index_type)
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                existing_legacy = list(self._payload_data(existing_response) or [])
+                mutation_query = client.table("index_results")
+                mutation = (
+                    mutation_query.update(legacy_payload)
+                    .eq("id", existing_legacy[0]["id"])
+                    if existing_legacy
+                    else mutation_query.insert(legacy_payload)
+                )
+                mutation = (
+                    mutation
                     .select(self.INDEX_RESULT_LEGACY_COLUMNS)
                     .execute()
                 )
@@ -558,7 +941,15 @@ class SupabaseService:
         self,
         roi_id: str,
         index: str | None = None,
+        agricultural_cycle_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        roi = self.get_roi(roi_id)
+        if (
+            agricultural_cycle_id
+            and roi.get("agricultural_cycle_id")
+            and roi["agricultural_cycle_id"] != agricultural_cycle_id
+        ):
+            return []
         client = self.require_client()
         try:
             query = (
@@ -571,7 +962,10 @@ class SupabaseService:
             response = query.order("calculated_at", desc=True).execute()
             data = list(self._payload_data(response) or [])
             if data:
-                return [self._index_result_to_roi_analysis(item) for item in data]
+                return [
+                    self._index_result_to_roi_analysis(item)
+                    for item in self._latest_index_results_per_flight(data)
+                ]
         except Exception:
             pass
 
@@ -585,7 +979,9 @@ class SupabaseService:
         response = query.order("created_at", desc=True).execute()
         return [
             self._index_result_to_roi_analysis(item)
-            for item in list(self._payload_data(response) or [])
+            for item in self._latest_index_results_per_flight(
+                list(self._payload_data(response) or []),
+            )
         ]
 
     def delete_roi_analysis(self, roi_id: str, analysis_id: str) -> None:
@@ -651,12 +1047,12 @@ class SupabaseService:
     def delete_roi(self, roi_id: str) -> None:
         self.require_client().table("rois").delete().eq("id", roi_id).execute()
 
-    def activate_orthomosaic(
+    def activate_orthomosaic_record(
         self,
-        orthomosaic_id: str,
+        record: dict[str, Any],
         raster_service: RasterService,
     ) -> dict[str, Any]:
-        record = self.get_orthomosaic(orthomosaic_id)
+        orthomosaic_id = str(record["id"])
         if self.uses_local_storage:
             local_path = Path(record["file_path"]).resolve()
             if not local_path.is_file():
@@ -675,8 +1071,19 @@ class SupabaseService:
                     self.settings.supabase_bucket,
                 ).download(record["file_path"])
                 local_path.write_bytes(content)
+        raster_service.validate_path(local_path)
         raster_service.active_path = local_path
         raster_service.sensor = record.get("sensor_type")
         raster_service.rgb_stretch = None
         raster_service.overlay = None
         return record
+
+    def activate_orthomosaic(
+        self,
+        orthomosaic_id: str,
+        raster_service: RasterService,
+    ) -> dict[str, Any]:
+        return self.activate_orthomosaic_record(
+            self.get_orthomosaic(orthomosaic_id),
+            raster_service,
+        )

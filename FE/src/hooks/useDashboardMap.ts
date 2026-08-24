@@ -11,9 +11,11 @@ import {
   backendUrl,
   dashboardApi,
   type NdviResponse,
+  type NdviZoningResponse,
   type OrthomosaicRecord,
   type OrthoMode,
   type OrthoSensor,
+  type PrescriptionMapResponse,
 } from "../services/api";
 import type { TreeCollection, TreeFeature } from "../types/geo";
 import {
@@ -69,6 +71,7 @@ export interface MapState {
   ndvi: boolean;
   trees: boolean;
   labels: boolean;
+  prescription: boolean;
   vari: boolean;
   exg: boolean;
   swipe: boolean;
@@ -109,7 +112,10 @@ export interface IndexAnalysis {
  * Orquesta el ciclo de vida de Leaflet, sus capas imperativas y las llamadas
  * geoespaciales. React recibe solo estados derivados y acciones estables.
  */
-export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
+export function useDashboardMap(
+  mapElement: React.RefObject<HTMLDivElement>,
+  activeCycleId: string | null,
+) {
   // Recursos Leaflet: cada referencia representa una capa única y reemplazable.
   const mapRef = useRef<L.Map>();
   const orthoRef = useRef<L.TileLayer>();
@@ -120,6 +126,8 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
   const indexRefs = useRef(new Map<string, L.Layer>());
   const treeRef = useRef<L.GeoJSON>();
   const labelsRef = useRef<L.LayerGroup>();
+  const zoningRef = useRef<L.ImageOverlay>();
+  const prescriptionRef = useRef<L.ImageOverlay>();
   // Datos y controles que deben estar disponibles dentro de callbacks de mapa.
   const boundsRef = useRef<L.LatLngBounds>();
   const rawTreeDataRef = useRef<TreeCollection | null>(null);
@@ -154,6 +162,9 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
   > | Partial<Record<"NDVI" | "NDWI" | "NDRE", NdviResponse>> | null>(null);
   const roiLayersRef = useRef(new Map<string, L.Layer>());
   const selectedRoisRef = useRef(new Map<string, unknown>());
+  // Los listeners de Leaflet se registran una sola vez. Esta referencia evita
+  // que conserven el ciclo nulo del primer render al persistir un ROI.
+  const activeCycleIdRef = useRef(activeCycleId);
   // Estado declarativo expuesto a la interfaz.
   const [state, setState] = useState<MapState>(createInitialMapState());
   const [treeData, setTreeData] = useState<TreeCollection | null>(null);
@@ -163,6 +174,129 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
     createEmptyNdviAnalysis(),
   );
   const [indexAnalyses, setIndexAnalyses] = useState<IndexAnalysis[]>([]);
+  const [zoning, setZoning] = useState<NdviZoningResponse | null>(null);
+  const [zoningLoading, setZoningLoading] = useState(false);
+  const [prescription, setPrescription] =
+    useState<PrescriptionMapResponse | null>(null);
+  const [prescriptionLoading, setPrescriptionLoading] = useState(false);
+
+  useEffect(() => {
+    activeCycleIdRef.current = activeCycleId;
+  }, [activeCycleId]);
+
+  const clearZoning = useCallback(() => {
+    zoningRef.current?.remove();
+    zoningRef.current = undefined;
+    setZoning(null);
+  }, []);
+
+  const clearPrescription = useCallback(() => {
+    clearZoning();
+    prescriptionRef.current?.remove();
+    prescriptionRef.current = undefined;
+    setPrescription(null);
+    setState((current) => ({ ...current, prescription: false }));
+  }, [clearZoning]);
+
+  const generateZoning = useCallback(
+    async (zoneCount: number, cellSizeM: number) => {
+      const map = mapRef.current;
+      if (!map || !state.orthomosaicId)
+        throw new Error("Selecciona un vuelo antes de generar la zonificacion.");
+      if (state.orthoMode !== "multispectral")
+        throw new Error("La zonificacion NDVI requiere un ortomosaico multiespectral.");
+      if (!activeCropGeometryRef.current || !ndviAnalysis.roiResponse)
+        throw new Error(
+          "Selecciona un ROI, recortalo y abre su histograma NDVI antes de generar la zonificacion.",
+        );
+      setZoningLoading(true);
+      try {
+        const result = await dashboardApi.createNdviZoning(
+          state.orthomosaicId,
+          activeCropGeometryRef.current,
+          zoneCount,
+          cellSizeM,
+        );
+        clearPrescription();
+        zoningRef.current?.remove();
+        zoningRef.current = L.imageOverlay(
+          backendUrl(result.image_url),
+          result.bounds,
+          {
+            opacity: 1,
+            interactive: false,
+            className: "zoning-map-overlay",
+          },
+        ).addTo(map);
+        zoningRef.current.setZIndex(520);
+        setZoning(result);
+        setState((current) => ({ ...current, prescription: true, error: null }));
+        map.fitBounds(result.bounds);
+        return result;
+      } finally {
+        setZoningLoading(false);
+      }
+    },
+    [
+      clearPrescription,
+      ndviAnalysis.roiResponse,
+      state.orthoMode,
+      state.orthomosaicId,
+    ],
+  );
+
+  const generatePrescription = useCallback(
+    async (
+      zoneCount: number,
+      cellSizeM: number,
+      doses: Array<{ class_id: number; dose: number }>,
+    ) => {
+      const map = mapRef.current;
+      if (!map || !state.orthomosaicId)
+        throw new Error("Selecciona un vuelo antes de generar la prescripción.");
+      if (state.orthoMode !== "multispectral")
+        throw new Error("La prescripción NDVI requiere un ortomosaico multiespectral.");
+      if (!activeCropGeometryRef.current || !ndviAnalysis.roiResponse)
+        throw new Error(
+          "Selecciona un ROI, recórtalo y abre su histograma NDVI antes de generar la prescripción.",
+        );
+      setPrescriptionLoading(true);
+      try {
+        const result = await dashboardApi.createPrescription(
+          state.orthomosaicId,
+          activeCropGeometryRef.current,
+          zoneCount,
+          cellSizeM,
+          doses,
+        );
+        zoningRef.current?.remove();
+        zoningRef.current = undefined;
+        setZoning(null);
+        prescriptionRef.current?.remove();
+        prescriptionRef.current = L.imageOverlay(
+          backendUrl(result.image_url),
+          result.bounds,
+          {
+            opacity: 1,
+            interactive: false,
+            className: "prescription-map-overlay",
+          },
+        ).addTo(map);
+        prescriptionRef.current.setZIndex(520);
+        setPrescription(result);
+        setState((current) => ({ ...current, prescription: true, error: null }));
+        map.fitBounds(result.bounds);
+        return result;
+      } finally {
+        setPrescriptionLoading(false);
+      }
+    },
+    [
+      ndviAnalysis.roiResponse,
+      state.orthoMode,
+      state.orthomosaicId,
+    ],
+  );
 
   /** Reconstruye etiquetas visibles respetando el filtro de diámetro vigente. */
   const refreshLabels = useCallback(() => {
@@ -582,6 +716,7 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
    * única tijera sobre los límites conjuntos.
    */
   const refreshRoiSelection = useCallback(() => {
+    clearPrescription();
     const selections = Array.from(selectedRoisRef.current.entries());
     const { collection, roiIds } = buildRoiSelection(selections);
     const { features } = collection;
@@ -617,7 +752,19 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
         ? `${features.length} ${features.length === 1 ? "zona seleccionada" : "zonas seleccionadas"}. Haz clic en la tijera para recortar.`
         : null,
     }));
-  }, [cropSelectedRoi]);
+  }, [clearPrescription, cropSelectedRoi]);
+
+  /** Restaura geometrías persistentes después de cambiar el vuelo activo. */
+  const restoreRoiSelection = useCallback(
+    (selections: Array<[string, unknown]>) => {
+      selections.forEach(([id, geojson]) => {
+        selectedRoisRef.current.set(id, geojson);
+        if (id !== "__temporary__") styleRoiLayer(id, true);
+      });
+      refreshRoiSelection();
+    },
+    [refreshRoiSelection, styleRoiLayer],
+  );
 
   /** Alterna un ROI sin reemplazar los demás y descarta análisis obsoletos. */
   const selectRoi = useCallback(
@@ -737,11 +884,23 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
     let disposed = false;
     const satellite = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      { attribution: "Tiles © Esri", maxNativeZoom: 20, maxZoom: 24 },
+      {
+        attribution: "Tiles © Esri",
+        maxNativeZoom: 18,
+        maxZoom: 24,
+        updateWhenZooming: false,
+        keepBuffer: 4,
+      },
     );
     const labels = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-      { attribution: "Labels © Esri", maxNativeZoom: 20, maxZoom: 24 },
+      {
+        attribution: "Labels © Esri",
+        maxNativeZoom: 18,
+        maxZoom: 24,
+        updateWhenZooming: false,
+        keepBuffer: 4,
+      },
     );
 
     L.layerGroup([satellite, labels]).addTo(map);
@@ -812,9 +971,17 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
 
       try {
         const roiGeojson = event.layer.toGeoJSON();
+        const cycleId = activeCycleIdRef.current;
+        if (!cycleId) {
+          event.layer.remove();
+          throw new Error(
+            "Selecciona un ciclo agrícola antes de guardar una región de interés.",
+          );
+        }
         const saved = await dashboardApi.saveRoi(
           roiGeojson,
           null,
+          cycleId,
           "ROI dibujado",
         );
         roiLayersRef.current.set(saved.roi.id, event.layer);
@@ -859,8 +1026,11 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
    * mezclar resultados pertenecientes a vuelos diferentes.
    */
   const importOrtho = useCallback(
-    async (file: File, sensor: OrthoSensor) => {
+    async (file: File, sensor: OrthoSensor, agriculturalCycleId: string) => {
       setState((current) => ({ ...current, uploading: true, error: null }));
+      const persistentRoiSelections = Array.from(
+        selectedRoisRef.current.entries(),
+      );
       try {
         const type: OrthoMode = modeFromSensor(sensor);
         const captureDate = new Date().toISOString().slice(0, 10);
@@ -868,9 +1038,11 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
           file,
           sensor,
           captureDate,
+          agriculturalCycleId,
         );
         const result =
           upload.analysis ?? (await dashboardApi.orthoAnalysis(file, sensor));
+        clearPrescription();
         if (
           !mountUploadedOrthomosaic({
             backendUrl,
@@ -915,6 +1087,7 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
           selectedRoiId: null,
           selectedRoiIds: [],
         }));
+        restoreRoiSelection(persistentRoiSelections);
         if (type === "multispectral") {
           if (!result.ndvi_matrix)
             throw new Error(
@@ -954,7 +1127,7 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
         setState((current) => ({ ...current, uploading: false }));
       }
     },
-    [clearTileClip],
+    [clearPrescription, clearTileClip, restoreRoiSelection],
   );
 
   /** Actualiza contraste y URL de tiles para un índice adicional activo. */
@@ -1254,6 +1427,10 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
   const importRoi = useCallback(
     async (files: File[]) => {
       try {
+        if (!activeCycleId)
+          throw new Error(
+            "Selecciona un ciclo agrícola antes de importar una región de interés.",
+          );
         if (state.orthoMode !== "multispectral")
           throw new Error(
             "Carga un ortomosaico multiespectral antes de analizar una región de interés.",
@@ -1291,7 +1468,12 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
                 ? feature.properties.name
                 : `Zona ${index + 1}`;
             // El ROI se guarda como geometría reutilizable para cualquier vuelo.
-            return dashboardApi.saveRoi(feature, null, featureName);
+            return dashboardApi.saveRoi(
+              feature,
+              null,
+              activeCycleId,
+              featureName,
+            );
           }),
         );
         let polygonIndex = 0;
@@ -1319,7 +1501,7 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
         }));
       }
     },
-    [selectRoi, state.orthoMode, state.orthomosaicId],
+    [activeCycleId, selectRoi, state.orthoMode],
   );
 
   /** Alterna el grupo de etiquetas de diámetro sin volver a crear el mapa. */
@@ -1760,9 +1942,13 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
   /** Activa un vuelo persistido y elimina cualquier análisis del vuelo anterior. */
   const activateStoredOrtho = useCallback(
     async (record: OrthomosaicRecord) => {
+      const persistentRoiSelections = Array.from(
+        selectedRoisRef.current.entries(),
+      );
       try {
         await dashboardApi.activateOrthomosaic(record.id);
         const result = await dashboardApi.bounds(record.id);
+        clearPrescription();
         boundsRef.current = L.latLngBounds(result.bounds);
         clearRoiSelection();
         setIndexAnalyses([]);
@@ -1791,6 +1977,7 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
           selectedRoiIds: [],
           error: null,
         }));
+        restoreRoiSelection(persistentRoiSelections);
       } catch (error) {
         setState((current) => ({
           ...current,
@@ -1801,7 +1988,7 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
         }));
       }
     },
-    [clearRoiSelection],
+    [clearPrescription, clearRoiSelection, restoreRoiSelection],
   );
 
   /** Limita y aplica el divisor comparativo a todas las capas espectrales. */
@@ -1849,12 +2036,60 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
     });
   }, []);
 
+  /** Limpia por completo el contexto visible del mapa al salir de un ciclo. */
+  const resetWorkspace = useCallback(() => {
+    cancelDetectionEdit();
+    mapRef.current?.pm?.disableDraw();
+    clearRoiSelection();
+    clearSpectralLayers({ indexRefs, ndviRef, ndviTileRef });
+    clearPrescription();
+    roiLayersRef.current.forEach((layer) => layer.remove());
+    roiLayersRef.current.clear();
+    cropTileRef.current?.remove();
+    cropTileRef.current = undefined;
+    uploadedRgbRef.current?.remove();
+    uploadedRgbRef.current = undefined;
+    orthoRef.current?.remove();
+    orthoRef.current = undefined;
+    boundsRef.current = undefined;
+    labelsEnabledRef.current = false;
+    swipeEnabledRef.current = false;
+    ratioRef.current = 0.5;
+    resetOrthomosaicArtifacts({
+      cropControlRef,
+      indexRefs,
+      labelsRef,
+      ndviRef,
+      ndviResponseRef,
+      ndviTileRef,
+      roiIndexResponsesRef,
+      selectedRoiRef,
+      selectedRoisRef,
+      treeDataRef,
+      treeRef,
+    });
+    setTreeData(null);
+    setFilteredTreeData(null);
+    setNdviAnalysis(createEmptyNdviAnalysis());
+    setIndexAnalyses([]);
+    setState(createInitialMapState());
+    mapRef.current?.setView([23.6345, -102.5528], 5);
+  }, [cancelDetectionEdit, clearPrescription, clearRoiSelection]);
+
   return {
     state,
     treeData,
     filteredTreeData,
     ndviAnalysis,
     indexAnalyses,
+    zoning,
+    zoningLoading,
+    prescription,
+    prescriptionLoading,
+    generateZoning,
+    generatePrescription,
+    clearPrescription,
+    clearZoning,
     selectIndex,
     hideIndices,
     hideNdvi,
@@ -1881,6 +2116,7 @@ export function useDashboardMap(mapElement: React.RefObject<HTMLDivElement>) {
     importOrtho,
     fitRgb,
     activateStoredOrtho,
+    resetWorkspace,
     toggleSwipe,
     setSwipePosition,
     setDiameterRange,

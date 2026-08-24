@@ -17,7 +17,9 @@ import rasterio
 from affine import Affine
 from PIL import Image
 from rasterio.enums import Resampling
+from rasterio.errors import RasterioIOError
 from rasterio.features import geometry_mask
+from rasterio.io import MemoryFile
 from rasterio.transform import array_bounds
 from rasterio.warp import calculate_default_transform, reproject, transform_bounds
 from rasterio.windows import Window, from_bounds, transform as window_transform
@@ -32,10 +34,11 @@ class RasterService:
     """Procesamiento geoespacial; no conoce detalles de FastAPI."""
 
     INDEX_RAMPS = {
-        "NDVI": ["ff0000", "ff2800", "ff5500", "ff8800", "ffcc00", "ffff00", "aadd00", "55bb00", "228b00", "003200"],
+        "NDVI": ["ff7a00", "ff9500", "ffb000", "ffc400", "e4d200", "acf404", "57f20a", "27e833", "00b824", "009e1f"],
         "NDWI": ["c0003a", "e01a00", "ff5500", "ffaa00", "ffe066", "a8e6a0", "4dd4e0", "2b9aff", "1a4fff", "0000ff"],
         "NDRE": ["000000", "1b0a2a", "3d0965", "6b0d8a", "9b1f9e", "c43c7e", "e06030", "f08c00", "f5b800", "ffe000"],
     }
+    PRESCRIPTION_ZONE_PALETTE = ["ff7a00", "ffc400", "acf404", "00b824"]
     INDEX_DOMAINS = {"NDVI": (-0.2, 0.8), "NDWI": (-0.5, 0.5), "NDRE": (-0.2, 0.8)}
 
     def __init__(self, settings: Settings) -> None:
@@ -51,6 +54,580 @@ class RasterService:
         if not path:
             raise RasterNotConfiguredError("No se encontro un raster GeoTIFF")
         return path
+
+    def _validate_dataset(self, src: Any) -> None:
+        if src.count < 3:
+            raise ValueError("El ortomosaico debe contener al menos tres bandas.")
+        scale = self.scale(src, self.settings.rgb_max_pixels)
+        height = max(1, src.height // scale)
+        width = max(1, src.width // scale)
+        # Leer cada banda obliga a GDAL a recorrer los tiles internos. Abrir
+        # sólo el encabezado no detecta TIFF truncados o bloques dañados.
+        for band_index in range(1, src.count + 1):
+            src.read(
+                band_index,
+                out_shape=(height, width),
+                resampling=Resampling.average,
+            )
+
+    def validate_uploaded(self, content: bytes) -> None:
+        try:
+            with MemoryFile(content) as memory_file:
+                with memory_file.open() as src:
+                    self._validate_dataset(src)
+        except RasterioIOError as exc:
+            raise ValueError(
+                "El GeoTIFF está incompleto o dañado: no se pudieron leer todos sus bloques internos.",
+            ) from exc
+
+    def validate_path(self, path: Path) -> None:
+        try:
+            with rasterio.open(path) as src:
+                self._validate_dataset(src)
+        except RasterioIOError as exc:
+            raise ValueError(
+                "El GeoTIFF guardado está incompleto o dañado y no puede activarse.",
+            ) from exc
+
+    @staticmethod
+    def _neutral_zone_label(zone_index: int, zone_count: int) -> str:
+        if zone_count == 4:
+            return [
+                "NDVI muy bajo",
+                "NDVI bajo",
+                "NDVI medio-alto",
+                "NDVI alto",
+            ][zone_index - 1]
+        if zone_index == 1:
+            return "NDVI muy bajo"
+        if zone_index == zone_count:
+            return "NDVI alto"
+        return f"NDVI nivel {zone_index}"
+
+    @staticmethod
+    def _class_percentiles(zone_count: int, zone_index: int) -> tuple[float, float]:
+        return (
+            100.0 * (zone_index - 1) / zone_count,
+            100.0 * zone_index / zone_count,
+        )
+
+    def _zone_palette(self, zone_count: int) -> np.ndarray:
+        ramp = np.asarray(
+            [
+                [int(color[index : index + 2], 16) for index in (0, 2, 4)]
+                for color in self.INDEX_RAMPS["NDVI"]
+            ],
+            dtype=np.uint8,
+        )
+        if zone_count == len(self.PRESCRIPTION_ZONE_PALETTE):
+            return np.asarray(
+                [
+                    [int(color[index : index + 2], 16) for index in (0, 2, 4)]
+                    for color in self.PRESCRIPTION_ZONE_PALETTE
+                ],
+                dtype=np.uint8,
+            )
+        ramp_positions = np.floor(np.linspace(0, len(ramp) - 1, zone_count) + 0.5).astype(int)
+        return ramp[ramp_positions]
+
+    @staticmethod
+    def _dose_ramp(count: int) -> np.ndarray:
+        ramp = np.asarray(
+            [
+                [int(color[index : index + 2], 16) for index in (0, 2, 4)]
+                for color in RasterService.INDEX_RAMPS["NDVI"]
+            ],
+            dtype=np.uint8,
+        )
+        if count <= 1:
+            return ramp[-1:].copy()
+        positions = np.floor(np.linspace(0, len(ramp) - 1, count) + 0.5).astype(int)
+        return ramp[positions]
+
+    def _prepare_ndvi_classification(
+        self,
+        geom: Any,
+        zone_count: int = 4,
+        cell_size_m: float = 3.0,
+        analysis_min: float | None = None,
+        analysis_max: float | None = None,
+    ) -> dict[str, Any]:
+        if not 2 <= zone_count <= 10:
+            raise ValueError("El mapa de prescripcion admite entre 2 y 10 zonas.")
+        if not 1 <= cell_size_m <= 50:
+            raise ValueError("El tamano de celda debe estar entre 1 y 50 metros.")
+
+        raster_path = self._path()
+        with rasterio.open(raster_path) as src:
+            if not src.crs:
+                raise ValueError("El ortomosaico necesita un CRS para construir una grilla metrica.")
+            source_crs = pyproj.CRS.from_user_input(src.crs)
+            uses_meters = source_crs.is_projected and all(
+                abs((axis.unit_conversion_factor or 0) - 1) < 1e-9
+                for axis in source_crs.axis_info
+            )
+            if uses_meters:
+                metric_crs = source_crs
+            else:
+                to_wgs84 = pyproj.Transformer.from_crs(source_crs, "EPSG:4326", always_xy=True)
+                center_x = (src.bounds.left + src.bounds.right) / 2
+                center_y = (src.bounds.bottom + src.bounds.top) / 2
+                longitude, latitude = to_wgs84.transform(center_x, center_y)
+                utm_zone = max(1, min(60, int((longitude + 180) // 6) + 1))
+                metric_crs = pyproj.CRS.from_epsg((32600 if latitude >= 0 else 32700) + utm_zone)
+
+            metric_geometry = project_geometry(
+                pyproj.Transformer.from_crs("EPSG:4326", metric_crs, always_xy=True).transform,
+                geom,
+            )
+            if metric_geometry.is_empty or not metric_geometry.is_valid:
+                raise ValueError("El ROI seleccionado no contiene una geometria valida.")
+            left, bottom, right, top = metric_geometry.bounds
+            width = max(1, int(np.ceil((right - left) / cell_size_m)))
+            height = max(1, int(np.ceil((top - bottom) / cell_size_m)))
+            destination_transform = Affine(cell_size_m, 0, left, 0, -cell_size_m, top)
+            total_cells = width * height
+            if total_cells > 150_000:
+                minimum_size = cell_size_m * (total_cells / 150_000) ** 0.5
+                raise ValueError(
+                    "La grilla generaria demasiadas celdas. "
+                    f"Usa un tamano de al menos {minimum_size:.1f} metros.",
+                )
+
+            red_band, nir_band = self._ndvi_bands(raster_path, self.sensor)
+            red = np.full((height, width), np.nan, dtype=np.float32)
+            nir = np.full((height, width), np.nan, dtype=np.float32)
+            for band_index, destination in ((red_band, red), (nir_band, nir)):
+                reproject(
+                    source=rasterio.band(src, band_index),
+                    destination=destination,
+                    src_transform=src.transform,
+                    src_crs=src.crs,
+                    src_nodata=src.nodata,
+                    dst_transform=destination_transform,
+                    dst_crs=metric_crs,
+                    dst_nodata=np.nan,
+                    resampling=Resampling.average,
+                )
+
+        roi_mask = geometry_mask(
+            [mapping(metric_geometry)],
+            out_shape=(height, width),
+            transform=destination_transform,
+            invert=True,
+        )
+        roi_valid = (
+            roi_mask
+            & np.isfinite(red)
+            & np.isfinite(nir)
+            & (red > 0)
+            & (nir > 0)
+        )
+        denominator = nir + red
+        roi_valid &= np.isfinite(denominator) & (denominator != 0)
+        ndvi = np.full_like(red, np.nan, dtype=np.float32)
+        ndvi[roi_valid] = (nir[roi_valid] - red[roi_valid]) / denominator[roi_valid]
+        class_valid = roi_valid.copy()
+        if analysis_min is not None:
+            class_valid &= ndvi >= analysis_min
+        if analysis_max is not None:
+            class_valid &= ndvi <= analysis_max
+        values = ndvi[class_valid]
+        if not values.size:
+            raise ValueError("El ROI no contiene celdas NDVI validas dentro del filtro de analisis.")
+
+        breaks = np.quantile(values, np.linspace(0, 1, zone_count + 1))
+        zones = np.zeros((height, width), dtype=np.uint8)
+        zones[class_valid] = (
+            np.digitize(ndvi[class_valid], breaks[1:-1], right=True) + 1
+        ).astype(np.uint8)
+        colors = self._zone_palette(zone_count)
+        projected_bounds = array_bounds(height, width, destination_transform)
+        west, south, east, north = transform_bounds(
+            metric_crs,
+            "EPSG:4326",
+            *projected_bounds,
+            densify_pts=21,
+        )
+        legend: list[dict[str, Any]] = []
+        for zone_index, color in enumerate(colors, 1):
+            zone_mask = zones == zone_index
+            zone_values = ndvi[zone_mask]
+            percentile_min, percentile_max = self._class_percentiles(zone_count, zone_index)
+            legend.append(
+                {
+                    "class_id": zone_index,
+                    "label": self._neutral_zone_label(zone_index, zone_count),
+                    "ndvi_min": float(breaks[zone_index - 1]),
+                    "ndvi_max": float(breaks[zone_index]),
+                    "percentile_min": percentile_min,
+                    "percentile_max": percentile_max,
+                    "mean": float(np.mean(zone_values))
+                    if zone_values.size
+                    else float((breaks[zone_index - 1] + breaks[zone_index]) / 2),
+                    "color": "#" + "".join(f"{channel:02x}" for channel in color),
+                    "cell_count": int(np.count_nonzero(zone_mask)),
+                    "area_hectares": float(np.count_nonzero(zone_mask) * cell_size_m**2 / 10_000),
+                }
+            )
+        return {
+            "zone_count": zone_count,
+            "cell_size_m": cell_size_m,
+            "bounds": [[south, west], [north, east]],
+            "valid_cell_count": int(np.count_nonzero(class_valid)),
+            "area_hectares": float(np.count_nonzero(class_valid) * cell_size_m**2 / 10_000),
+            "legend": legend,
+            "zones": zones,
+            "colors": colors,
+        }
+
+    def ndvi_zoning_map(
+        self,
+        geom: Any,
+        zone_count: int = 4,
+        cell_size_m: float = 3.0,
+    ) -> dict[str, Any]:
+        data = self._prepare_ndvi_classification(geom, zone_count, cell_size_m)
+        rgba = np.zeros((data["zones"].shape[0], data["zones"].shape[1], 4), dtype=np.uint8)
+        for zone_index, color in enumerate(data["colors"], 1):
+            zone_mask = data["zones"] == zone_index
+            rgba[zone_mask, :3] = color
+            rgba[zone_mask, 3] = 255
+        render_scale = 12
+        rendered = np.repeat(np.repeat(rgba, render_scale, axis=0), render_scale, axis=1)
+        for grid_edge in (rendered[::render_scale, :, :], rendered[:, ::render_scale, :]):
+            visible_edge = grid_edge[..., 3] > 0
+            grid_edge[visible_edge, :3] = (75, 81, 77)
+            grid_edge[visible_edge, 3] = 255
+        zoning_id = uuid4().hex
+        zoning_dir = self.settings.output_dir / "prescriptions"
+        zoning_dir.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(rendered, mode="RGBA").save(zoning_dir / f"{zoning_id}.png")
+        return {
+            "status": "ok",
+            "stage": "zoning",
+            "title": "Zonificacion NDVI",
+            "zoning_id": zoning_id,
+            "image_url": f"/static/prescriptions/{zoning_id}.png",
+            "bounds": data["bounds"],
+            "zone_count": data["zone_count"],
+            "cell_size_m": data["cell_size_m"],
+            "valid_cell_count": data["valid_cell_count"],
+            "area_hectares": data["area_hectares"],
+            "legend": data["legend"],
+        }
+
+    def _dose_mapping(self, zone_count: int, doses: list[dict[str, Any]]) -> dict[int, float]:
+        if len(doses) != zone_count:
+            raise ValueError(
+                f"Debes asignar una dosis a cada una de las {zone_count} clases.",
+            )
+        mapping: dict[int, float] = {}
+        seen: set[int] = set()
+        for item in doses:
+            if not isinstance(item, dict):
+                raise ValueError("Cada dosis debe enviarse como un objeto JSON.")
+            try:
+                class_id = int(item.get("class_id"))
+                dose = float(item.get("dose"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Las dosis deben ser numericas.") from exc
+            if not 1 <= class_id <= zone_count:
+                raise ValueError("El identificador de clase no es valido.")
+            if class_id in seen:
+                raise ValueError("No puedes repetir la misma clase.")
+            if dose < 0:
+                raise ValueError("La dosis no puede ser negativa.")
+            mapping[class_id] = dose
+            seen.add(class_id)
+        if len(mapping) != zone_count:
+            raise ValueError("Faltan dosis para una o mas clases.")
+        return mapping
+
+    def prescription_map_with_doses(
+        self,
+        geom: Any,
+        zone_count: int = 4,
+        cell_size_m: float = 3.0,
+        doses: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        if not doses:
+            raise ValueError("Primero genera la zonificacion y asigna una dosis a cada clase.")
+        data = self._prepare_ndvi_classification(geom, zone_count, cell_size_m)
+        dose_mapping = self._dose_mapping(zone_count, doses)
+        class_doses = {class_id: dose_mapping[class_id] for class_id in range(1, zone_count + 1)}
+        unique_doses = sorted(set(class_doses.values()))
+        dose_colors = self._dose_ramp(len(unique_doses))
+        dose_color_map = {dose: dose_colors[index] for index, dose in enumerate(unique_doses)}
+        rgba = np.zeros((data["zones"].shape[0], data["zones"].shape[1], 4), dtype=np.uint8)
+        for class_id in range(1, zone_count + 1):
+            zone_mask = data["zones"] == class_id
+            color = dose_color_map[class_doses[class_id]]
+            rgba[zone_mask, :3] = color
+            rgba[zone_mask, 3] = 255
+        render_scale = 12
+        rendered = np.repeat(np.repeat(rgba, render_scale, axis=0), render_scale, axis=1)
+        for grid_edge in (rendered[::render_scale, :, :], rendered[:, ::render_scale, :]):
+            visible_edge = grid_edge[..., 3] > 0
+            grid_edge[visible_edge, :3] = (75, 81, 77)
+            grid_edge[visible_edge, 3] = 255
+        prescription_id = uuid4().hex
+        prescription_dir = self.settings.output_dir / "prescriptions"
+        prescription_dir.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(rendered, mode="RGBA").save(prescription_dir / f"{prescription_id}.png")
+        legend = []
+        for zone in data["legend"]:
+            class_id = int(zone["class_id"])
+            dose = class_doses[class_id]
+            legend.append(
+                {
+                    **zone,
+                    "dose": dose,
+                    "dose_color": "#" + "".join(f"{channel:02x}" for channel in dose_color_map[dose]),
+                }
+            )
+        return {
+            "status": "ok",
+            "stage": "prescription",
+            "title": "Mapa de Prescripcion",
+            "prescription_id": prescription_id,
+            "image_url": f"/static/prescriptions/{prescription_id}.png",
+            "bounds": data["bounds"],
+            "zone_count": zone_count,
+            "cell_size_m": cell_size_m,
+            "valid_cell_count": data["valid_cell_count"],
+            "area_hectares": data["area_hectares"],
+            "legend": legend,
+        }
+
+    def prescription_map(
+        self,
+        geom: Any,
+        zone_count: int = 4,
+        cell_size_m: float = 3.0,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> dict[str, Any]:
+        if not 2 <= zone_count <= 10:
+            raise ValueError("El mapa de prescripción admite entre 2 y 10 zonas.")
+        if not 1 <= cell_size_m <= 50:
+            raise ValueError("El tamaño de celda debe estar entre 1 y 50 metros.")
+
+        raster_path = self._path()
+        with rasterio.open(raster_path) as src:
+            if not src.crs:
+                raise ValueError(
+                    "El ortomosaico necesita un CRS para construir una grilla métrica.",
+                )
+            source_crs = pyproj.CRS.from_user_input(src.crs)
+            uses_meters = source_crs.is_projected and all(
+                abs((axis.unit_conversion_factor or 0) - 1) < 1e-9
+                for axis in source_crs.axis_info
+            )
+            if uses_meters:
+                metric_crs = source_crs
+            else:
+                to_wgs84 = pyproj.Transformer.from_crs(
+                    source_crs,
+                    "EPSG:4326",
+                    always_xy=True,
+                )
+                center_x = (src.bounds.left + src.bounds.right) / 2
+                center_y = (src.bounds.bottom + src.bounds.top) / 2
+                longitude, latitude = to_wgs84.transform(center_x, center_y)
+                utm_zone = max(1, min(60, int((longitude + 180) // 6) + 1))
+                metric_crs = pyproj.CRS.from_epsg(
+                    (32600 if latitude >= 0 else 32700) + utm_zone,
+                )
+
+            metric_geometry = project_geometry(
+                pyproj.Transformer.from_crs(
+                    "EPSG:4326",
+                    metric_crs,
+                    always_xy=True,
+                ).transform,
+                geom,
+            )
+            if metric_geometry.is_empty or not metric_geometry.is_valid:
+                raise ValueError("El ROI seleccionado no contiene una geometría válida.")
+            left, bottom, right, top = metric_geometry.bounds
+            width = max(1, int(np.ceil((right - left) / cell_size_m)))
+            height = max(1, int(np.ceil((top - bottom) / cell_size_m)))
+            destination_transform = Affine(
+                cell_size_m,
+                0,
+                left,
+                0,
+                -cell_size_m,
+                top,
+            )
+            total_cells = width * height
+            if total_cells > 150_000:
+                minimum_size = cell_size_m * (total_cells / 150_000) ** 0.5
+                raise ValueError(
+                    "La grilla generaría demasiadas celdas. "
+                    f"Usa un tamaño de al menos {minimum_size:.1f} metros.",
+                )
+
+            red_band, nir_band = self._ndvi_bands(raster_path, self.sensor)
+            red = np.full((height, width), np.nan, dtype=np.float32)
+            nir = np.full((height, width), np.nan, dtype=np.float32)
+            for band_index, destination in ((red_band, red), (nir_band, nir)):
+                reproject(
+                    source=rasterio.band(src, band_index),
+                    destination=destination,
+                    src_transform=src.transform,
+                    src_crs=src.crs,
+                    src_nodata=src.nodata,
+                    dst_transform=destination_transform,
+                    dst_crs=metric_crs,
+                    dst_nodata=np.nan,
+                    resampling=Resampling.average,
+                )
+
+        roi_mask = geometry_mask(
+            [mapping(metric_geometry)],
+            out_shape=(height, width),
+            transform=destination_transform,
+            invert=True,
+        )
+        valid = (
+            roi_mask
+            & np.isfinite(red)
+            & np.isfinite(nir)
+            & (red > 0)
+            & (nir > 0)
+        )
+        denominator = nir + red
+        valid &= np.isfinite(denominator) & (denominator != 0)
+        ndvi = np.full_like(red, np.nan, dtype=np.float32)
+        ndvi[valid] = (nir[valid] - red[valid]) / denominator[valid]
+        if minimum is not None:
+            valid &= ndvi >= minimum
+        if maximum is not None:
+            valid &= ndvi <= maximum
+        values = ndvi[valid]
+        if not values.size:
+            raise ValueError(
+                "El ROI no contiene celdas NDVI válidas dentro del rango del histograma.",
+            )
+
+        breaks = np.quantile(values, np.linspace(0, 1, zone_count + 1))
+        zones = np.zeros((height, width), dtype=np.uint8)
+        zones[valid] = (
+            np.digitize(ndvi[valid], breaks[1:-1], right=True) + 1
+        ).astype(np.uint8)
+        ramp = np.asarray(
+            [
+                [int(color[index : index + 2], 16) for index in (0, 2, 4)]
+                for color in self.INDEX_RAMPS["NDVI"]
+            ],
+            dtype=np.uint8,
+        )
+        if zone_count == len(self.PRESCRIPTION_ZONE_PALETTE):
+            colors = np.asarray(
+                [
+                    [int(color[index : index + 2], 16) for index in (0, 2, 4)]
+                    for color in self.PRESCRIPTION_ZONE_PALETTE
+                ],
+                dtype=np.uint8,
+            )
+        else:
+            ramp_positions = np.floor(
+                np.linspace(0, len(ramp) - 1, zone_count) + 0.5,
+            ).astype(int)
+            colors = ramp[ramp_positions]
+        rgba = np.zeros((height, width, 4), dtype=np.uint8)
+        for zone_index, color in enumerate(colors, 1):
+            zone_mask = zones == zone_index
+            rgba[zone_mask, :3] = color
+            rgba[zone_mask, 3] = 255
+
+        # Cada celda métrica se amplía únicamente para visualización. Un borde
+        # carbón de un píxel marca el límite compartido sin introducir huecos
+        # y ocupa una proporción pequeña frente al relleno NDVI.
+        render_scale = 12
+        rendered = np.repeat(
+            np.repeat(rgba, render_scale, axis=0),
+            render_scale,
+            axis=1,
+        )
+        for grid_edge in (
+            rendered[::render_scale, :, :],
+            rendered[:, ::render_scale, :],
+        ):
+            visible_edge = grid_edge[..., 3] > 0
+            grid_edge[visible_edge, :3] = (75, 81, 77)
+            grid_edge[visible_edge, 3] = 255
+
+        prescription_id = uuid4().hex
+        prescription_dir = self.settings.output_dir / "prescriptions"
+        prescription_dir.mkdir(parents=True, exist_ok=True)
+        image_path = prescription_dir / f"{prescription_id}.png"
+        Image.fromarray(rendered, mode="RGBA").save(image_path)
+
+        projected_bounds = array_bounds(height, width, destination_transform)
+        west, south, east, north = transform_bounds(
+            metric_crs,
+            "EPSG:4326",
+            *projected_bounds,
+            densify_pts=21,
+        )
+        legend = []
+        five_zone_labels = [
+            "Severo",
+            "Deficiente",
+            "Moderado",
+            "Bueno",
+            "Excelente",
+        ]
+        four_zone_labels = ["Severo", "Moderado", "Bueno", "Excelente"]
+        for zone_index, color in enumerate(colors, 1):
+            zone_mask = zones == zone_index
+            zone_values = ndvi[zone_mask]
+            legend.append(
+                {
+                    "zone": zone_index,
+                    "label": (
+                        four_zone_labels[zone_index - 1]
+                        if zone_count == 4
+                        else five_zone_labels[zone_index - 1]
+                        if zone_count == 5
+                        else "Severo"
+                        if zone_index == 1
+                        else "Excelente"
+                        if zone_index == zone_count
+                        else f"Nivel {zone_index}"
+                    ),
+                    "minimum": float(breaks[zone_index - 1]),
+                    "maximum": float(breaks[zone_index]),
+                    "mean": float(np.mean(zone_values))
+                    if zone_values.size
+                    else float(
+                        (breaks[zone_index - 1] + breaks[zone_index]) / 2,
+                    ),
+                    "color": "#" + "".join(f"{channel:02x}" for channel in color),
+                    "cell_count": int(np.count_nonzero(zone_mask)),
+                    "area_hectares": float(
+                        np.count_nonzero(zone_mask) * cell_size_m**2 / 10_000,
+                    ),
+                },
+            )
+        return {
+            "status": "ok",
+            "prescription_id": prescription_id,
+            "image_url": f"/static/prescriptions/{prescription_id}.png",
+            "bounds": [[south, west], [north, east]],
+            "zone_count": zone_count,
+            "cell_size_m": cell_size_m,
+            "range_min": float(minimum) if minimum is not None else None,
+            "range_max": float(maximum) if maximum is not None else None,
+            "valid_cell_count": int(np.count_nonzero(valid)),
+            "area_hectares": float(
+                np.count_nonzero(valid) * cell_size_m**2 / 10_000,
+            ),
+            "legend": legend,
+        }
 
     def _ndvi_bands(self, path: Path | None = None, sensor: str | None = None) -> tuple[int, int]:
         """Return the red and NIR band indexes configured in the raster."""

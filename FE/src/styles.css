@@ -1030,9 +1030,12 @@ body {
 .import-dialog {
   position: relative;
   width: min(560px, 100%);
+  height: min(860px, calc(100vh - 40px));
   max-height: calc(100vh - 40px);
   padding: 25px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid #dfe3dc;
   border-radius: 20px;
   background: linear-gradient(180deg, #fdfefb 0%, #f8faf6 100%);
@@ -1697,8 +1700,248 @@ body {
 }
 
 /* Bibliotecas tabulares de ortomosaicos y ROI. */
+.cycle-dialog {
+  width: min(980px, 100%);
+}
+
+.cycle-dialog-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  gap: 16px;
+  padding: 0 24px 24px;
+}
+
+.cycle-dialog-panel {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.cycle-dialog-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cycle-dialog-panel-head strong {
+  color: #252b25;
+  font-size: 13px;
+}
+
+.cycle-list {
+  display: grid;
+  gap: 10px;
+  max-height: 460px;
+  padding-right: 4px;
+  overflow: auto;
+}
+
+.cycle-card {
+  display: grid;
+  gap: 7px;
+  padding: 14px;
+  border: 1px solid #dfe5dc;
+  border-radius: 14px;
+  background: #fff;
+  color: #2a302b;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.14s,
+    transform 0.14s,
+    box-shadow 0.14s;
+}
+
+.cycle-card:hover {
+  border-color: #bfd1c3;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(36, 54, 40, 0.08);
+}
+
+.cycle-card.is-selected {
+  border-color: #12684a;
+  box-shadow: 0 12px 28px rgba(18, 104, 74, 0.12);
+}
+
+.cycle-card-main {
+  display: grid;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cycle-card-top,
+.cycle-card-meta,
+.cycle-card-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cycle-card-top {
+  justify-content: space-between;
+}
+
+.cycle-card-top strong {
+  font-size: 13px;
+}
+
+.cycle-card-top input {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid #cfd8d1;
+  border-radius: 8px;
+  background: #fff;
+  color: #20251f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cycle-card-top i,
+.cycle-card-dates {
+  color: #778077;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.cycle-card-meta {
+  color: #4f5c53;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.cycle-card-action {
+  color: #12684a;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.cycle-card-tools {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.cycle-tool-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #d9dfd6;
+  border-radius: 8px;
+  background: #fff;
+  color: #526057;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cycle-tool-button.is-save {
+  border-color: #12684a;
+  background: #12684a;
+  color: #fff;
+}
+
+.cycle-tool-button.is-icon {
+  width: 32px;
+  padding: 0;
+}
+
+.cycle-tool-button.is-delete {
+  border-color: #ead3ce;
+  color: #a84738;
+}
+
+.cycle-tool-button.is-delete:hover {
+  border-color: #c85a49;
+  background: #fff2ef;
+}
+
+.cycle-tool-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cycle-card-meta svg,
+.cycle-card-action svg,
+.library-cycle-badge svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cycle-form-panel {
+  padding: 16px;
+  border: 1px solid #dfe5dc;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #f7faf6 0%, #ffffff 100%);
+}
+
+.cycle-form-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.cycle-form-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.cycle-form-grid span {
+  color: #5c655c;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cycle-form-grid input,
+.cycle-form-grid textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #cfd8d1;
+  border-radius: 10px;
+  background: #fff;
+  color: #20251f;
+  font-size: 12px;
+}
+
+.cycle-form-grid textarea {
+  resize: vertical;
+}
+
+.cycle-form-notes {
+  grid-column: 1 / -1;
+}
+
+.cycle-save-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #12684a;
+  border-radius: 10px;
+  background: #12684a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cycle-save-button:hover {
+  background: #0f5a41;
+}
+
 .orthomosaic-dialog {
-  width: min(820px, 100%);
+  width: min(880px, 100%);
 }
 
 .orthomosaic-table-wrap,
@@ -1744,12 +1987,66 @@ body {
 
 .orthomosaic-table tbody tr,
 .roi-table tbody tr {
-  transition: background 0.14s;
+  transition: background 0.14s, opacity 0.14s;
 }
 
 .orthomosaic-table tbody tr:hover,
 .roi-table tbody tr:hover {
   background: #fafbf8;
+}
+
+.orthomosaic-table tbody tr.is-dragging {
+  opacity: 0.42;
+}
+
+.orthomosaic-table tbody tr.is-drag-over td {
+  background: #edf7f1;
+  box-shadow: inset 0 2px #16835e;
+}
+
+.orthomosaic-drag-cell {
+  width: 38px;
+  padding-right: 2px !important;
+  text-align: center !important;
+}
+
+.orthomosaic-drag-handle {
+  display: inline-grid;
+  width: 28px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #7d877f;
+  cursor: grab;
+}
+
+.orthomosaic-drag-handle:hover {
+  border-color: #cbd8cf;
+  background: #edf4ef;
+  color: #12684a;
+}
+
+.orthomosaic-drag-handle:active {
+  cursor: grabbing;
+}
+
+.orthomosaic-drag-handle:disabled {
+  cursor: wait;
+  opacity: 0.45;
+}
+
+.orthomosaic-drag-handle svg {
+  width: 18px;
+  height: 18px;
+}
+
+.orthomosaic-reorder-help {
+  margin: -4px 0 10px;
+  color: #717a73;
+  font-size: 10px;
 }
 
 .orthomosaic-table td strong,
@@ -1778,6 +2075,95 @@ body {
   font-weight: 800;
   letter-spacing: 0.035em;
   text-transform: uppercase;
+}
+
+.library-cycle-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.library-cycle-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #edf7f1;
+  color: #12684a;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.library-cycle-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 12px;
+}
+
+.orthomosaic-date-cell {
+  display: grid;
+  gap: 6px;
+}
+
+.orthomosaic-date-trigger,
+.orthomosaic-date-save,
+.orthomosaic-date-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.orthomosaic-date-trigger,
+.orthomosaic-date-cancel {
+  border: 1px solid #d9dfd6;
+  background: #fff;
+  color: #526057;
+}
+
+.orthomosaic-date-trigger:hover,
+.orthomosaic-date-cancel:hover {
+  border-color: #bfcabf;
+  background: #f5f8f4;
+}
+
+.orthomosaic-date-save {
+  border: 1px solid #12684a;
+  background: #12684a;
+  color: #fff;
+}
+
+.orthomosaic-date-save:hover {
+  background: #0f5a41;
+}
+
+.orthomosaic-date-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.orthomosaic-date-editor input {
+  min-width: 150px;
+  padding: 7px 9px;
+  border: 1px solid #cfd8d1;
+  border-radius: 8px;
+  background: #fff;
+  color: #20251f;
+  font-size: 12px;
+}
+
+.orthomosaic-date-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .ortho-toggle {
@@ -2042,8 +2428,13 @@ body {
 /* Dashboard temporal para comparar estadísticas NDVI guardadas. */
 .roi-comparison-dialog {
   width: min(1240px, 100%);
+  height: min(860px, calc(100vh - 40px));
+  max-height: calc(100vh - 40px);
   padding: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid #dfe7e2;
   border-radius: 18px;
   background: #f6f8f7;
@@ -2215,6 +2606,61 @@ body {
   pointer-events: none;
 }
 
+.is-hidden-view {
+  display: none !important;
+}
+
+.roi-dashboard-view-switcher {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.roi-dashboard-view-switcher button {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 13px;
+  border: 1px solid #e3e9e5;
+  border-radius: 13px;
+  background: linear-gradient(180deg, #fcfdfc 0%, #f4f8f5 100%);
+  color: #5c6e66;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.16s,
+    background 0.16s,
+    box-shadow 0.16s,
+    transform 0.16s;
+}
+
+.roi-dashboard-view-switcher button:hover {
+  border-color: #c8d3cc;
+  transform: translateY(-1px);
+}
+
+.roi-dashboard-view-switcher button.is-active {
+  border-color: #12684a;
+  background: linear-gradient(180deg, #f4fbf7 0%, #eaf4ed 100%);
+  box-shadow: inset 0 0 0 1px rgba(18, 104, 74, 0.08);
+}
+
+.roi-dashboard-view-switcher button strong,
+.roi-dashboard-view-switcher button span {
+  display: block;
+}
+
+.roi-dashboard-view-switcher button strong {
+  color: #15211c;
+  font-size: 13px;
+}
+
+.roi-dashboard-view-switcher button span {
+  color: #7f8f88;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .roi-flight-ribbon {
   padding: 16px 18px 14px;
   border: 1px solid #e3e9e5;
@@ -2226,6 +2672,7 @@ body {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -2240,10 +2687,39 @@ body {
   font-size: 13px;
 }
 
-.roi-flight-ribbon-header > span {
+.roi-flight-ribbon-header > span,
+.roi-flight-ribbon-tools > span {
   color: #8b9a93;
   font-size: 12px;
   white-space: nowrap;
+}
+
+.roi-flight-ribbon-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.roi-flight-ribbon-tools button {
+  padding: 5px 8px;
+  border: 1px solid #d8e2db;
+  border-radius: 7px;
+  background: #f7faf8;
+  color: #557065;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.roi-flight-ribbon-tools button:hover {
+  border-color: #9bc9ad;
+  color: #12684a;
+}
+
+.roi-flight-reorder-help {
+  margin: -3px 0 10px;
+  color: #849089;
+  font-size: 10px;
 }
 
 .roi-flight-ribbon-cards {
@@ -2257,17 +2733,68 @@ body {
   flex: 1 0 92px;
   min-width: 92px;
   display: grid;
-  gap: 4px;
+  gap: 6px;
   padding: 10px 9px 9px;
   border: 1px solid #e3e9e5;
   border-radius: 11px;
   background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s, background 0.14s, opacity 0.14s,
+    transform 0.14s;
+}
+
+.roi-flight-card:hover {
+  border-color: #9bc9ad;
+  background: #f7fbf8;
 }
 
 .roi-flight-card.is-current {
   border-color: #12684a;
   background: #f2f9f5;
   box-shadow: inset 0 0 0 1px #12684a;
+}
+
+.roi-flight-card.is-dragging {
+  opacity: 0.42;
+  transform: scale(0.97);
+}
+
+.roi-flight-card.is-drag-over {
+  border-color: #16835e;
+  background: #edf7f1;
+  box-shadow: inset 3px 0 #16835e;
+}
+
+.roi-flight-card-grip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: #9aa49e;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: grab;
+}
+
+.roi-flight-card-grip svg {
+  width: 14px;
+  height: 14px;
+}
+
+.roi-flight-card.is-active-flight .roi-flight-card-label i {
+  display: inline-flex;
+  margin-left: 6px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: #12684a;
+  color: #fff;
+  font-size: 8px;
+  font-style: normal;
+  letter-spacing: 0.04em;
 }
 
 .roi-flight-card-label {
@@ -2291,27 +2818,41 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.roi-flight-card-name {
-  overflow: hidden;
-  color: #8b9a93;
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.roi-flight-selection-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e3e9e5;
+  color: #5c6e66;
+  font-size: 12px;
 }
 
-.roi-flight-card-bar {
-  height: 4px;
-  margin-top: 4px;
-  border-radius: 999px;
-  background: #eff3f1;
-  overflow: hidden;
+.roi-flight-selection-actions > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border: 1px solid #12684a;
+  border-radius: 9px;
+  background: #12684a;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
 }
 
-.roi-flight-card-bar i {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #12684a, #8fbf62);
+.roi-flight-selection-actions > button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.roi-flight-selection-actions svg {
+  width: 15px;
+  height: 15px;
 }
 
 .roi-kpi-grid {
@@ -2371,6 +2912,26 @@ body {
   margin-top: 6px;
   color: #5c6e66;
   font-size: 12px;
+}
+
+.roi-dashboard-note {
+  display: grid;
+  gap: 5px;
+  padding: 14px 16px;
+  border: 1px solid #e3e9e5;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fbfdfc 0%, #f4f8f5 100%);
+}
+
+.roi-dashboard-note strong {
+  color: #15211c;
+  font-size: 13px;
+}
+
+.roi-dashboard-note span {
+  color: #5c6e66;
+  font-size: 12.5px;
+  line-height: 1.55;
 }
 
 .roi-metric-delta {
@@ -2536,8 +3097,598 @@ body {
   font-size: 10px;
 }
 
+.roi-heatmap-card {
+  padding: 16px 18px 14px;
+  border: 1px solid #e3e9e5;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.roi-heatmap-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.roi-heatmap-heading strong,
+.roi-heatmap-heading span {
+  display: block;
+}
+
+.roi-heatmap-heading strong {
+  color: #15211c;
+  font-size: 16px;
+}
+
+.roi-heatmap-heading span {
+  margin-top: 4px;
+  color: #8b9a93;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.roi-heatmap-wrap {
+  overflow-x: auto;
+}
+
+.roi-heatmap-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: separate;
+  border-spacing: 3px;
+}
+
+.roi-heatmap-table th {
+  padding-bottom: 3px;
+  color: #8b9a93;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.roi-heatmap-table th:first-child {
+  text-align: left;
+}
+
+.roi-heatmap-table td {
+  padding: 8px 6px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.roi-heatmap-table td.lbl {
+  padding-left: 2px;
+  background: transparent !important;
+  color: #15211c;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.roi-heatmap-table td.now {
+  box-shadow: 0 0 0 2px #15211c;
+}
+
+.roi-heatmap-note {
+  margin: 12px 0 0;
+  color: #8b9a93;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.roi-heatmap-note b {
+  color: #5c6e66;
+}
+
+.roi-operational-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 14px;
+}
+
+.roi-operational-card {
+  padding: 17px 19px 19px;
+  border: 1px solid #e3e9e5;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.roi-operational-card h3 {
+  margin: 0 0 2px;
+  color: #15211c;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.roi-operational-card .sub {
+  margin: 0 0 14px;
+  color: #8b9a93;
+  font-size: 12.5px;
+}
+
+.roi-operational-list {
+  display: grid;
+  gap: 10px;
+}
+
+.roi-operational-alert {
+  padding: 13px 15px;
+  border: 1px solid #e3e9e5;
+  border-left: 4px solid #e0952c;
+  border-radius: 11px;
+  background: #fefaf3;
+}
+
+.roi-operational-alert.is-bad {
+  border-left-color: #d6473f;
+  background: #fdf6f5;
+}
+
+.roi-operational-alert .t {
+  color: #15211c;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.roi-operational-alert p {
+  margin: 6px 0 0;
+  color: #5c6e66;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.roi-detail-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.roi-detail-summary-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid #eff3f1;
+}
+
+.roi-detail-summary-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.roi-detail-summary-table td:first-child {
+  color: #5c6e66;
+  text-align: left;
+}
+
+.roi-detail-summary-table td:last-child {
+  color: #15211c;
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.roi-detail-summary-table td.is-up {
+  color: #2e9e5b;
+}
+
+.roi-detail-summary-table td.is-down {
+  color: #d6473f;
+}
+
+.roi-dashboard-insights {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.roi-dashboard-insights--triple {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.2fr);
+}
+
+.roi-dashboard-insight-card {
+  padding: 16px 18px;
+  border: 1px solid #e3e9e5;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.roi-dashboard-insight-card small {
+  display: block;
+  color: #8b9a93;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.roi-dashboard-insight-card strong {
+  display: block;
+  margin-top: 6px;
+  color: #15211c;
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+.roi-dashboard-insight-card p {
+  margin: 8px 0 0;
+  color: #5c6e66;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.roi-geoscore-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid #d9e3dc;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(143, 191, 98, 0.16), transparent 34%),
+    linear-gradient(180deg, #fdfefb 0%, #f5f8f4 100%);
+}
+
+.roi-geoscore-header small,
+.roi-geoscore-header strong,
+.roi-geoscore-header p,
+.roi-geoscore-footnote strong,
+.roi-geoscore-footnote p {
+  display: block;
+}
+
+.roi-geoscore-header small,
+.roi-geoscore-footnote strong {
+  color: #708178;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.roi-geoscore-header strong {
+  margin-top: 6px;
+  color: #15211c;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+}
+
+.roi-geoscore-header p,
+.roi-geoscore-footnote p {
+  margin: 7px 0 0;
+  color: #5c6e66;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.roi-geoscore-list {
+  display: grid;
+  gap: 9px;
+}
+
+.roi-geoscore-item {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 11px;
+  border: 1px solid #e3e9e5;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.roi-geoscore-item > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border-radius: 10px;
+  background: #edf5ee;
+  color: #12684a;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.roi-geoscore-item strong,
+.roi-geoscore-item p {
+  display: block;
+}
+
+.roi-geoscore-item strong {
+  color: #15211c;
+  font-size: 13px;
+}
+
+.roi-geoscore-item p {
+  margin: 4px 0 0;
+  color: #66766f;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
 .roi-detail-section {
   padding-top: 2px;
+}
+
+.roi-methodology-section {
+  display: grid;
+  gap: 14px;
+}
+
+.roi-methodology-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.roi-methodology-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border: 1px solid #e3e9e5;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.roi-methodology-card small,
+.roi-methodology-card strong,
+.roi-methodology-card p {
+  display: block;
+}
+
+.roi-methodology-card small {
+  color: #8b9a93;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.roi-methodology-card strong {
+  color: #15211c;
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+.roi-methodology-card p {
+  margin: 0;
+  color: #5c6e66;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.roi-methodology-card ul {
+  margin: 0;
+  padding-left: 17px;
+  color: #4f6259;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.roi-methodology-card li + li {
+  margin-top: 4px;
+}
+
+.roi-methodology-note {
+  padding: 15px 17px;
+  border: 1px solid #d9e3dc;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fbfdfc 0%, #f4f8f5 100%);
+}
+
+.roi-methodology-note strong,
+.roi-methodology-note p {
+  display: block;
+}
+
+.roi-methodology-note strong {
+  color: #15211c;
+  font-size: 14px;
+}
+
+.roi-methodology-note p {
+  margin: 6px 0 0;
+  color: #5c6e66;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.roi-heatmap-table tr.is-clickable {
+  cursor: pointer;
+}
+
+.roi-heatmap-table tr.is-clickable:hover td:not(.lbl) {
+  opacity: 0.86;
+}
+
+.roi-heatmap-table tr.is-clickable:hover td.lbl {
+  color: #12684a;
+}
+
+.roi-metric-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 34px 20px;
+  overflow: hidden;
+  background: rgba(18, 32, 26, 0.42);
+  backdrop-filter: blur(2px);
+}
+
+.roi-metric-modal {
+  width: min(940px, 100%);
+  height: min(860px, calc(100vh - 68px));
+  max-height: calc(100vh - 68px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(15, 35, 25, 0.28);
+}
+
+.roi-metric-modal-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid #e3e9e5;
+}
+
+.roi-metric-modal-id {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: #15211c;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.roi-metric-modal-id em {
+  padding: 3px 10px;
+  border-radius: 20px;
+  background: #12684a;
+  color: #fff;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.roi-metric-modal-meta {
+  margin-top: 4px;
+  color: #8b9a93;
+  font-size: 12.5px;
+}
+
+.roi-metric-modal-meta b {
+  color: #5c6e66;
+  font-weight: 600;
+}
+
+.roi-metric-modal-close {
+  width: 34px;
+  height: 34px;
+  margin-left: auto;
+  border: 1px solid #e3e9e5;
+  border-radius: 10px;
+  background: #fff;
+  color: #5c6e66;
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.roi-metric-modal-close:hover {
+  background: #f6f8f7;
+  color: #15211c;
+}
+
+.roi-metric-modal-kpis {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  border-bottom: 1px solid #e3e9e5;
+  background: #e3e9e5;
+}
+
+.roi-metric-modal-kpis > div {
+  padding: 13px 18px;
+  background: #fff;
+}
+
+.roi-metric-modal-kpis .l {
+  color: #8b9a93;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.roi-metric-modal-kpis .v {
+  margin-top: 3px;
+  color: #15211c;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.roi-metric-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  gap: 16px;
+  padding: 20px 24px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.roi-metric-history-chart {
+  --chart-color: #12684a;
+  padding: 16px 18px 12px;
+  border: 1px solid #e3e9e5;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.roi-metric-history-chart header {
+  margin-bottom: 10px;
+}
+
+.roi-metric-history-chart header strong,
+.roi-metric-history-chart header span {
+  display: block;
+}
+
+.roi-metric-history-chart header strong {
+  color: #15211c;
+  font-size: 15px;
+}
+
+.roi-metric-history-chart header span {
+  margin-top: 3px;
+  color: #8b9a93;
+  font-size: 12px;
+}
+
+.roi-metric-history-svg {
+  height: 220px;
+}
+
+.roi-metric-history-line {
+  stroke-width: 4.5;
+}
+
+.roi-metric-modal-read {
+  padding: 13px 16px;
+  border: 1px solid #e3e9e5;
+  border-radius: 11px;
+  background: #f7faf8;
+}
+
+.roi-metric-modal-read p {
+  margin: 0;
+  color: #5c6e66;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.roi-metric-modal-read p b {
+  color: #15211c;
 }
 
 .roi-section-heading {
@@ -2600,6 +3751,13 @@ body {
 
 .roi-comparison-table tbody tr:hover td {
   background: #f7faf8;
+}
+
+.roi-detail-note {
+  margin: 12px 2px 0;
+  color: #8b9a93;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .roi-comparison-actions {
@@ -2997,6 +4155,407 @@ body {
   color: white;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
   font-size: 12px;
+}
+
+.cycle-exit-toast {
+  position: fixed;
+  z-index: 2700;
+  top: 20px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 11px 16px;
+  border: 1px solid #9bc9ad;
+  border-radius: 12px;
+  background: #edf8f1;
+  color: #175c3b;
+  box-shadow: 0 12px 30px rgba(20, 62, 40, 0.2);
+  font-size: 12px;
+  font-weight: 700;
+  transform: translateX(-50%);
+}
+
+.cycle-exit-toast svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  stroke-width: 2.4;
+}
+
+/* Configuracion y lectura del mapa de prescripcion NDVI. */
+.prescription-dialog {
+  height: auto;
+  max-height: calc(100vh - 40px);
+}
+
+.prescription-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.prescription-config-grid > label {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #dce5dc;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.prescription-config-grid label > span {
+  color: #314238;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.prescription-config-grid select,
+.prescription-size-input {
+  width: 100%;
+  height: 42px;
+  border: 1px solid #cbd8cd;
+  border-radius: 10px;
+  background: #f8faf7;
+  color: #223329;
+  font: inherit;
+}
+
+.prescription-config-grid select {
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.prescription-config-grid small {
+  color: #768078;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.prescription-size-input {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.prescription-size-input input {
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  padding: 0 10px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.prescription-size-input strong {
+  padding: 0 10px;
+  color: #5c685f;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.prescription-config-grid select:focus,
+.prescription-size-input:focus-within {
+  border-color: #4f7b5e;
+  box-shadow: 0 0 0 3px rgba(79, 123, 94, 0.12);
+}
+
+.prescription-ramp-preview {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 9px;
+  margin-top: 16px;
+  color: #6f786f;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.prescription-ramp-preview i {
+  height: 12px;
+  border: 1px solid rgba(31, 41, 34, 0.18);
+  border-radius: 999px;
+  background: linear-gradient(90deg, #FF7A00, #FF9500, #FFB000, #FFC400, #E4D200, #ACF404, #57F20A, #27E833, #00B824, #009E1F);
+}
+
+.prescription-grid-note {
+  margin: 9px 0 0;
+  color: #68736a;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.prescription-dose-table {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.prescription-dose-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid #dce5dc;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.prescription-dose-row > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.prescription-dose-row > span strong {
+  color: #27342c;
+  font-size: 12px;
+}
+
+.prescription-dose-row > span small {
+  color: #667168;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.prescription-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 18px;
+}
+
+.prescription-dialog-actions button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.prescription-dialog-actions button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.prescription-generate {
+  border: 1px solid #355d42;
+  background: #355d42;
+  color: #fff;
+  box-shadow: 0 7px 18px rgba(35, 79, 50, 0.2);
+}
+
+.prescription-clear {
+  border: 1px solid #d8dfd8;
+  background: #f7f9f6;
+  color: #5a655c;
+}
+
+.prescription-dialog-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.prescription-map-overlay {
+  image-rendering: auto;
+}
+
+.zoning-map-overlay {
+  image-rendering: auto;
+}
+
+.prescription-panel-action {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 0 2px;
+  padding: 8px 12px;
+  border: 1px solid #3f694c;
+  border-radius: 10px;
+  background: #3f694c;
+  color: #fff;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 7px 16px rgba(40, 84, 54, 0.18);
+}
+
+.prescription-panel-action.is-active {
+  border-color: #c8d1c9;
+  background: #f3f6f2;
+  color: #445248;
+  box-shadow: none;
+}
+
+.prescription-panel-action:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.prescription-panel-action svg {
+  width: 17px;
+  height: 17px;
+}
+
+.prescription-legend {
+  position: absolute;
+  z-index: 1350;
+  right: 18px;
+  bottom: 18px;
+  width: min(370px, calc(100vw - 92px));
+  padding: 14px;
+  border: 1px solid rgba(205, 216, 207, 0.96);
+  border-radius: 15px;
+  background: rgba(250, 252, 248, 0.95);
+  color: #27342c;
+  box-shadow: 0 16px 36px rgba(25, 40, 29, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.prescription-legend header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.prescription-legend header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.prescription-legend header span {
+  color: #718077;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.prescription-legend header strong {
+  font-size: 15px;
+}
+
+.prescription-legend header button {
+  display: flex;
+  width: auto;
+  height: 28px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid #dce3dc;
+  border-radius: 8px;
+  background: #f2f5f1;
+  color: #59655c;
+  cursor: pointer;
+}
+
+.prescription-legend header button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.prescription-legend header button span {
+  color: inherit;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.prescription-legend > p {
+  margin: 8px 0 11px;
+  color: #667168;
+  font-size: 10px;
+}
+
+.prescription-legend-ramp {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: #657168;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.prescription-legend-ramp i {
+  height: 10px;
+  border: 1px solid #4b514d;
+  background: linear-gradient(90deg, #FF7A00 0% 25%, #FFC400 25% 50%, #ACF404 50% 75%, #00B824 75% 100%);
+}
+
+.prescription-legend-zones {
+  display: grid;
+  gap: 6px;
+}
+
+.prescription-legend-zones > div {
+  display: grid;
+  grid-template-columns: 30px 68px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 5px 7px;
+  border: 1px solid #e0e6e0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 9px;
+}
+
+.prescription-legend-zones > div > i {
+  width: 30px;
+  height: 19px;
+  border: 1px solid #4b514d;
+  border-radius: 2px;
+}
+
+.prescription-legend-zones > div > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.prescription-legend-zones > div > span strong {
+  text-align: left;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.prescription-legend-zones > div > span:nth-of-type(2) strong {
+  white-space: nowrap;
+}
+
+.prescription-legend-zones small {
+  color: #6c766e;
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.prescription-legend footer {
+  margin-top: 11px;
+  padding-top: 9px;
+  border-top: 1px solid #e0e6e0;
+  color: #6a756c;
+  font-size: 9px;
+  font-weight: 700;
 }
 
 .uploading-overlay {
@@ -4033,11 +5592,29 @@ body {
 }
 
 @media (max-width: 980px) {
+  .roi-dashboard-view-switcher {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .roi-kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .roi-trends-grid {
     grid-template-columns: 1fr;
+  }
+  .roi-dashboard-insights {
+    grid-template-columns: 1fr;
+  }
+  .roi-dashboard-insights--triple {
+    grid-template-columns: 1fr;
+  }
+  .roi-methodology-grid {
+    grid-template-columns: 1fr;
+  }
+  .roi-operational-grid {
+    grid-template-columns: 1fr;
+  }
+  .roi-metric-modal-kpis {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
@@ -4164,6 +5741,22 @@ body {
   .import-dialog {
     padding: 18px;
   }
+  .prescription-config-grid {
+    grid-template-columns: 1fr;
+  }
+  .prescription-dialog-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+  .prescription-legend {
+    right: 12px;
+    bottom: 12px;
+    width: calc(100vw - 78px);
+  }
+  .roi-metric-modal-backdrop {
+    align-items: stretch;
+    padding: 10px;
+  }
   .detection-intro {
     align-items: flex-start;
     flex-direction: column;
@@ -4196,6 +5789,9 @@ body {
   }
   .import-dialog.upload-dialog {
     padding: 0;
+  }
+  .cycle-dialog-layout {
+    grid-template-columns: 1fr;
   }
   .import-options,
   .roi-options,
@@ -4232,8 +5828,14 @@ body {
   .roi-kpi-grid {
     grid-template-columns: 1fr;
   }
+  .roi-dashboard-view-switcher {
+    grid-template-columns: 1fr;
+  }
   .roi-trend-svg {
     height: 145px;
+  }
+  .roi-metric-modal-kpis {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -4242,6 +5844,15 @@ body {
     padding: 10px;
   }
   .import-dialog {
+    height: calc(100vh - 20px);
+    max-height: calc(100vh - 20px);
+  }
+  .roi-comparison-dialog {
+    height: calc(100vh - 20px);
+    max-height: calc(100vh - 20px);
+  }
+  .roi-metric-modal {
+    height: calc(100vh - 20px);
     max-height: calc(100vh - 20px);
   }
   .upload-dialog-hero {

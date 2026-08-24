@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document id="root_doc">
+<Schema name="test_pol" id="test_pol">
+	<SimpleField name="id" type="float"></SimpleField>
+</Schema>
+<Folder><name>test_pol</name>
+  <Placemark id="test_pol.1">
+	<Style><LineStyle><color>ff0000ff</color></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>
+      <MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>-107.025417064172,24.0459077346689 -107.025376869148,24.046042647994 -107.025284013398,24.0461921820285 -107.023236127639,24.0461933628511 -107.023213377403,24.0452818120638 -107.025438921187,24.0452782813858 -107.025417064172,24.0459077346689</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+  </Placemark>
+</Folder>
+</Document></kml>

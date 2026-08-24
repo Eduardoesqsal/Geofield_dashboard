@@ -63,6 +63,8 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
             raise HTTPException(503, str(exc)) from exc
         except OrthomosaicNotFoundError as exc:
             raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         except Exception as exc:
             raise HTTPException(502, f"No se pudo activar el ortomosaico {orthomosaic_id}: {exc}") from exc
 
@@ -90,16 +92,117 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
             raise HTTPException(502, f"Supabase no responde correctamente: {exc}") from exc
 
     @router.get("/orthomosaics")
-    def list_orthomosaics(limit: int = Query(100, ge=1, le=500)) -> dict[str, Any]:
+    def list_orthomosaics(
+        limit: int = Query(100, ge=1, le=500),
+        cycle_id: str | None = Query(None),
+    ) -> dict[str, Any]:
         try:
-            items = supabase.list_orthomosaics(limit)
+            items = supabase.list_orthomosaics(limit, cycle_id)
         except SupabaseNotConfiguredError as exc:
             raise HTTPException(503, str(exc)) from exc
+        return {"status": "ok", "items": items}
+
+    @router.get("/agricultural_cycles")
+    def list_agricultural_cycles(
+        limit: int = Query(100, ge=1, le=500),
+    ) -> dict[str, Any]:
+        try:
+            items = supabase.list_agricultural_cycles(limit)
+        except SupabaseNotConfiguredError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        return {"status": "ok", "items": items}
+
+    @router.post("/agricultural_cycles")
+    async def create_agricultural_cycle(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        name = str(payload.get("name") or "").strip()
+        crop_name = str(payload.get("crop_name") or "").strip() or None
+        notes = str(payload.get("notes") or "").strip() or None
+        start_date_raw = payload.get("start_date")
+        end_date_raw = payload.get("end_date")
+        if not name:
+            raise HTTPException(400, "Captura un nombre para el ciclo agricola.")
+        if not start_date_raw:
+            raise HTTPException(400, "Captura la fecha inicial del ciclo agricola.")
+        try:
+            start_date = date.fromisoformat(str(start_date_raw))
+        except ValueError as exc:
+            raise HTTPException(422, "La fecha inicial debe usar el formato YYYY-MM-DD.") from exc
+        try:
+            end_date = date.fromisoformat(str(end_date_raw)) if end_date_raw else None
+        except ValueError as exc:
+            raise HTTPException(422, "La fecha final debe usar el formato YYYY-MM-DD.") from exc
+        try:
+            cycle = supabase.create_agricultural_cycle(
+                name=name,
+                crop_name=crop_name,
+                start_date=start_date,
+                end_date=end_date,
+                notes=notes,
+            )
+        except SupabaseNotConfiguredError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, f"No se pudo crear el ciclo agricola: {exc}") from exc
+        return {"status": "ok", "cycle": cycle}
+
+    @router.patch("/agricultural_cycles/{cycle_id}")
+    async def update_agricultural_cycle(cycle_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise HTTPException(400, "Captura un nombre valido para el ciclo agricola.")
+        try:
+            cycle = supabase.update_agricultural_cycle(
+                cycle_id,
+                name=name,
+            )
+        except SupabaseNotConfiguredError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except OrthomosaicNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, f"No se pudo renombrar el ciclo agricola: {exc}") from exc
+        return {"status": "ok", "cycle": cycle}
+
+    @router.delete("/agricultural_cycles/{cycle_id}")
+    def delete_agricultural_cycle(cycle_id: str) -> dict[str, Any]:
+        try:
+            result = supabase.delete_agricultural_cycle(cycle_id)
+            for record in result["orthomosaics"]:
+                orthomosaics.reset_active_orthomosaic(record)
+            return {"status": "ok", **result}
+        except OrthomosaicNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except (SupabaseNotConfiguredError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, f"No se pudo eliminar el ciclo agricola: {exc}") from exc
+
+    @router.patch("/agricultural_cycles/{cycle_id}/orthomosaics/order")
+    async def reorder_cycle_orthomosaics(cycle_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        raw_ids = payload.get("orthomosaic_ids") if isinstance(payload, dict) else None
+        if not isinstance(raw_ids, list) or any(
+            not isinstance(item, str) or not item.strip() for item in raw_ids
+        ):
+            raise HTTPException(400, "Envía la lista completa de ortomosaicos en el orden deseado.")
+        try:
+            items = supabase.reorder_orthomosaics(cycle_id, raw_ids)
+        except SupabaseNotConfiguredError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except OrthomosaicNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, f"No se pudo guardar el orden de los vuelos: {exc}") from exc
         return {"status": "ok", "items": items}
 
     @router.post("/orthomosaics/upload")
     async def upload_orthomosaic(
         file: UploadFile = File(...),
+        agricultural_cycle_id: str = Form(...),
         capture_date: date = Form(...),
         sensor_type: str = Form(...),
         name: str | None = Form(None),
@@ -112,6 +215,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
             result = orthomosaics.upload_orthomosaic(
                 content=content,
                 filename=file.filename or "upload.tif",
+                agricultural_cycle_id=agricultural_cycle_id,
                 capture_date=capture_date,
                 sensor_type=sensor_type,
                 name=name,
@@ -150,9 +254,34 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         except Exception as exc:
             raise HTTPException(502, f"No se pudo eliminar el ortomosaico: {exc}") from exc
 
+    @router.patch("/orthomosaics/{orthomosaic_id}")
+    async def update_orthomosaic(orthomosaic_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        capture_date_raw = payload.get("capture_date")
+        if not capture_date_raw:
+            raise HTTPException(400, "Selecciona una fecha valida para el vuelo.")
+        try:
+            capture_date = date.fromisoformat(str(capture_date_raw))
+        except ValueError as exc:
+            raise HTTPException(422, "La fecha del vuelo debe usar el formato YYYY-MM-DD.") from exc
+        try:
+            record = orthomosaics.update_orthomosaic_capture_date(
+                orthomosaic_id,
+                capture_date,
+            )
+            return {"status": "ok", "orthomosaic": record}
+        except SupabaseNotConfiguredError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except OrthomosaicNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, f"No se pudo actualizar la fecha del vuelo: {exc}") from exc
+
     @router.get("/rois")
-    def list_rois() -> dict[str, Any]:
-        return {"status": "ok", "items": supabase.list_rois()}
+    def list_rois(cycle_id: str | None = Query(None)) -> dict[str, Any]:
+        return {"status": "ok", "items": supabase.list_rois(cycle_id)}
 
     @router.post("/rois")
     async def create_roi(request: Request) -> dict[str, Any]:
@@ -162,7 +291,12 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
             if not isinstance(geojson, dict): raise HTTPException(400, "Se requiere un GeoJSON válido.")
             payload_geometry({"geojson": geojson})
             name = str(payload.get("name") or "ROI").strip() or "ROI"
-            record = rois.create_roi(name=name, geojson=geojson, orthomosaic_id=payload.get("orthomosaic_id"))
+            record = rois.create_roi(
+                name=name,
+                geojson=geojson,
+                orthomosaic_id=payload.get("orthomosaic_id"),
+                agricultural_cycle_id=payload.get("cycle_id"),
+            )
             return {"status": "ok", "roi": record}
         except HTTPException:
             raise
@@ -180,10 +314,21 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         return {"status": "ok"}
 
     @router.get("/rois/{roi_id}/analyses")
-    def roi_analyses(roi_id: str, index: str | None = Query(None)) -> dict[str, Any]:
+    def roi_analyses(
+        roi_id: str,
+        index: str | None = Query(None),
+        cycle_id: str | None = Query(None),
+    ) -> dict[str, Any]:
         try:
             normalized_index = index.upper() if index else None
-            return {"status": "ok", "items": supabase.list_roi_analyses(roi_id, normalized_index)}
+            return {
+                "status": "ok",
+                "items": supabase.list_roi_analyses(
+                    roi_id,
+                    normalized_index,
+                    cycle_id,
+                ),
+            }
         except Exception as exc:
             raise HTTPException(502, "No se pudo consultar el historial. Ejecuta BE/sql/002_create_roi_analyses.sql en Supabase.") from exc
 
@@ -261,10 +406,21 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
 
     @router.get("/bounds")
     def bounds(orthomosaic_id: str | None = Query(None)) -> dict[str, Any]:
-        ensure_orthomosaic(orthomosaic_id)
-        raster.ensure_overlay()
-        path = output_dir / "bounds_overlay.txt"
-        return {"status": "ok", "bounds": ast.literal_eval(path.read_text(encoding="utf-8"))}
+        try:
+            ensure_orthomosaic(orthomosaic_id)
+            raster.ensure_overlay()
+            path = output_dir / "bounds_overlay.txt"
+            return {
+                "status": "ok",
+                "bounds": ast.literal_eval(path.read_text(encoding="utf-8")),
+            }
+        except HTTPException:
+            raise
+        except (ValueError, rasterio.errors.RasterioIOError) as exc:
+            raise HTTPException(
+                422,
+                "El ortomosaico está incompleto o dañado y no se pueden calcular sus límites.",
+            ) from exc
 
     @router.get("/tiles/rgb/{z}/{x}/{y}.png")
     def rgb_tile(z: int, x: int, y: int, orthomosaic_id: str | None = Query(None)) -> Response:
@@ -349,6 +505,54 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         try:
             return raster.vegetation_index_data(name.upper())
         except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @router.post("/ndvi_zoning")
+    async def create_ndvi_zoning(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        orthomosaic_id = payload.get("orthomosaic_id")
+        if not isinstance(orthomosaic_id, str) or not orthomosaic_id:
+            raise HTTPException(400, "Selecciona un vuelo antes de generar la zonificacion.")
+        try:
+            zone_count = int(payload.get("zone_count", 4))
+            cell_size_m = float(payload.get("cell_size_m", 3))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(422, "Zonas y tamaño de celda deben ser numéricos.") from exc
+        geometry = payload_geometry(payload)
+        ensure_orthomosaic(orthomosaic_id)
+        try:
+            return raster.ndvi_zoning_map(
+                geometry,
+                zone_count,
+                cell_size_m,
+            )
+        except (ValueError, rasterio.errors.RasterioIOError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @router.post("/prescriptions")
+    async def create_prescription(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        orthomosaic_id = payload.get("orthomosaic_id")
+        if not isinstance(orthomosaic_id, str) or not orthomosaic_id:
+            raise HTTPException(400, "Selecciona un vuelo antes de generar la prescripción.")
+        try:
+            zone_count = int(payload.get("zone_count", 4))
+            cell_size_m = float(payload.get("cell_size_m", 3))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(422, "Zonas y tamaño de celda deben ser numéricos.") from exc
+        geometry = payload_geometry(payload)
+        doses = payload.get("doses")
+        if not isinstance(doses, list):
+            raise HTTPException(422, "Debes enviar una dosis por cada clase antes de generar la prescripción.")
+        ensure_orthomosaic(orthomosaic_id)
+        try:
+            return raster.prescription_map_with_doses(
+                geometry,
+                zone_count,
+                cell_size_m,
+                doses,
+            )
+        except (ValueError, rasterio.errors.RasterioIOError) as exc:
             raise HTTPException(422, str(exc)) from exc
 
     @router.post("/roi_ndvi")
