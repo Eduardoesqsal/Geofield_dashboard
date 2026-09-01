@@ -8,6 +8,7 @@ import type { TreeCollection } from "../types/geo";
 // Contratos serializados por la API FastAPI.
 export interface BoundsResponse {
   bounds: [[number, number], [number, number]];
+  tile_version?: string;
 }
 
 export interface NdviResponse {
@@ -15,6 +16,8 @@ export interface NdviResponse {
   mask?: number[][];
   rgb_matrix?: number[][][];
   bounds: [[number, number], [number, number]];
+  range_min?: number | null;
+  range_max?: number | null;
 }
 
 export interface CropResponse extends BoundsResponse {
@@ -29,6 +32,7 @@ export type OrthoSensor = "mavic3m" | "mavic3rgb" | "rgb" | "micasense";
 
 export interface OrthoAnalysisResponse {
   bounds: [[number, number], [number, number]];
+  tile_version?: string;
   rgb_matrix?: number[][][];
   ndvi_matrix?: number[][];
   mask?: number[][];
@@ -88,20 +92,37 @@ export interface PrescriptionLegendEntry {
   mean: number;
   color: string;
   cell_count: number;
+  initial_cell_count?: number;
   area_hectares: number;
-  dose?: number;
-  dose_color?: string;
+  coverage_percent?: number;
+  deviation_percent?: number;
+}
+
+export interface PrescriptionHistogram {
+  minimum: number;
+  maximum: number;
+  bins: number[];
+  breaks: number[];
 }
 
 export interface NdviZoningResponse {
   status: string;
   stage: "zoning";
   title: string;
+  index_name?: "NDVI" | "NDWI" | "NDRE";
   zoning_id: string;
   image_url: string;
+  tile_url: string;
   bounds: [[number, number], [number, number]];
   zone_count: number;
   cell_size_m: number;
+  grid_angle_deg: number;
+  classification_method?: "quantiles" | "equal_intervals" | "manual";
+  cell_value_mode?: "mean" | "min" | "max";
+  detail_level?: number;
+  field_mean?: number | null;
+  histogram?: PrescriptionHistogram;
+  thresholds?: number[];
   valid_cell_count: number;
   area_hectares: number;
   legend: PrescriptionLegendEntry[];
@@ -111,11 +132,23 @@ export interface PrescriptionMapResponse {
   status: string;
   stage: "prescription";
   title: string;
+  index_name?: "NDVI" | "NDWI" | "NDRE";
   prescription_id: string;
   image_url: string;
+  tile_url: string;
+  json_url?: string;
+  /** Compatibilidad con prescripciones generadas por versiones anteriores. */
+  geojson_url?: string;
   bounds: [[number, number], [number, number]];
   zone_count: number;
   cell_size_m: number;
+  grid_angle_deg: number;
+  classification_method?: "quantiles" | "equal_intervals" | "manual";
+  cell_value_mode?: "mean" | "min" | "max";
+  detail_level?: number;
+  field_mean?: number | null;
+  histogram?: PrescriptionHistogram;
+  thresholds?: number[];
   valid_cell_count: number;
   area_hectares: number;
   legend: PrescriptionLegendEntry[];
@@ -186,6 +219,24 @@ const API_BASE_URL = (() => {
 /** Resuelve rutas relativas mediante el proxy de Vite o una URL configurada. */
 export const backendUrl = (path: string) => `${API_BASE_URL}${path}`;
 
+/** Obtiene el JSON de prescripcion sin navegar hacia el origen del backend. */
+export async function fetchPrescriptionJson(path: string): Promise<Blob> {
+  const response = await fetch(backendUrl(path), {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    let message = `No se pudo descargar la prescripción (error ${response.status}).`;
+    try {
+      const data = (await response.json()) as { detail?: string; message?: string };
+      message = data.detail ?? data.message ?? message;
+    } catch {
+      // Conserva el mensaje HTTP cuando la respuesta no es JSON.
+    }
+    throw new Error(message);
+  }
+  return response.blob();
+}
+
 /**
  * Cliente HTTP común: exige JSON incluso en errores para evitar interpretar
  * páginas HTML del servidor de desarrollo como respuestas válidas.
@@ -210,6 +261,27 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   }
 
   return data;
+}
+
+async function download(url: string): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch(backendUrl(url), { cache: "no-store" });
+  if (!response.ok) {
+    const body = await response.text();
+    let message: string | undefined;
+    try {
+      const error = JSON.parse(body) as { detail?: string; message?: string };
+      message = error.detail ?? error.message;
+    } catch {
+      // Las descargas pueden devolver texto plano desde proxies intermedios.
+    }
+    throw new Error(message ?? `Error ${response.status} en ${url}`);
+  }
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+  return {
+    blob: await response.blob(),
+    filename: filename ?? "recorte_ortomosaico.tif",
+  };
 }
 
 /** Fachada tipada de todos los endpoints consumidos por el dashboard. */
@@ -257,36 +329,70 @@ export const dashboardApi = {
     request<NdviResponse>(`/vegetation_indices/${name}`),
   createNdviZoning: (
     orthomosaicId: string,
+    indexName: "NDVI" | "NDWI" | "NDRE",
     geojson: unknown,
     zoneCount: number,
     cellSizeM: number,
+    gridAngleDeg: number,
+    options?: {
+      classificationMethod?: "quantiles" | "equal_intervals" | "manual";
+      cellValueMode?: "mean" | "min" | "max";
+      detailLevel?: number;
+      manualBreaks?: number[];
+      analysisMin?: number;
+      analysisMax?: number;
+    },
   ) =>
     request<NdviZoningResponse>("/ndvi_zoning", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         orthomosaic_id: orthomosaicId,
+        index_name: indexName,
         geojson,
         zone_count: zoneCount,
         cell_size_m: cellSizeM,
+        grid_angle_deg: gridAngleDeg,
+        classification_method: options?.classificationMethod ?? "quantiles",
+        cell_value_mode: options?.cellValueMode ?? "mean",
+        detail_level: options?.detailLevel ?? 1,
+        manual_breaks: options?.manualBreaks,
+        analysis_min: options?.analysisMin,
+        analysis_max: options?.analysisMax,
       }),
     }),
   createPrescription: (
     orthomosaicId: string,
+    indexName: "NDVI" | "NDWI" | "NDRE",
     geojson: unknown,
     zoneCount: number,
     cellSizeM: number,
-    doses: Array<{ class_id: number; dose: number }>,
+    gridAngleDeg: number,
+    options?: {
+      classificationMethod?: "quantiles" | "equal_intervals" | "manual";
+      cellValueMode?: "mean" | "min" | "max";
+      detailLevel?: number;
+      manualBreaks?: number[];
+      analysisMin?: number;
+      analysisMax?: number;
+    },
   ) =>
     request<PrescriptionMapResponse>("/prescriptions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         orthomosaic_id: orthomosaicId,
+        index_name: indexName,
         geojson,
         zone_count: zoneCount,
         cell_size_m: cellSizeM,
-        doses,
+        grid_angle_deg: gridAngleDeg,
+        classification_method: options?.classificationMethod ?? "quantiles",
+        cell_value_mode: options?.cellValueMode ?? "mean",
+        detail_level: options?.detailLevel ?? 1,
+        manual_breaks: options?.manualBreaks,
+        analysis_min: options?.analysisMin,
+        analysis_max: options?.analysisMax,
       }),
     }),
   roiVegetationIndex: (name: "NDWI" | "NDRE", geojson: unknown) =>
@@ -412,6 +518,10 @@ export const dashboardApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ geojson }),
     }),
+  downloadCrop: (cropId: string, variant: "visual" | "analytical") =>
+    download(
+      `/crop_tiles/${encodeURIComponent(cropId)}/download?variant=${variant}`,
+    ),
   treePoints: (geojson: TreeCollection) =>
     request<{
       status: string;

@@ -180,6 +180,25 @@ Comportamiento esperado:
 - cada índice tiene sus propias estadísticas;
 - cada índice tiene su propio dashboard comparativo.
 
+## Alineacion con PIX4Dfields
+
+Los flujos de ROI, histogramas y prescripcion se ajustaron para que la lectura de
+`NDVI`, `NDWI` y `NDRE` coincida mejor con PIX4Dfields:
+
+- el calculo espectral usa muestras por pixel con `nearest` en lugar de promediar
+  bandas antes de aplicar la razon del indice;
+- el ROI expone `range_min` y `range_max` calculados sobre los pixeles validos
+  reales del recorte, y el frontend usa esos extremos para etiquetar el
+  histograma y para inicializar la zonificacion;
+- en clasificacion por `quantiles`, los cortes internos salen de los valores por
+  celda, pero los extremos del histograma y de los tramos de dosis conservan el
+  rango activo del ROI;
+- el control `Detalle de la zona` regulariza espacialmente las celdas sin mover
+  los umbrales estadisticos; el extremo `Detallado` conserva mas microvariacion
+  y el extremo `Simple` concentra la fusion de manchas;
+- el modal de zonificacion/prescripcion se reorganizo en un layout tipo
+  dashboard, con configuracion lateral y analitica principal.
+
 ## Requisitos para desarrollo local
 
 ### Software recomendado

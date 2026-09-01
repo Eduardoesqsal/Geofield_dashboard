@@ -65,6 +65,7 @@ interface ControlPanelProps {
 interface EqualizationHistogramProps {
   id: string;
   label: string;
+  indexName: ComparisonIndex;
   bins: number[];
   ramp: readonly string[];
   selection: { left: number; right: number };
@@ -79,9 +80,64 @@ interface EqualizationHistogramProps {
   onClose: () => void;
 }
 
+function formatIndexRangeValue(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(3) : "0.000";
+}
+
+function smoothHistogramBins(bins: number[]): number[] {
+  if (bins.length <= 2) return bins;
+  const kernel = [1, 4, 6, 4, 1];
+  let current = [...bins];
+  for (let pass = 0; pass < 2; pass += 1) {
+    current = current.map((_value, index) => {
+      let total = 0;
+      let weight = 0;
+      kernel.forEach((factor, offset) => {
+        const sourceIndex = Math.max(
+          0,
+          Math.min(current.length - 1, index + offset - 2),
+        );
+        total += current[sourceIndex] * factor;
+        weight += factor;
+      });
+      return total / Math.max(weight, 1);
+    });
+  }
+  return current;
+}
+
+function gaussianWeight(distance: number, sigma: number): number {
+  return Math.exp(-(distance * distance) / (2 * sigma * sigma));
+}
+
+function histogramAreaPath(values: number[], peak: number): string {
+  if (!values.length || peak <= 0) return "M 0 100 L 100 100 Z";
+  const baseline = 96;
+  const crestHeight = 85;
+  const points = values.map((value, index) => {
+    const x = (index / Math.max(values.length - 1, 1)) * 100;
+    const normalized = Math.max(0, Math.min(1, value / peak));
+    const y = baseline - Math.pow(normalized, 1.46) * crestHeight;
+    return { x, y };
+  });
+  const commands = [
+    `M ${points[0]?.x ?? 0} ${baseline}`,
+    `L ${points[0]?.x ?? 0} ${points[0]?.y ?? baseline}`,
+  ];
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    const midX = (previous.x + current.x) / 2;
+    commands.push(`Q ${midX} ${previous.y} ${current.x} ${current.y}`);
+  }
+  commands.push(`L 100 ${baseline} Z`);
+  return commands.join(" ");
+}
+
 function EqualizationHistogram({
   id,
   label,
+  indexName,
   bins,
   ramp,
   selection,
@@ -99,6 +155,13 @@ function EqualizationHistogram({
     ? Math.round((selectedCount / totalCount) * 100)
     : 0;
   const peak = Math.max(...bins, 1);
+  const smoothedBins = smoothHistogramBins(bins);
+  const areaPath = histogramAreaPath(smoothedBins, peak);
+  const histogramGradient = `linear-gradient(to right, ${indexGradient(
+    indexName,
+    minimum,
+    maximum,
+  )})`;
 
   return (
     <div className="equalization-card">
@@ -142,22 +205,34 @@ function EqualizationHistogram({
             <i key={index} />
           ))}
         </div>
-        <div className="equalization-bars" aria-hidden="true">
-          {bins.map((value, index) => {
-            const colorIndex = Math.round(
-              (index / Math.max(bins.length - 1, 1)) *
-                Math.max(ramp.length - 1, 0),
-            );
-            return (
-              <i
-                key={`${id}-${index}`}
-                style={{
-                  height: (value ? Math.max(4, (value / peak) * 100) : 0) + "%",
-                  backgroundColor: ramp[colorIndex],
-                }}
-              />
-            );
-          })}
+        <div className="equalization-curve-shell" aria-hidden="true">
+          <svg
+            className="equalization-curve"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+          >
+            <defs>
+              <linearGradient id={`${id}-histogram-fill`} x1="0%" y1="0%" x2="100%" y2="0%">
+                {ramp.map((color, index) => (
+                  <stop
+                    key={`${id}-stop-${color}-${index}`}
+                    offset={`${((INDEX_COLOR_RAMPS[indexName].stops?.[index] ?? (index / Math.max(ramp.length - 1, 1))) * 100)}%`}
+                    stopColor={color}
+                  />
+                ))}
+              </linearGradient>
+            </defs>
+            <path
+              d={areaPath}
+              className="equalization-curve-fill"
+              fill={`url(#${id}-histogram-fill)`}
+              fillOpacity="1"
+            />
+            <path
+              d={areaPath}
+              className="equalization-curve-outline"
+            />
+          </svg>
         </div>
         <div
           className="equalization-selection"
@@ -193,17 +268,17 @@ function EqualizationHistogram({
         </div>
         <div
           className="equalization-color-ramp"
-          style={{ background: `linear-gradient(to right, ${ramp.join(", ")})` }}
+          style={{ background: histogramGradient }}
           aria-hidden="true"
         />
       </div>
       <div className="equalization-readout">
         <span>
           <small>Rango activo</small>
-          <strong>
-            {minimum.toFixed(2)} - {maximum.toFixed(2)}
-          </strong>
-        </span>
+            <strong>
+            {minimum.toFixed(3)} - {maximum.toFixed(3)}
+            </strong>
+          </span>
         <span>
           <small>Cobertura</small>
           <strong>{coverage}%</strong>
@@ -330,15 +405,22 @@ export function ControlPanel({
   }).length;
 
   const histogramBins = (values: number[], min: number, max: number) => {
-    const count = 32;
+    const count = 96;
     const range = Math.max(max - min, Number.EPSILON);
     const bins = Array.from({ length: count }, () => 0);
+    const sigma = Math.max(0.9, count / 34);
+    const radius = Math.max(2, Math.ceil(sigma * 2.5));
+    const gaussianScale = Array.from({ length: radius * 2 + 1 }, (_, offset) =>
+      gaussianWeight(offset - radius, sigma),
+    );
     values.forEach((value) => {
-      const index = Math.max(
-        0,
-        Math.min(count - 1, Math.floor(((value - min) / range) * count)),
-      );
-      bins[index] += 1;
+      const center = ((value - min) / range) * (count - 1);
+      const base = Math.round(center);
+      for (let offset = -radius; offset <= radius; offset += 1) {
+        const index = base + offset;
+        if (index < 0 || index >= count) continue;
+        bins[index] += gaussianScale[offset + radius];
+      }
     });
     return bins;
   };
@@ -366,6 +448,9 @@ export function ControlPanel({
     left: positionInRange(ndvi.minimum, activeNdviStats),
     right: positionInRange(ndvi.maximum, activeNdviStats),
   };
+  const activeNdviResponse = ndvi.roiResponse ?? ndvi.response;
+  const ndviHistogramMinimum = activeNdviResponse?.range_min ?? activeNdviStats.min;
+  const ndviHistogramMaximum = activeNdviResponse?.range_max ?? activeNdviStats.max;
   const roiAnalysisReady = canSaveRoiAnalysis && Boolean(ndvi.roiResponse);
   const hasSelectedSpectralPanel =
     selectedIndex === "NDVI"
@@ -385,12 +470,13 @@ export function ControlPanel({
         <div className="panel-heading">
           <strong>Analisis NDVI</strong>
           <span className="ndvi-range-readout">
-            {ndvi.minimum.toFixed(2)} a {ndvi.maximum.toFixed(2)}
+            {formatIndexRangeValue(ndviHistogramMinimum)} a {formatIndexRangeValue(ndviHistogramMaximum)}
           </span>
         </div>
         <EqualizationHistogram
           id="ndvi"
           label="NDVI"
+          indexName="NDVI"
           bins={histogramBins(
             activeNdviStats.values,
             activeNdviStats.min,
@@ -420,10 +506,10 @@ export function ControlPanel({
             )})`,
           }}
         />
-        <div className="ndvi-scale-labels">
-          <span>{ndvi.minimum.toFixed(2)}</span>
+          <div className="ndvi-scale-labels">
+          <span>{formatIndexRangeValue(ndviHistogramMinimum)}</span>
           <span>NDVI</span>
-          <span>{ndvi.maximum.toFixed(2)}</span>
+          <span>{formatIndexRangeValue(ndviHistogramMaximum)}</span>
         </div>
         <div className="ndvi-range" aria-label="Rango de contraste NDVI">
           <input
@@ -431,7 +517,7 @@ export function ControlPanel({
             type="range"
             min={activeNdviStats.min}
             max={activeNdviStats.max}
-            step="0.01"
+            step="0.001"
             value={ndvi.minimum}
             onChange={(event) =>
               onNdviRangeChange(
@@ -446,7 +532,7 @@ export function ControlPanel({
             type="range"
             min={activeNdviStats.min}
             max={activeNdviStats.max}
-            step="0.01"
+            step="0.001"
             value={ndvi.maximum}
             onChange={(event) =>
               onNdviRangeChange(
@@ -590,6 +676,8 @@ export function ControlPanel({
       {indices
         .filter((analysis) => analysis.name === selectedIndex)
         .map((analysis) => {
+        const histogramMinimum = analysis.response.range_min ?? analysis.stats.min;
+        const histogramMaximum = analysis.response.range_max ?? analysis.stats.max;
         const selectedStats = ndviStatsFromValues(
           analysis.stats.values.filter(
             (value) => value >= analysis.minimum && value <= analysis.maximum,
@@ -608,12 +696,13 @@ export function ControlPanel({
             <div className="panel-heading">
               <strong>Analisis {analysis.name}</strong>
               <span className="ndvi-range-readout">
-                {analysis.minimum.toFixed(2)} a {analysis.maximum.toFixed(2)}
+                {formatIndexRangeValue(histogramMinimum)} a {formatIndexRangeValue(histogramMaximum)}
               </span>
             </div>
             <EqualizationHistogram
               id={`index-${analysis.name.toLowerCase()}`}
               label={analysis.name}
+              indexName={analysis.name}
               bins={histogramBins(
                 analysis.stats.values,
                 analysis.stats.min,
@@ -648,9 +737,9 @@ export function ControlPanel({
               }}
             />
             <div className="ndvi-scale-labels">
-              <span>{analysis.minimum.toFixed(2)}</span>
+              <span>{formatIndexRangeValue(histogramMinimum)}</span>
               <span>{analysis.name}</span>
-              <span>{analysis.maximum.toFixed(2)}</span>
+              <span>{formatIndexRangeValue(histogramMaximum)}</span>
             </div>
             <div
               className="ndvi-range"
@@ -661,7 +750,7 @@ export function ControlPanel({
                 type="range"
                 min={analysis.stats.min}
                 max={analysis.stats.max}
-                step="0.01"
+                step="0.001"
                 value={analysis.minimum}
                 onChange={(event) =>
                   onIndexRangeChange(
@@ -677,7 +766,7 @@ export function ControlPanel({
                 type="range"
                 min={analysis.stats.min}
                 max={analysis.stats.max}
-                step="0.01"
+                step="0.001"
                 value={analysis.maximum}
                 onChange={(event) =>
                   onIndexRangeChange(
@@ -689,6 +778,27 @@ export function ControlPanel({
                 aria-label={`Valor maximo ${analysis.name}`}
               />
             </div>
+            <button
+              type="button"
+              className={`prescription-panel-action ${prescriptionMode !== "idle" ? "is-active" : ""}`}
+              onClick={
+                prescriptionMode === "idle" ? onOpenPrescription : onExitPrescription
+              }
+              disabled={prescriptionLoading}
+            >
+              {prescriptionMode === "idle" ? (
+                <IconGridDots aria-hidden="true" />
+              ) : (
+                <IconX aria-hidden="true" />
+              )}
+              {prescriptionLoading
+                ? "Procesando zonificacion..."
+                : prescriptionMode === "prescription"
+                  ? "Salir de la prescripcion"
+                  : prescriptionMode === "zoning"
+                    ? "Salir de la zonificacion"
+                    : `Generar zonificacion ${analysis.name} para este ROI`}
+            </button>
             <StatisticsDisclosure
               expanded={Boolean(expandedStatistics[analysis.name])}
               onToggle={() => toggleStatistics(analysis.name)}

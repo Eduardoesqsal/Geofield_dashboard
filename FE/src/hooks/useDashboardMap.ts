@@ -126,8 +126,13 @@ export function useDashboardMap(
   const indexRefs = useRef(new Map<string, L.Layer>());
   const treeRef = useRef<L.GeoJSON>();
   const labelsRef = useRef<L.LayerGroup>();
-  const zoningRef = useRef<L.ImageOverlay>();
-  const prescriptionRef = useRef<L.ImageOverlay>();
+  const zoningRef = useRef<L.TileLayer>();
+  const zoningPreviewRef = useRef<L.TileLayer>();
+  const prescriptionRef = useRef<L.TileLayer>();
+  const prescriptionAreaLayerRef = useRef<L.Layer>();
+  const prescriptionGeometryRef = useRef<unknown>(null);
+  const prescriptionDrawCompleteRef = useRef<(() => void) | null>(null);
+  const zoningPreviewTokenRef = useRef(0);
   // Datos y controles que deben estar disponibles dentro de callbacks de mapa.
   const boundsRef = useRef<L.LatLngBounds>();
   const rawTreeDataRef = useRef<TreeCollection | null>(null);
@@ -179,16 +184,107 @@ export function useDashboardMap(
   const [prescription, setPrescription] =
     useState<PrescriptionMapResponse | null>(null);
   const [prescriptionLoading, setPrescriptionLoading] = useState(false);
+  const [prescriptionAreaReady, setPrescriptionAreaReady] = useState(false);
+  const [cropAvailable, setCropAvailable] = useState(false);
+  const [cropExporting, setCropExporting] = useState(false);
+
+  const activeAnalysisRange = useCallback(
+    (name: "NDVI" | "NDWI" | "NDRE") => {
+      if (name === "NDVI") {
+        return {
+          minimum: ndviAnalysis.minimum,
+          maximum: ndviAnalysis.maximum,
+        };
+      }
+      const analysis = indexAnalyses.find((item) => item.name === name);
+      return analysis
+        ? { minimum: analysis.minimum, maximum: analysis.maximum }
+        : null;
+    },
+    [indexAnalyses, ndviAnalysis.maximum, ndviAnalysis.minimum],
+  );
 
   useEffect(() => {
     activeCycleIdRef.current = activeCycleId;
   }, [activeCycleId]);
 
   const clearZoning = useCallback(() => {
+    zoningPreviewTokenRef.current += 1;
+    zoningPreviewRef.current?.remove();
+    zoningPreviewRef.current = undefined;
     zoningRef.current?.remove();
     zoningRef.current = undefined;
     setZoning(null);
   }, []);
+
+  const clearZoningPreview = useCallback(() => {
+    zoningPreviewTokenRef.current += 1;
+    zoningPreviewRef.current?.remove();
+    zoningPreviewRef.current = undefined;
+  }, []);
+
+  const previewZoning = useCallback(
+    async (
+      indexName: "NDVI" | "NDWI" | "NDRE",
+      zoneCount: number,
+      cellSizeM: number,
+      gridAngleDeg = 0,
+      classificationMethod: "quantiles" | "equal_intervals" | "manual" = "quantiles",
+      cellValueMode: "mean" | "min" | "max" = "mean",
+      detailLevel = 1,
+      manualBreaks?: number[],
+    ) => {
+      const map = mapRef.current;
+      if (!map || !state.orthomosaicId || zoning || prescription) return;
+      if (state.orthoMode !== "multispectral") return;
+      const indexReady =
+        indexName === "NDVI"
+          ? ndviAnalysis.roiResponse
+          : indexAnalyses.some((analysis) => analysis.name === indexName);
+      if (!activeCropGeometryRef.current || !indexReady) return;
+      const geometry =
+        prescriptionGeometryRef.current ?? activeCropGeometryRef.current;
+      const token = ++zoningPreviewTokenRef.current;
+      const result = await dashboardApi.createNdviZoning(
+        state.orthomosaicId,
+        indexName,
+        geometry,
+        zoneCount,
+        cellSizeM,
+        gridAngleDeg,
+        {
+          classificationMethod,
+          cellValueMode,
+          detailLevel,
+          manualBreaks,
+          analysisMin: activeAnalysisRange(indexName)?.minimum,
+          analysisMax: activeAnalysisRange(indexName)?.maximum,
+        },
+      );
+      if (token !== zoningPreviewTokenRef.current || zoning || prescription) return;
+      zoningPreviewRef.current?.remove();
+      zoningPreviewRef.current = L.tileLayer(backendUrl(result.tile_url), {
+        tileSize: 256,
+        maxNativeZoom: 24,
+        maxZoom: 24,
+        keepBuffer: 3,
+        updateWhenIdle: true,
+        updateWhenZooming: false,
+        opacity: 0.92,
+        className: "zoning-map-overlay is-preview",
+      }).addTo(map);
+      zoningPreviewRef.current.setZIndex(515);
+    },
+    [
+      activeAnalysisRange,
+      indexAnalyses,
+      ndviAnalysis.roiResponse,
+      prescription,
+      state.orthoMode,
+      state.orthomosaicId,
+      zoning,
+    ],
+  );
 
   const clearPrescription = useCallback(() => {
     clearZoning();
@@ -198,36 +294,71 @@ export function useDashboardMap(
     setState((current) => ({ ...current, prescription: false }));
   }, [clearZoning]);
 
+  const clearPrescriptionArea = useCallback(() => {
+    prescriptionDrawCompleteRef.current = null;
+    prescriptionGeometryRef.current = null;
+    prescriptionAreaLayerRef.current?.remove();
+    prescriptionAreaLayerRef.current = undefined;
+    setPrescriptionAreaReady(false);
+  }, []);
+
   const generateZoning = useCallback(
-    async (zoneCount: number, cellSizeM: number) => {
+    async (
+      indexName: "NDVI" | "NDWI" | "NDRE",
+      zoneCount: number,
+      cellSizeM: number,
+      gridAngleDeg = 0,
+      classificationMethod: "quantiles" | "equal_intervals" | "manual" = "quantiles",
+      cellValueMode: "mean" | "min" | "max" = "mean",
+      detailLevel = 1,
+      manualBreaks?: number[],
+    ) => {
       const map = mapRef.current;
       if (!map || !state.orthomosaicId)
         throw new Error("Selecciona un vuelo antes de generar la zonificacion.");
       if (state.orthoMode !== "multispectral")
-        throw new Error("La zonificacion NDVI requiere un ortomosaico multiespectral.");
-      if (!activeCropGeometryRef.current || !ndviAnalysis.roiResponse)
+        throw new Error(`La zonificacion ${indexName} requiere un ortomosaico multiespectral.`);
+      const indexReady =
+        indexName === "NDVI"
+          ? ndviAnalysis.roiResponse
+          : indexAnalyses.some((analysis) => analysis.name === indexName);
+      if (!activeCropGeometryRef.current || !indexReady)
         throw new Error(
-          "Selecciona un ROI, recortalo y abre su histograma NDVI antes de generar la zonificacion.",
+          `Selecciona un ROI, recortalo y abre su histograma ${indexName} antes de generar la zonificacion.`,
         );
       setZoningLoading(true);
       try {
+        const geometry =
+          prescriptionGeometryRef.current ?? activeCropGeometryRef.current;
         const result = await dashboardApi.createNdviZoning(
           state.orthomosaicId,
-          activeCropGeometryRef.current,
+          indexName,
+          geometry,
           zoneCount,
           cellSizeM,
+          gridAngleDeg,
+          {
+            classificationMethod,
+            cellValueMode,
+            detailLevel,
+            manualBreaks,
+            analysisMin: activeAnalysisRange(indexName)?.minimum,
+            analysisMax: activeAnalysisRange(indexName)?.maximum,
+          },
         );
+        clearZoningPreview();
         clearPrescription();
         zoningRef.current?.remove();
-        zoningRef.current = L.imageOverlay(
-          backendUrl(result.image_url),
-          result.bounds,
-          {
-            opacity: 1,
-            interactive: false,
-            className: "zoning-map-overlay",
-          },
-        ).addTo(map);
+        zoningRef.current = L.tileLayer(backendUrl(result.tile_url), {
+          tileSize: 256,
+          maxNativeZoom: 24,
+          maxZoom: 24,
+          keepBuffer: 3,
+          updateWhenIdle: true,
+          updateWhenZooming: false,
+          opacity: 1,
+          className: "zoning-map-overlay",
+        }).addTo(map);
         zoningRef.current.setZIndex(520);
         setZoning(result);
         setState((current) => ({ ...current, prescription: true, error: null }));
@@ -238,7 +369,10 @@ export function useDashboardMap(
       }
     },
     [
+      activeAnalysisRange,
+      clearZoningPreview,
       clearPrescription,
+      indexAnalyses,
       ndviAnalysis.roiResponse,
       state.orthoMode,
       state.orthomosaicId,
@@ -247,41 +381,63 @@ export function useDashboardMap(
 
   const generatePrescription = useCallback(
     async (
+      indexName: "NDVI" | "NDWI" | "NDRE",
       zoneCount: number,
       cellSizeM: number,
-      doses: Array<{ class_id: number; dose: number }>,
+      gridAngleDeg = 0,
+      classificationMethod: "quantiles" | "equal_intervals" | "manual" = "quantiles",
+      cellValueMode: "mean" | "min" | "max" = "mean",
+      detailLevel = 1,
+      manualBreaks?: number[],
     ) => {
       const map = mapRef.current;
       if (!map || !state.orthomosaicId)
         throw new Error("Selecciona un vuelo antes de generar la prescripción.");
       if (state.orthoMode !== "multispectral")
         throw new Error("La prescripción NDVI requiere un ortomosaico multiespectral.");
-      if (!activeCropGeometryRef.current || !ndviAnalysis.roiResponse)
+      const indexReady =
+        indexName === "NDVI"
+          ? ndviAnalysis.roiResponse
+          : indexAnalyses.some((analysis) => analysis.name === indexName);
+      if (!activeCropGeometryRef.current || !indexReady)
         throw new Error(
           "Selecciona un ROI, recórtalo y abre su histograma NDVI antes de generar la prescripción.",
         );
       setPrescriptionLoading(true);
       try {
+        const geometry =
+          prescriptionGeometryRef.current ?? activeCropGeometryRef.current;
         const result = await dashboardApi.createPrescription(
           state.orthomosaicId,
-          activeCropGeometryRef.current,
+          indexName,
+          geometry,
           zoneCount,
           cellSizeM,
-          doses,
+          gridAngleDeg,
+          {
+            classificationMethod,
+            cellValueMode,
+            detailLevel,
+            manualBreaks,
+            analysisMin: activeAnalysisRange(indexName)?.minimum,
+            analysisMax: activeAnalysisRange(indexName)?.maximum,
+          },
         );
+        clearZoningPreview();
         zoningRef.current?.remove();
         zoningRef.current = undefined;
         setZoning(null);
         prescriptionRef.current?.remove();
-        prescriptionRef.current = L.imageOverlay(
-          backendUrl(result.image_url),
-          result.bounds,
-          {
-            opacity: 1,
-            interactive: false,
-            className: "prescription-map-overlay",
-          },
-        ).addTo(map);
+        prescriptionRef.current = L.tileLayer(backendUrl(result.tile_url), {
+          tileSize: 256,
+          maxNativeZoom: 24,
+          maxZoom: 24,
+          keepBuffer: 3,
+          updateWhenIdle: true,
+          updateWhenZooming: false,
+          opacity: 1,
+          className: "prescription-map-overlay",
+        }).addTo(map);
         prescriptionRef.current.setZIndex(520);
         setPrescription(result);
         setState((current) => ({ ...current, prescription: true, error: null }));
@@ -292,6 +448,9 @@ export function useDashboardMap(
       }
     },
     [
+      activeAnalysisRange,
+      clearZoningPreview,
+      indexAnalyses,
       ndviAnalysis.roiResponse,
       state.orthoMode,
       state.orthomosaicId,
@@ -449,40 +608,6 @@ export function useDashboardMap(
     [refreshLabels, renderTreeLayer, syncTreeLayerVisibility],
   );
 
-  /** Convierte una matriz RGB del backend en una superposición de imagen. */
-  const renderRgb = useCallback((matrix: number[][][]) => {
-    if (
-      !matrix.length ||
-      !matrix[0]?.length ||
-      !boundsRef.current ||
-      !mapRef.current
-    )
-      return;
-    const canvas = document.createElement("canvas");
-    canvas.width = matrix[0].length;
-    canvas.height = matrix.length;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    const image = context.createImageData(canvas.width, canvas.height);
-    matrix.forEach((row, y) =>
-      row.forEach((pixel, x) => {
-        const position = (y * canvas.width + x) * 4;
-        image.data[position] = Number(pixel[0]) || 0;
-        image.data[position + 1] = Number(pixel[1]) || 0;
-        image.data[position + 2] = Number(pixel[2]) || 0;
-        image.data[position + 3] =
-          Number(pixel[0]) || Number(pixel[1]) || Number(pixel[2]) ? 255 : 0;
-      }),
-    );
-    context.putImageData(image, 0, 0);
-    uploadedRgbRef.current?.remove();
-    uploadedRgbRef.current = L.imageOverlay(
-      canvas.toDataURL(),
-      boundsRef.current,
-      { opacity: 1, interactive: false },
-    ).addTo(mapRef.current);
-  }, []);
-
   /** Rasteriza NDVI en canvas aplicando máscara, rampa y rango seleccionado. */
   const renderNdvi = useCallback((response: NdviResponse) => {
     const matrix = response.matrix;
@@ -584,6 +709,7 @@ export function useDashboardMap(
     cropTileRef.current = undefined;
     const container = orthoRef.current?.getContainer();
     if (container) container.style.clipPath = "";
+    setCropAvailable(false);
   }, []);
 
   /** Diferencia visualmente polígonos seleccionados y disponibles. */
@@ -610,6 +736,7 @@ export function useDashboardMap(
    * comportamiento global sin conservar resultados de una geometría anterior.
    */
   const clearRoiSelection = useCallback(() => {
+    clearPrescriptionArea();
     selectedRoisRef.current.forEach((_geojson, roiId) =>
       styleRoiLayer(roiId, false),
     );
@@ -641,10 +768,11 @@ export function useDashboardMap(
       selectedRoiIds: [],
       error: null,
     }));
-  }, [clearTileClip, styleRoiLayer]);
+  }, [clearPrescriptionArea, clearTileClip, styleRoiLayer]);
 
   /** Solicita el recorte ROI y deja NDWI/NDRE para cálculo explícito. */
   const analyzeRoi = useCallback(async (geojson: unknown) => {
+    clearPrescriptionArea();
     const [ndviResponse, crop] = await Promise.all([
       dashboardApi.roi(geojson),
       dashboardApi.cropTiles(geojson),
@@ -674,18 +802,20 @@ export function useDashboardMap(
       backendUrl,
       bounds: crop.bounds,
       cropId: crop.crop_id,
+      tileVersion: crop.tile_version,
       cropTileRef,
       mapRef,
       orthoRef,
       uploadedRgbRef,
     });
+    setCropAvailable(true);
     setState((current) => ({
       ...current,
       rgb: false,
       ndvi: false,
       error: null,
     }));
-  }, []);
+  }, [clearPrescriptionArea]);
 
   /** Ejecuta el análisis para la colección ROI construida actualmente. */
   const cropSelectedRoi = useCallback(async () => {
@@ -941,6 +1071,30 @@ export function useDashboardMap(
       layer: L.Layer & { toGeoJSON: () => unknown };
     }) => {
       if (disposed || mapRef.current !== map) return;
+      if (prescriptionDrawCompleteRef.current) {
+        const onComplete = prescriptionDrawCompleteRef.current;
+        prescriptionDrawCompleteRef.current = null;
+        map.pm?.disableDraw();
+        prescriptionAreaLayerRef.current?.remove();
+        prescriptionAreaLayerRef.current = event.layer;
+        prescriptionGeometryRef.current = event.layer.toGeoJSON();
+        if (event.layer instanceof L.Path) {
+          event.layer.setStyle({
+            color: "#244f32",
+            weight: 2,
+            dashArray: "6 4",
+            fillColor: "#65a36f",
+            fillOpacity: 0.12,
+          });
+        }
+        setPrescriptionAreaReady(true);
+        setState((current) => ({
+          ...current,
+          error: "Zona de cultivo delimitada. Ya puedes generar la prescripcion.",
+        }));
+        onComplete();
+        return;
+      }
       if (detectionEditModeRef.current === "delete-area") {
         const selection = event.layer as L.Layer & {
           getBounds?: () => L.LatLngBounds;
@@ -1049,6 +1203,7 @@ export function useDashboardMap(
             bounds: result.bounds,
             mapRef,
             orthoRef,
+            tileVersion: result.tile_version,
           })
         )
           return;
@@ -1098,7 +1253,10 @@ export function useDashboardMap(
           };
           const stats = ndviStats(response);
           ndviResponseRef.current = response;
-          ndviRangeRef.current = { min: stats.min, max: stats.max };
+          ndviRangeRef.current = {
+            min: response.range_min ?? stats.min,
+            max: response.range_max ?? stats.max,
+          };
           setNdviAnalysis(createEmptyNdviAnalysis());
           setState((current) => ({
             ...current,
@@ -1108,12 +1266,8 @@ export function useDashboardMap(
           }));
           return;
         }
-        if (!result.rgb_matrix?.length)
-          throw new Error(
-            "El backend no devolvió las bandas RGB del ortomosaico.",
-          );
-        const channels = result.rgb_matrix;
-        renderRgb(channels);
+        uploadedRgbRef.current?.remove();
+        uploadedRgbRef.current = undefined;
         setState((current) => ({ ...current, loaded: true, error: null }));
       } catch (error) {
         setState((current) => ({
@@ -1180,15 +1334,17 @@ export function useDashboardMap(
             (await dashboardApi.ndvi());
           ndviResponseRef.current = response;
           const stats = ndviStats(response);
-          ndviRangeRef.current = { min: stats.min, max: stats.max };
+          const defaultMinimum = response.range_min ?? stats.min;
+          const defaultMaximum = response.range_max ?? stats.max;
+          ndviRangeRef.current = { min: defaultMinimum, max: defaultMaximum };
           setNdviAnalysis((current) => ({
             ...current,
             response,
             stats,
             roiResponse: roiResponse ?? null,
             roiStats: roiResponse ? stats : current.roiStats,
-            minimum: stats.min,
-            maximum: stats.max,
+            minimum: defaultMinimum,
+            maximum: defaultMaximum,
           }));
           ndviRef.current?.remove();
           if (roiResponse && cropId) {
@@ -1226,18 +1382,20 @@ export function useDashboardMap(
             [name]: roiResponse,
           };
           const stats = ndviStats(roiResponse);
+          const defaultMinimum = roiResponse.range_min ?? stats.min;
+          const defaultMaximum = roiResponse.range_max ?? stats.max;
           setIndexAnalyses((current) => [
             ...current.filter((item) => item.name !== name),
             {
               name,
               response: roiResponse,
               stats,
-              minimum: stats.min,
-              maximum: stats.max,
+              minimum: defaultMinimum,
+              maximum: defaultMaximum,
               visible: true,
             },
           ]);
-          renderIndex(name, roiResponse, stats.min, stats.max);
+          renderIndex(name, roiResponse, defaultMinimum, defaultMaximum);
           replaceSpectralLayer({
             indexRefs,
             mapRef,
@@ -1249,18 +1407,20 @@ export function useDashboardMap(
         }
         const response = await dashboardApi.vegetationIndex(name);
         const stats = ndviStats(response);
+        const defaultMinimum = response.range_min ?? stats.min;
+        const defaultMaximum = response.range_max ?? stats.max;
         setIndexAnalyses((current) => [
           ...current.filter((item) => item.name !== name),
           {
             name,
             response,
             stats,
-            minimum: stats.min,
-            maximum: stats.max,
+            minimum: defaultMinimum,
+            maximum: defaultMaximum,
             visible: true,
           },
         ]);
-        renderIndex(name, response, stats.min, stats.max);
+        renderIndex(name, response, defaultMinimum, defaultMaximum);
         replaceSpectralLayer({
           indexRefs,
           mapRef,
@@ -1422,6 +1582,36 @@ export function useDashboardMap(
     if (!map) return;
     map.pm?.enableDraw("Polygon");
   }, [state.orthoMode]);
+
+  /** Dibuja un limite temporal usado solo por la zonificacion/prescripcion. */
+  const drawPrescriptionArea = useCallback(
+    (onComplete: () => void) => {
+      const map = mapRef.current;
+      if (!map || !activeCropGeometryRef.current || !ndviAnalysis.roiResponse) {
+        setState((current) => ({
+          ...current,
+          error: "Primero recorta un ROI y abre su histograma NDVI.",
+        }));
+        return;
+      }
+      clearPrescription();
+      prescriptionDrawCompleteRef.current = onComplete;
+      map.pm?.enableDraw("Polygon", {
+        pathOptions: {
+          color: "#244f32",
+          weight: 2,
+          dashArray: "6 4",
+          fillColor: "#65a36f",
+          fillOpacity: 0.12,
+        },
+      });
+      setState((current) => ({
+        ...current,
+        error: "Dibuja en el mapa el poligono que delimita la zona de cultivo.",
+      }));
+    },
+    [clearPrescription, ndviAnalysis.roiResponse],
+  );
 
   /** Importa, guarda y selecciona de forma aditiva todas las geometrías válidas. */
   const importRoi = useCallback(
@@ -1810,16 +2000,18 @@ export function useDashboardMap(
         ) {
           const response = await dashboardApi.roi(parsed);
           const stats = ndviStats(response);
+          const defaultMinimum = response.range_min ?? stats.min;
+          const defaultMaximum = response.range_max ?? stats.max;
           ndviResponseRef.current = response;
-          ndviRangeRef.current = { min: stats.min, max: stats.max };
+          ndviRangeRef.current = { min: defaultMinimum, max: defaultMaximum };
           setNdviAnalysis((current) => ({
             ...current,
             response,
             stats,
             roiResponse: response,
             roiStats: stats,
-            minimum: stats.min,
-            maximum: stats.max,
+            minimum: defaultMinimum,
+            maximum: defaultMaximum,
           }));
           ndviTileRef.current?.remove();
           ndviTileRef.current = undefined;
@@ -1960,6 +2152,7 @@ export function useDashboardMap(
             mapRef,
             orthomosaicId: record.id,
             orthoRef,
+            tileVersion: result.tile_version,
           })
         )
           return;
@@ -2036,6 +2229,40 @@ export function useDashboardMap(
     });
   }, []);
 
+  const exportCrop = useCallback(async (variant: "visual" | "analytical") => {
+    const cropId = activeCropIdRef.current;
+    if (!cropId) {
+      setState((current) => ({
+        ...current,
+        error: "Primero genera un recorte del ortomosaico.",
+      }));
+      return;
+    }
+    setCropExporting(true);
+    try {
+      const { blob, filename } = await dashboardApi.downloadCrop(cropId, variant);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+      setState((current) => ({ ...current, error: null }));
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        error:
+          error instanceof Error
+            ? error.message
+            : "No se pudo descargar el recorte.",
+      }));
+    } finally {
+      setCropExporting(false);
+    }
+  }, []);
+
   /** Limpia por completo el contexto visible del mapa al salir de un ciclo. */
   const resetWorkspace = useCallback(() => {
     cancelDetectionEdit();
@@ -2086,10 +2313,15 @@ export function useDashboardMap(
     zoningLoading,
     prescription,
     prescriptionLoading,
+    prescriptionAreaReady,
+    cropAvailable,
+    cropExporting,
     generateZoning,
+    previewZoning,
     generatePrescription,
     clearPrescription,
     clearZoning,
+    clearZoningPreview,
     selectIndex,
     hideIndices,
     hideNdvi,
@@ -2097,11 +2329,13 @@ export function useDashboardMap(
     toggleNdvi,
     toggleIndexLayer,
     drawRoi,
+    drawPrescriptionArea,
     importRoi,
     selectRoi,
     clearRoiSelection,
     removeRoiPolygon,
     cropSelectedRoi,
+    exportCrop,
     toggleTrees,
     toggleLabels,
     importDetections,

@@ -854,21 +854,68 @@ export function MapView() {
   };
 
   const openPrescription = () => {
+    const indexName = selectedIndex ?? "NDVI";
+    const ready =
+      indexName === "NDVI"
+        ? Boolean(map.ndviAnalysis.roiResponse)
+        : map.indexAnalyses.some((analysis) => analysis.name === indexName);
     setPrescriptionError(
-      map.state.orthomosaicId && map.ndviAnalysis.roiResponse
+      map.state.orthomosaicId && ready
         ? null
         : "Selecciona un ROI, recórtalo y abre su histograma NDVI antes de generar la prescripción.",
     );
     setPrescriptionOpen(true);
   };
 
+  const activePrescriptionDisplayRange =
+    selectedIndex === "NDVI"
+      ? map.ndviAnalysis.roiResponse
+        ? {
+            minimum:
+              map.ndviAnalysis.roiResponse.range_min ??
+              map.ndviAnalysis.roiStats.min,
+            maximum:
+              map.ndviAnalysis.roiResponse.range_max ??
+              map.ndviAnalysis.roiStats.max,
+          }
+        : map.ndviAnalysis.response
+          ? {
+              minimum:
+                map.ndviAnalysis.response.range_min ??
+                map.ndviAnalysis.stats.min,
+              maximum:
+                map.ndviAnalysis.response.range_max ??
+                map.ndviAnalysis.stats.max,
+            }
+          : null
+      : selectedIndex
+        ? (() => {
+            const analysis = map.indexAnalyses.find(
+              (item) => item.name === selectedIndex,
+            );
+            return analysis
+              ? {
+                  minimum: analysis.response.range_min ?? analysis.stats.min,
+                  maximum: analysis.response.range_max ?? analysis.stats.max,
+                }
+              : null;
+          })()
+        : null;
+
   const generatePrescription = async (
     zoneCount: number,
     cellSizeM: number,
+    gridAngleDeg: number,
   ) => {
+    const indexName = selectedIndex ?? "NDVI";
     setPrescriptionError(null);
     try {
-      return await map.generateZoning(zoneCount, cellSizeM);
+      return await map.generateZoning(
+        indexName,
+        zoneCount,
+        cellSizeM,
+        gridAngleDeg,
+      );
     } catch (error) {
       setPrescriptionError(
         error instanceof Error
@@ -881,10 +928,25 @@ export function MapView() {
   const generateZoning = async (
     zoneCount: number,
     cellSizeM: number,
+    gridAngleDeg: number,
+    classificationMethod: "quantiles" | "equal_intervals" | "manual",
+    cellValueMode: "mean" | "min" | "max",
+    detailLevel: number,
+    manualBreaks?: number[],
   ) => {
+    const indexName = selectedIndex ?? "NDVI";
     setPrescriptionError(null);
     try {
-      return await map.generateZoning(zoneCount, cellSizeM);
+      return await map.generateZoning(
+        indexName,
+        zoneCount,
+        cellSizeM,
+        gridAngleDeg,
+        classificationMethod,
+        cellValueMode,
+        detailLevel,
+        manualBreaks,
+      );
     } catch (error) {
       setPrescriptionError(
         error instanceof Error
@@ -895,15 +957,59 @@ export function MapView() {
     }
   };
 
+  const previewZoning = async (
+    zoneCount: number,
+    cellSizeM: number,
+    gridAngleDeg: number,
+    classificationMethod: "quantiles" | "equal_intervals" | "manual",
+    cellValueMode: "mean" | "min" | "max",
+    detailLevel: number,
+    manualBreaks?: number[],
+  ) => {
+    const indexName = selectedIndex ?? "NDVI";
+    try {
+      await map.previewZoning(
+        indexName,
+        zoneCount,
+        cellSizeM,
+        gridAngleDeg,
+        classificationMethod,
+        cellValueMode,
+        detailLevel,
+        manualBreaks,
+      );
+      setPrescriptionError(null);
+    } catch (error) {
+      setPrescriptionError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo previsualizar la reticula.",
+      );
+    }
+  };
+
   const generatePrescriptionV2 = async (
     zoneCount: number,
     cellSizeM: number,
-    doses: Array<{ class_id: number; dose: number }>,
+    gridAngleDeg: number,
+    classificationMethod: "quantiles" | "equal_intervals" | "manual",
+    cellValueMode: "mean" | "min" | "max",
+    detailLevel: number,
+    manualBreaks?: number[],
   ) => {
+    const indexName = selectedIndex ?? "NDVI";
     setPrescriptionError(null);
     try {
-      const result = await map.generatePrescription(zoneCount, cellSizeM, doses);
-      setPrescriptionOpen(false);
+      const result = await map.generatePrescription(
+        indexName,
+        zoneCount,
+        cellSizeM,
+        gridAngleDeg,
+        classificationMethod,
+        cellValueMode,
+        detailLevel,
+        manualBreaks,
+      );
       return result;
     } catch (error) {
       setPrescriptionError(
@@ -920,6 +1026,9 @@ export function MapView() {
       <div ref={mapElement} className="map" />
       <ActionBar
         state={map.state}
+        cropAvailable={map.cropAvailable}
+        cropExporting={map.cropExporting}
+        onExportCrop={(variant) => void map.exportCrop(variant)}
         onOrthoLibrary={() => void requireActiveCycle(openLibrary, "library")}
         onOpenIndices={() =>
           void requireActiveCycle(
@@ -969,11 +1078,21 @@ export function MapView() {
       />
       <PrescriptionDialog
         open={prescriptionOpen}
+        indexName={selectedIndex ?? "NDVI"}
+        displayRange={activePrescriptionDisplayRange}
         busy={map.zoningLoading || map.prescriptionLoading}
         error={prescriptionError}
         zoning={map.zoning}
         prescription={map.prescription}
+        prescriptionAreaReady={map.prescriptionAreaReady}
+        onDrawArea={() => {
+          setPrescriptionOpen(false);
+          setPrescriptionError(null);
+          map.drawPrescriptionArea(() => setPrescriptionOpen(true));
+        }}
         onGenerateZoning={generateZoning}
+        onPreviewZoning={previewZoning}
+        onClearPreview={map.clearZoningPreview}
         onGeneratePrescription={generatePrescriptionV2}
         onClear={() => {
           map.clearPrescription();

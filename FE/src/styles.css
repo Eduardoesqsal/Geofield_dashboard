@@ -598,16 +598,16 @@ body {
 
 .equalization-histogram {
   position: relative;
-  height: 84px;
+  height: 116px;
   overflow: hidden;
   background:
     repeating-linear-gradient(
       to bottom,
       transparent 0,
-      transparent 20px,
-      rgba(115, 129, 117, 0.13) 21px
+      transparent 26px,
+      rgba(115, 129, 117, 0.11) 27px
     ),
-    linear-gradient(180deg, #fdfefb 0%, #f3f6f1 100%);
+    linear-gradient(180deg, #fdfefb 0%, #f1f5ee 100%);
 }
 
 .equalization-grid {
@@ -627,44 +627,50 @@ body {
   border-left: 0;
 }
 
-.equalization-bars {
+.equalization-curve-shell {
   position: absolute;
   z-index: 2;
-  inset: 10px 8px 6px;
-  width: calc(100% - 16px);
-  height: calc(100% - 16px);
-  display: flex;
-  align-items: flex-end;
-  gap: 1px;
+  inset: 12px 14px 24px;
+  overflow: hidden;
   pointer-events: none;
 }
 
-.equalization-bars i {
-  min-width: 1px;
-  flex: 1;
-  border-radius: 2px 2px 0 0;
-  box-shadow: 0 0 3px rgba(39, 51, 42, 0.12);
-  opacity: 0.88;
+.equalization-curve {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.equalization-curve-fill {
+  filter: saturate(1.22) brightness(1.12);
+}
+
+.equalization-curve-outline {
+  fill: none;
+  stroke: rgba(255, 249, 212, 0.98);
+  stroke-width: 0.48;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 3px rgba(255, 228, 110, 0.24));
 }
 
 .equalization-selection {
   position: absolute;
   z-index: 3;
-  top: 0;
-  bottom: 0;
-  border-left: 1px solid rgba(73, 111, 86, 0.52);
-  border-right: 1px solid rgba(73, 111, 86, 0.52);
-  background: rgba(99, 137, 108, 0.055);
+  top: 12px;
+  bottom: 24px;
+  border-left: 2px solid rgba(92, 102, 95, 0.78);
+  border-right: 2px solid rgba(92, 102, 95, 0.78);
+  background: rgba(255, 255, 255, 0.06);
   pointer-events: none;
 }
 
 .equalization-shade {
   position: absolute;
   z-index: 4;
-  top: 0;
-  bottom: 0;
-  background: rgba(226, 230, 223, 0.62);
-  backdrop-filter: grayscale(0.4);
+  top: 12px;
+  bottom: 24px;
+  background: rgba(241, 244, 238, 0.66);
   pointer-events: none;
 }
 
@@ -679,8 +685,8 @@ body {
 .equalization-marker {
   position: absolute;
   z-index: 5;
-  top: 10px;
-  bottom: 6px;
+  top: 12px;
+  bottom: 24px;
   width: 0;
   border-left: 1px dashed currentColor;
   pointer-events: none;
@@ -688,38 +694,39 @@ body {
 
 .equalization-marker span {
   position: absolute;
-  top: -6px;
+  top: calc(100% + 8px);
   left: 0;
-  min-width: 17px;
-  height: 17px;
+  min-width: 18px;
+  height: 18px;
   display: grid;
   place-items: center;
   transform: translateX(-50%);
   border: 1px solid currentColor;
   border-radius: 6px;
-  background: #fdfefb;
+  background: rgba(244, 245, 242, 0.96);
   font-size: 8px;
   font-weight: 900;
   box-shadow: 0 3px 8px rgba(25, 33, 27, 0.12);
 }
 
 .equalization-marker.is-mean {
-  color: #3f694d;
+  color: #47604f;
 }
 
 .equalization-marker.is-median {
-  color: #777f77;
+  color: #788078;
 }
 
 .equalization-color-ramp {
   position: absolute;
   z-index: 6;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.72);
-  box-shadow: 0 -2px 7px rgba(25, 33, 27, 0.08);
+  right: 14px;
+  bottom: 10px;
+  left: 14px;
+  height: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0;
+  box-shadow: 0 -2px 7px rgba(25, 33, 27, 0.18);
 }
 
 .equalization-readout {
@@ -1702,6 +1709,54 @@ body {
 /* Bibliotecas tabulares de ortomosaicos y ROI. */
 .cycle-dialog {
   width: min(980px, 100%);
+}
+
+.action-pill:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.crop-download-control {
+  position: relative;
+}
+
+.crop-download-menu {
+  position: absolute;
+  bottom: 0;
+  left: 56px;
+  display: grid;
+  width: 230px;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.2);
+}
+
+.crop-download-menu button {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: #f1f5f2;
+  color: #344138;
+  text-align: left;
+  cursor: pointer;
+}
+
+.crop-download-menu button:hover {
+  background: #e4ece5;
+}
+
+.crop-download-menu strong {
+  font-size: 11px;
+}
+
+.crop-download-menu span {
+  color: #687269;
+  font-size: 9px;
 }
 
 .cycle-dialog-layout {
@@ -4187,8 +4242,70 @@ body {
 
 /* Configuracion y lectura del mapa de prescripcion NDVI. */
 .prescription-dialog {
+  width: min(1240px, calc(100vw - 32px));
   height: auto;
-  max-height: calc(100vh - 40px);
+  max-height: calc(100vh - 28px);
+  padding: 22px;
+  border: 1px solid rgba(189, 204, 191, 0.9);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(238, 246, 236, 0.92), rgba(249, 251, 247, 0.96) 34%, rgba(245, 248, 244, 0.98) 100%);
+  box-shadow:
+    0 26px 60px rgba(18, 31, 22, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  overflow: auto;
+}
+
+.prescription-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  margin-top: 16px;
+}
+
+.prescription-sidebar,
+.prescription-main {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.prescription-panel-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(212, 222, 214, 0.92);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 248, 244, 0.9));
+  box-shadow: 0 12px 28px rgba(41, 62, 47, 0.08);
+}
+
+.prescription-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.prescription-panel-head strong {
+  color: #223329;
+  font-size: 13px;
+}
+
+.prescription-panel-head span {
+  color: #5f6f63;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.prescription-tuning-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .prescription-config-grid {
@@ -4203,9 +4320,9 @@ body {
   gap: 7px;
   min-width: 0;
   padding: 14px;
-  border: 1px solid #dce5dc;
+  border: 1px solid #dfe7df;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.78);
+  background: rgba(250, 252, 249, 0.96);
 }
 
 .prescription-config-grid label > span {
@@ -4272,9 +4389,8 @@ body {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 9px;
-  margin-top: 16px;
   color: #6f786f;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
 }
 
@@ -4282,14 +4398,359 @@ body {
   height: 12px;
   border: 1px solid rgba(31, 41, 34, 0.18);
   border-radius: 999px;
-  background: linear-gradient(90deg, #FF7A00, #FF9500, #FFB000, #FFC400, #E4D200, #ACF404, #57F20A, #27E833, #00B824, #009E1F);
+  background: linear-gradient(90deg, #F15423, #F36C23, #F48522, #F69D22, #F8B722, #FAD521, #F3E723, #D9E428, #BDDB2E, #A1D334);
 }
 
 .prescription-grid-note {
-  margin: 9px 0 0;
+  margin: 0;
   color: #68736a;
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.5;
+}
+
+.prescription-analytics {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
+  gap: 12px;
+}
+
+.prescription-histogram-card,
+.prescription-stats-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #dce5dc;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.prescription-histogram-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.prescription-histogram-head strong {
+  color: #27342c;
+  font-size: 12px;
+}
+
+.prescription-histogram-head span {
+  color: #647166;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.prescription-histogram-shell {
+  position: relative;
+  height: 146px;
+  overflow: hidden;
+  border: 1px solid #2d3b33;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, #2f3432 0%, #222726 100%);
+}
+
+.prescription-histogram-grid {
+  position: absolute;
+  inset: 12px 10px 22px;
+  display: grid;
+  align-items: end;
+  pointer-events: none;
+}
+
+.prescription-histogram-grid i {
+  border-top: 1px dashed rgba(224, 232, 227, 0.12);
+}
+
+.prescription-histogram-ramp {
+  position: absolute;
+  right: 10px;
+  bottom: 22px;
+  left: 10px;
+  height: 8px;
+  border-radius: 0;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  pointer-events: none;
+}
+
+.prescription-histogram-bars {
+  position: absolute;
+  inset: 12px 10px 30px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  align-items: end;
+  gap: 1px;
+  pointer-events: none;
+}
+
+.prescription-histogram-bars i {
+  min-height: 0;
+  align-self: end;
+  border-radius: 1px 1px 0 0;
+  opacity: 0.18;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.prescription-histogram-bars i.is-active {
+  opacity: 0.96;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 0 10px rgba(255, 255, 255, 0.08);
+}
+
+.prescription-histogram-surface {
+  position: absolute;
+  inset: 12px 10px 30px;
+  width: calc(100% - 20px);
+  height: calc(100% - 42px);
+  overflow: visible;
+  pointer-events: none;
+}
+
+.prescription-histogram-surface-fill {
+  opacity: 0.18;
+  filter: saturate(1.04) brightness(1.02);
+}
+
+.prescription-histogram-surface-outline {
+  fill: none;
+  stroke: rgba(248, 252, 250, 0.9);
+  stroke-width: 0.9;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.12));
+}
+
+.prescription-histogram-break {
+  position: absolute;
+  top: 12px;
+  bottom: 22px;
+  width: 0;
+  pointer-events: none;
+}
+
+.prescription-histogram-break.is-edge {
+  border-left: 2px solid #1f9bff;
+}
+
+.prescription-histogram-break.is-threshold {
+  border-left: 2px dashed #1f9bff;
+  pointer-events: none;
+}
+
+.prescription-histogram-break span {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  color: rgba(237, 243, 239, 0.82);
+  font-size: 8px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.prescription-histogram-scale {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  color: #667168;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.prescription-histogram-scale span:nth-child(2) {
+  text-align: center;
+}
+
+.prescription-stats-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.prescription-stats-summary span {
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  border: 1px solid #e0e7e0;
+  border-radius: 10px;
+  background: rgba(246, 249, 244, 0.96);
+}
+
+.prescription-stats-summary small {
+  color: #6b756d;
+  font-size: 9px;
+}
+
+.prescription-stats-summary strong {
+  color: #223329;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.prescription-zones-table {
+  display: grid;
+  gap: 6px;
+}
+
+.prescription-zones-table-head,
+.prescription-zones-table-row {
+  display: grid;
+  grid-template-columns: 52px 78px 72px 72px 70px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.prescription-zones-table-head {
+  color: #5f6b62;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.prescription-zones-table-row {
+  min-height: 36px;
+  padding: 8px 9px;
+  border: 1px solid #e1e6e1;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #24332a;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.prescription-zone-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 800;
+}
+
+.prescription-zone-label i {
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(40, 48, 41, 0.22);
+  border-radius: 3px;
+}
+
+.prescription-zone-quantile {
+  display: grid;
+  gap: 1px;
+}
+
+.prescription-zone-quantile strong {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.prescription-zone-quantile small {
+  color: #6c776f;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.prescription-rotation-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 0;
+  padding: 14px;
+  border: 1px solid #dce5dc;
+  border-radius: 14px;
+  background: rgba(250, 252, 249, 0.94);
+}
+
+.prescription-rotation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.prescription-rotation-header span {
+  color: #314238;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.prescription-rotation-header strong {
+  color: #244f32;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.prescription-rotation-card input[type="range"] {
+  width: 100%;
+  margin: 0;
+  accent-color: #2389d9;
+  cursor: pointer;
+}
+
+.prescription-rotation-card input[type="range"]:disabled {
+  cursor: not-allowed;
+}
+
+.prescription-rotation-scale {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+  color: #6d766f;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.prescription-rotation-scale span:nth-child(2) {
+  text-align: center;
+}
+
+.prescription-rotation-scale span:last-child {
+  text-align: right;
+}
+
+.prescription-rotation-card small {
+  color: #768078;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.prescription-area-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  margin-top: 0;
+  padding: 14px;
+  border: 1px dashed #78927e;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #f8fbf7, #eff6ee);
+  color: #3c5845;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(46, 76, 56, 0.07);
+}
+
+.prescription-area-button.is-ready {
+  border-style: solid;
+  background: #e9f3e8;
+}
+
+.prescription-area-button svg {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+}
+
+.prescription-area-button span {
+  display: grid;
+  gap: 2px;
+}
+
+.prescription-area-button small {
+  color: #68766b;
+  font-size: 9px;
 }
 
 .prescription-dose-table {
@@ -4329,6 +4790,7 @@ body {
 .prescription-dialog-actions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 9px;
   margin-top: 18px;
 }
@@ -4371,11 +4833,11 @@ body {
 }
 
 .prescription-map-overlay {
-  image-rendering: auto;
+  image-rendering: pixelated;
 }
 
 .zoning-map-overlay {
-  image-rendering: auto;
+  image-rendering: pixelated;
 }
 
 .prescription-panel-action {
@@ -4499,7 +4961,7 @@ body {
 .prescription-legend-ramp i {
   height: 10px;
   border: 1px solid #4b514d;
-  background: linear-gradient(90deg, #FF7A00 0% 25%, #FFC400 25% 50%, #ACF404 50% 75%, #00B824 75% 100%);
+  background: linear-gradient(90deg, #F15423 0% 25%, #F69D22 25% 50%, #F3E723 50% 75%, #A1D334 75% 100%);
 }
 
 .prescription-legend-zones {
@@ -4550,12 +5012,59 @@ body {
 }
 
 .prescription-legend footer {
+  display: grid;
+  gap: 10px;
   margin-top: 11px;
   padding-top: 9px;
   border-top: 1px solid #e0e6e0;
   color: #6a756c;
   font-size: 9px;
   font-weight: 700;
+}
+
+.prescription-legend footer .prescription-download-button {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: #355d42;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  text-decoration: none;
+  transition: background 160ms ease, transform 160ms ease;
+  cursor: pointer;
+}
+
+.prescription-legend footer .prescription-download-button:hover {
+  background: #284c35;
+  transform: translateY(-1px);
+}
+
+.prescription-legend footer .prescription-download-button:focus-visible {
+  outline: 3px solid rgba(53, 93, 66, 0.28);
+  outline-offset: 2px;
+}
+
+.prescription-legend footer .prescription-download-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+  transform: none;
+}
+
+.prescription-legend footer .prescription-download-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.prescription-legend footer .prescription-download-error {
+  color: #a13737;
+  font-size: 9px;
 }
 
 .uploading-overlay {
@@ -5740,6 +6249,22 @@ body {
 @media (max-width: 520px) {
   .import-dialog {
     padding: 18px;
+  }
+  .prescription-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+    padding: 16px;
+    border-radius: 18px;
+  }
+  .prescription-layout {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .prescription-analytics {
+    grid-template-columns: 1fr;
+  }
+  .prescription-tuning-grid {
+    grid-template-columns: 1fr;
   }
   .prescription-config-grid {
     grid-template-columns: 1fr;

@@ -134,6 +134,24 @@ src/
 9. Al salir del ciclo se limpian las capas, selecciones y contexto del espacio de trabajo.
 10. Para aplicación variable, el ROI debe estar recortado y su histograma NDVI abierto. Desde ese panel se configura la prescripción usando el rango visible; puede retirarse desde el mismo panel o su leyenda.
 
+## Alineacion con PIX4Dfields
+
+La interfaz y el backend quedaron alineados para que el flujo de indices y
+prescripcion replique mejor a PIX4Dfields:
+
+- los extremos visibles del histograma del ROI salen de `range_min` y
+  `range_max` calculados sobre el recorte real, no del min/max de una matriz
+  reducida;
+- la zonificacion y la prescripcion heredan ese mismo rango activo para dibujar
+  histograma, tabla de zonas y tramos de dosis;
+- en `Cuantiles`, los cortes internos se calculan desde los valores por celda,
+  pero los extremos del dominio permanecen anclados al rango del ROI;
+- el slider `Detalle de la zona` arranca en modo detallado y su curva de
+  simplificacion se calibro para conservar mas estructura antes de fusionar
+  manchas;
+- el modal de zonificacion/prescripcion ahora usa una composicion de dos
+  columnas, con configuracion compacta a la izquierda y analitica a la derecha.
+
 ## Sensores y archivos admitidos
 
 ### Ortomosaicos

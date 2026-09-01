@@ -49,6 +49,11 @@ class SupabaseService:
         "stddev,p10,p25,p50,p75,p90,pixel_count,result_meta,calculated_at,"
         "orthomosaics(name,capture_date)"
     )
+    ROI_ANALYSES_COLUMNS = (
+        "id,roi_id,orthomosaic_id,ndvi,ndwi,ndre,created_at,"
+        "orthomosaics(name,capture_date)"
+    )
+    ZONE_COLUMNS = "id,name,geom,source_format,properties,created_at,roi_id"
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -241,6 +246,129 @@ class SupabaseService:
             "created_at": row.get("created_at") or row.get("calculated_at"),
             "orthomosaics": row.get("orthomosaics"),
         }
+
+    @staticmethod
+    def _is_saved_roi_stats(value: Any) -> bool:
+        return isinstance(value, dict) and any(
+            key in value
+            for key in (
+                "count",
+                "min",
+                "max",
+                "mean",
+                "median",
+                "standard_deviation",
+                "p10",
+                "p25",
+                "p75",
+                "p90",
+                "range_min",
+                "range_max",
+            )
+        )
+
+    @staticmethod
+    def _roi_analyses_record_id(row_id: str, index_type: str) -> str:
+        return f"roi_analyses:{row_id}:{index_type.upper()}"
+
+    @staticmethod
+    def _parse_roi_analyses_record_id(analysis_id: str) -> tuple[str, str] | None:
+        parts = analysis_id.split(":")
+        if len(parts) != 3 or parts[0] != "roi_analyses":
+            return None
+        row_id, index_type = parts[1], parts[2].upper()
+        if index_type not in {"NDVI", "NDWI", "NDRE"}:
+            return None
+        return row_id, index_type
+
+    @classmethod
+    def _roi_analyses_row_to_analyses(
+        cls,
+        row: dict[str, Any],
+        index: str | None = None,
+    ) -> list[dict[str, Any]]:
+        selected = index.upper() if index else None
+        analyses: list[dict[str, Any]] = []
+        for index_type in ("NDVI", "NDWI", "NDRE"):
+            if selected and index_type != selected:
+                continue
+            stats = row.get(index_type.lower())
+            if not cls._is_saved_roi_stats(stats):
+                continue
+            analyses.append(
+                {
+                    "id": cls._roi_analyses_record_id(str(row["id"]), index_type),
+                    "roi_id": row["roi_id"],
+                    "orthomosaic_id": row["orthomosaic_id"],
+                    "ndvi": stats if index_type == "NDVI" else None,
+                    "ndwi": stats if index_type == "NDWI" else None,
+                    "ndre": stats if index_type == "NDRE" else None,
+                    "created_at": row.get("created_at"),
+                    "orthomosaics": row.get("orthomosaics"),
+                },
+            )
+        return analyses
+
+    def _get_roi_analyses_row(
+        self,
+        roi_id: str,
+        orthomosaic_id: str,
+    ) -> dict[str, Any] | None:
+        response = (
+            self.require_client()
+            .table("roi_analyses")
+            .select(self.ROI_ANALYSES_COLUMNS)
+            .eq("roi_id", roi_id)
+            .eq("orthomosaic_id", orthomosaic_id)
+            .limit(1)
+            .execute()
+        )
+        data = self._payload_data(response) or []
+        return data[0] if data else None
+
+    def _save_roi_analysis_row(
+        self,
+        roi_id: str,
+        orthomosaic_id: str,
+        index_type: str,
+        stats: dict[str, Any],
+    ) -> dict[str, Any]:
+        client = self.require_client()
+        field = index_type.lower()
+        existing = self._get_roi_analyses_row(roi_id, orthomosaic_id)
+        payload: dict[str, Any] = {field: stats}
+        if existing:
+            mutation = (
+                client.table("roi_analyses")
+                .update(payload)
+                .eq("id", existing["id"])
+                .select(self.ROI_ANALYSES_COLUMNS)
+                .execute()
+            )
+        else:
+            payload.update(
+                {
+                    "roi_id": roi_id,
+                    "orthomosaic_id": orthomosaic_id,
+                    # El esquema legado exige ndvi not null incluso si el
+                    # analisis inicial corresponde a otro indice.
+                    "ndvi": stats if index_type == "NDVI" else {},
+                },
+            )
+            mutation = (
+                client.table("roi_analyses")
+                .insert(payload)
+                .select(self.ROI_ANALYSES_COLUMNS)
+                .execute()
+            )
+        mutation_data = self._payload_data(mutation) or []
+        row = mutation_data[0] if isinstance(mutation_data, list) and mutation_data else mutation_data
+        analyses = self._roi_analyses_row_to_analyses(row, index_type)
+        if analyses:
+            return analyses[0]
+        raise RoiAnalysisNotFoundError(
+            "No se pudo recuperar la estadistica recien guardada.",
+        )
 
     @staticmethod
     def _latest_index_results_per_flight(
@@ -605,24 +733,33 @@ class SupabaseService:
     def ensure_zone_for_roi(self, roi_id: str) -> dict[str, Any]:
         roi = self.get_roi(roi_id)
         client = self.require_client()
-        try:
-            response = (
+        for query_builder in (
+            lambda: (
                 client.table("zones")
-                .select("id,name,properties")
+                .select(self.ZONE_COLUMNS)
+                .eq("roi_id", roi_id)
+                .limit(1)
+            ),
+            lambda: (
+                client.table("zones")
+                .select("id,name,geom,source_format,properties,created_at")
                 .contains("properties", {"roi_id": roi_id})
                 .limit(1)
-                .execute()
-            )
-            data = list(self._payload_data(response) or [])
-            if data:
-                return data[0]
-        except Exception:
-            pass
+            ),
+        ):
+            try:
+                response = query_builder().execute()
+                data = list(self._payload_data(response) or [])
+                if data:
+                    return data[0]
+            except Exception:
+                continue
 
         geometry = shape(roi["geojson"]["geometry"] if roi["geojson"].get("type") == "Feature" else roi["geojson"])
         zone_payload = {
             "name": roi.get("name") or "ROI",
             "geom": f"SRID=4326;{geometry.wkt}",
+            "roi_id": roi_id,
             "properties": {
                 "roi_id": roi_id,
                 "orthomosaic_id": roi.get("orthomosaic_id"),
@@ -634,16 +771,34 @@ class SupabaseService:
             payload = dict(zone_payload)
             if source_format is not None:
                 payload["source_format"] = source_format
-            try:
-                response = client.table("zones").insert(payload).execute()
-                data = self._payload_data(response)
-                if isinstance(data, list) and data:
-                    return data[0]
-                if isinstance(data, dict):
-                    return data
-            except Exception as exc:
-                label = source_format if source_format is not None else "<omitido>"
-                errors.append(f"{label}: {exc}")
+
+            attempts = [payload]
+            legacy_payload = dict(payload)
+            legacy_payload.pop("roi_id", None)
+            if legacy_payload != payload:
+                attempts.append(legacy_payload)
+
+            label = source_format if source_format is not None else "<omitido>"
+            for attempt_index, candidate_payload in enumerate(attempts):
+                try:
+                    response = client.table("zones").insert(candidate_payload).execute()
+                    data = self._payload_data(response)
+                    if isinstance(data, list) and data:
+                        return data[0]
+                    if isinstance(data, dict):
+                        return data
+                except Exception as exc:
+                    message = str(exc)
+                    missing_roi_id_column = (
+                        attempt_index == 0
+                        and "roi_id" in candidate_payload
+                        and "roi_id" in message
+                        and "zones" in message
+                    )
+                    if missing_roi_id_column and len(attempts) > 1:
+                        continue
+                    errors.append(f"{label}: {exc}")
+                    break
         raise RoiAnalysisNotFoundError(
             "No se pudo crear la zona asociada al ROI. "
             + " | ".join(errors),
@@ -809,7 +964,13 @@ class SupabaseService:
         index_type: str = "NDVI",
     ) -> dict[str, Any] | None:
         record = self.get_index_result(roi_id, orthomosaic_id, index_type)
-        return self._index_result_to_roi_analysis(record) if record else None
+        if record:
+            return self._index_result_to_roi_analysis(record)
+        row = self._get_roi_analyses_row(roi_id, orthomosaic_id)
+        if not row:
+            return None
+        analyses = self._roi_analyses_row_to_analyses(row, index_type)
+        return analyses[0] if analyses else None
 
     def save_roi_analysis(
         self,
@@ -924,16 +1085,28 @@ class SupabaseService:
                 mutation_data = self._payload_data(mutation) or []
                 record = mutation_data[0] if isinstance(mutation_data, list) and mutation_data else mutation_data
             except Exception as legacy_exc:
-                raise ValueError(
-                    "Fallo el guardado en index_results. "
-                    f"Intento esquema real: {modern_error}. "
-                    f"Intento esquema legado: {legacy_exc}."
-                ) from legacy_exc
+                try:
+                    return self._save_roi_analysis_row(
+                        roi_id,
+                        orthomosaic_id,
+                        index_type,
+                        stats,
+                    )
+                except Exception as roi_analyses_exc:
+                    raise ValueError(
+                        "Fallo el guardado en index_results. "
+                        f"Intento esquema real: {modern_error}. "
+                        f"Intento esquema legado: {legacy_exc}. "
+                        f"Intento roi_analyses: {roi_analyses_exc}."
+                    ) from roi_analyses_exc
         if not record:
             record = self.get_index_result(roi_id, orthomosaic_id, index_type)
         if not record:
-            raise RoiAnalysisNotFoundError(
-                "No se pudo recuperar la estadistica recien guardada.",
+            return self._save_roi_analysis_row(
+                roi_id,
+                orthomosaic_id,
+                index_type,
+                stats,
             )
         return self._index_result_to_roi_analysis(record)
 
@@ -951,6 +1124,7 @@ class SupabaseService:
         ):
             return []
         client = self.require_client()
+        modern_query_succeeded = False
         try:
             query = (
                 client.table("index_results")
@@ -961,13 +1135,35 @@ class SupabaseService:
                 query = query.eq("index_type", index)
             response = query.order("calculated_at", desc=True).execute()
             data = list(self._payload_data(response) or [])
-            if data:
-                return [
-                    self._index_result_to_roi_analysis(item)
-                    for item in self._latest_index_results_per_flight(data)
-                ]
+            modern_query_succeeded = True
+            modern_items = [
+                self._index_result_to_roi_analysis(item)
+                for item in self._latest_index_results_per_flight(data)
+            ]
+            if modern_items:
+                return modern_items
         except Exception:
             pass
+
+        try:
+            response = (
+                client.table("roi_analyses")
+                .select(self.ROI_ANALYSES_COLUMNS)
+                .eq("roi_id", roi_id)
+                .order("created_at", desc=True)
+                .execute()
+            )
+            rows = list(self._payload_data(response) or [])
+            analyses: list[dict[str, Any]] = []
+            for row in rows:
+                analyses.extend(self._roi_analyses_row_to_analyses(row, index))
+            if analyses:
+                return analyses
+        except Exception:
+            pass
+
+        if modern_query_succeeded:
+            return []
 
         query = (
             client.table("index_results")
@@ -977,15 +1173,50 @@ class SupabaseService:
         if index in {"NDVI", "NDWI", "NDRE"}:
             query = query.eq("index_type", index)
         response = query.order("created_at", desc=True).execute()
-        return [
+        legacy_items = [
             self._index_result_to_roi_analysis(item)
             for item in self._latest_index_results_per_flight(
                 list(self._payload_data(response) or []),
             )
         ]
+        return legacy_items
 
     def delete_roi_analysis(self, roi_id: str, analysis_id: str) -> None:
         client = self.require_client()
+        roi_analyses_key = self._parse_roi_analyses_record_id(analysis_id)
+        if roi_analyses_key:
+            row_id, index_type = roi_analyses_key
+            response = (
+                client.table("roi_analyses")
+                .select(self.ROI_ANALYSES_COLUMNS)
+                .eq("id", row_id)
+                .eq("roi_id", roi_id)
+                .limit(1)
+                .execute()
+            )
+            rows = list(self._payload_data(response) or [])
+            if not rows:
+                raise RoiAnalysisNotFoundError(
+                    "No existe la estadistica seleccionada para este ROI.",
+                )
+            row = rows[0]
+            remaining = {
+                name: row.get(name)
+                for name in ("ndvi", "ndwi", "ndre")
+            }
+            remaining[index_type.lower()] = None
+            still_has_stats = any(
+                self._is_saved_roi_stats(value)
+                for value in remaining.values()
+            )
+            if not still_has_stats:
+                client.table("roi_analyses").delete().eq("id", row_id).execute()
+                return
+            update_payload = {index_type.lower(): None}
+            if index_type == "NDVI":
+                update_payload["ndvi"] = {}
+            client.table("roi_analyses").update(update_payload).eq("id", row_id).execute()
+            return
         found = False
         try:
             response = (
