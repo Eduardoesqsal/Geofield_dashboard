@@ -73,6 +73,7 @@ interface ApplyRoiCropLayerParams {
   cropTileRef: MutableRefObject<L.TileLayer | undefined>;
   mapRef: RefObject<L.Map | undefined>;
   orthoRef: MutableRefObject<L.TileLayer | undefined>;
+  tileVersion?: string;
   uploadedRgbRef: MutableRefObject<L.ImageOverlay | undefined>;
 }
 
@@ -84,6 +85,7 @@ export function applyRoiCropLayer({
   cropTileRef,
   mapRef,
   orthoRef,
+  tileVersion,
   uploadedRgbRef,
 }: ApplyRoiCropLayerParams) {
   const map = mapRef.current;
@@ -92,10 +94,9 @@ export function applyRoiCropLayer({
   orthoRef.current?.remove();
   cropTileRef.current?.remove();
   cropTileRef.current = L.tileLayer(
-    backendUrl(`/tiles/crop/${cropId}/{z}/{x}/{y}.png`),
+    backendUrl(`/tiles/crop/${cropId}/{z}/{x}/{y}.png?v=${encodeURIComponent(tileVersion ?? "webmercator-v2")}`),
     {
-      tileSize: 512,
-      zoomOffset: -1,
+      tileSize: 256,
       maxNativeZoom: 24,
       maxZoom: 24,
       bounds,

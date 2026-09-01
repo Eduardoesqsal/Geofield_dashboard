@@ -59,6 +59,7 @@ interface MountUploadedOrthomosaicParams {
   bounds: [[number, number], [number, number]];
   mapRef: RefObject<L.Map | undefined>;
   orthoRef: MutableRefObject<L.TileLayer | undefined>;
+  tileVersion?: string;
 }
 
 export function mountUploadedOrthomosaic({
@@ -66,13 +67,14 @@ export function mountUploadedOrthomosaic({
   bounds,
   mapRef,
   orthoRef,
+  tileVersion,
 }: MountUploadedOrthomosaicParams) {
   const map = mapRef.current;
   if (!map) return false;
   orthoRef.current?.remove();
-  orthoRef.current = L.tileLayer(backendUrl("/tiles/rgb/{z}/{x}/{y}.png"), {
-    tileSize: 512,
-    zoomOffset: -1,
+  const version = encodeURIComponent(tileVersion ?? "webmercator-v2");
+  orthoRef.current = L.tileLayer(backendUrl(`/tiles/rgb/{z}/{x}/{y}.png?v=${version}`), {
+    tileSize: 256,
     maxNativeZoom: 24,
     maxZoom: 24,
     keepBuffer: 3,
@@ -90,6 +92,7 @@ interface MountStoredOrthomosaicParams {
   mapRef: RefObject<L.Map | undefined>;
   orthomosaicId: string;
   orthoRef: MutableRefObject<L.TileLayer | undefined>;
+  tileVersion?: string;
 }
 
 export function mountStoredOrthomosaic({
@@ -98,17 +101,18 @@ export function mountStoredOrthomosaic({
   mapRef,
   orthomosaicId,
   orthoRef,
+  tileVersion,
 }: MountStoredOrthomosaicParams) {
   const map = mapRef.current;
   if (!map) return false;
   orthoRef.current?.remove();
+  const version = encodeURIComponent(tileVersion ?? "webmercator-v2");
   orthoRef.current = L.tileLayer(
     backendUrl(
-      `/tiles/rgb/{z}/{x}/{y}.png?orthomosaic_id=${encodeURIComponent(orthomosaicId)}`,
+      `/tiles/rgb/{z}/{x}/{y}.png?orthomosaic_id=${encodeURIComponent(orthomosaicId)}&v=${version}`,
     ),
     {
-      tileSize: 512,
-      zoomOffset: -1,
+      tileSize: 256,
       maxNativeZoom: 24,
       maxZoom: 24,
       keepBuffer: 3,

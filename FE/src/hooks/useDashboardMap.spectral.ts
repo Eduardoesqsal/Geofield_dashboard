@@ -8,8 +8,7 @@ import L from "leaflet";
 import type { NdviResponse } from "../services/api";
 
 const TILE_OPTIONS: L.TileLayerOptions = {
-  tileSize: 512,
-  zoomOffset: -1,
+  tileSize: 256,
   maxNativeZoom: 24,
   maxZoom: 24,
   keepBuffer: 3,
@@ -17,8 +16,15 @@ const TILE_OPTIONS: L.TileLayerOptions = {
   opacity: 1,
 };
 
+const INDEX_TILE_VERSION = "index-matrix-webmercator-v6";
+
+function versionedSpectralUrl(url: string): string {
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}v=${INDEX_TILE_VERSION}`;
+}
+
 export function createSpectralTileLayer(url: string): L.TileLayer {
-  return L.tileLayer(url, TILE_OPTIONS);
+  return L.tileLayer(versionedSpectralUrl(url), TILE_OPTIONS);
 }
 
 interface ReplaceSpectralLayerParams {

@@ -1,7 +1,7 @@
-"""Capa HTTP del backend.
+﻿"""Capa HTTP del backend.
 
 Traduce requests web a operaciones de servicios para ortomosaicos, ROI,
-índices, recortes y comparación persistida de análisis.
+Ã­ndices, recortes y comparaciÃ³n persistida de anÃ¡lisis.
 """
 
 from __future__ import annotations
@@ -40,19 +40,19 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         elif geojson.get("type") == "FeatureCollection":
             geometries = [item.get("geometry") for item in geojson.get("features", []) if isinstance(item, dict) and isinstance(item.get("geometry"), dict)]
             if not geometries:
-                raise HTTPException(400, "El FeatureCollection no contiene geometrías")
+                raise HTTPException(400, "El FeatureCollection no contiene geometrÃ­as")
             try:
                 return unary_union([shape(item) for item in geometries])
             except (TypeError, ValueError) as exc:
-                raise HTTPException(400, "Geometrías GeoJSON inválidas") from exc
+                raise HTTPException(400, "GeometrÃ­as GeoJSON invÃ¡lidas") from exc
         elif "geometry" in geojson and geojson.get("type") != "FeatureCollection":
             geojson = geojson["geometry"]
         if not isinstance(geojson, dict) or not geojson.get("type") or "coordinates" not in geojson:
-            raise HTTPException(400, "Se requiere una geometría GeoJSON válida")
+            raise HTTPException(400, "Se requiere una geometrÃ­a GeoJSON vÃ¡lida")
         try:
             return shape(geojson)
         except (TypeError, ValueError) as exc:
-            raise HTTPException(400, "Geometría GeoJSON inválida") from exc
+            raise HTTPException(400, "GeometrÃ­a GeoJSON invÃ¡lida") from exc
 
     def ensure_orthomosaic(orthomosaic_id: str | None) -> None:
         if not orthomosaic_id:
@@ -168,9 +168,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     @router.delete("/agricultural_cycles/{cycle_id}")
     def delete_agricultural_cycle(cycle_id: str) -> dict[str, Any]:
         try:
-            result = supabase.delete_agricultural_cycle(cycle_id)
-            for record in result["orthomosaics"]:
-                orthomosaics.reset_active_orthomosaic(record)
+            result = orthomosaics.delete_agricultural_cycle(cycle_id)
             return {"status": "ok", **result}
         except OrthomosaicNotFoundError as exc:
             raise HTTPException(404, str(exc)) from exc
@@ -186,7 +184,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         if not isinstance(raw_ids, list) or any(
             not isinstance(item, str) or not item.strip() for item in raw_ids
         ):
-            raise HTTPException(400, "Envía la lista completa de ortomosaicos en el orden deseado.")
+            raise HTTPException(400, "EnvÃ­a la lista completa de ortomosaicos en el orden deseado.")
         try:
             items = supabase.reorder_orthomosaics(cycle_id, raw_ids)
         except SupabaseNotConfiguredError as exc:
@@ -210,7 +208,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     ) -> dict[str, Any]:
         content = await file.read()
         if not content:
-            raise HTTPException(400, "No se recibió ningún archivo.")
+            raise HTTPException(400, "No se recibiÃ³ ningÃºn archivo.")
         try:
             result = orthomosaics.upload_orthomosaic(
                 content=content,
@@ -288,7 +286,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         try:
             payload = await request.json()
             geojson = payload.get("geojson") if isinstance(payload, dict) else None
-            if not isinstance(geojson, dict): raise HTTPException(400, "Se requiere un GeoJSON válido.")
+            if not isinstance(geojson, dict): raise HTTPException(400, "Se requiere un GeoJSON vÃ¡lido.")
             payload_geometry({"geojson": geojson})
             name = str(payload.get("name") or "ROI").strip() or "ROI"
             record = rois.create_roi(
@@ -330,7 +328,10 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
                 ),
             }
         except Exception as exc:
-            raise HTTPException(502, "No se pudo consultar el historial. Ejecuta BE/sql/002_create_roi_analyses.sql en Supabase.") from exc
+            raise HTTPException(
+                502,
+                f"No se pudo consultar el historial en index_results: {exc}",
+            ) from exc
 
     @router.post("/rois/{roi_id}/analyses")
     async def save_roi_analysis(roi_id: str, request: Request) -> dict[str, Any]:
@@ -382,7 +383,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(502, "No se pudieron guardar las estadísticas globales. Ejecuta BE/sql/003_create_global_analyses.sql en Supabase.") from exc
+            raise HTTPException(502, "No se pudieron guardar las estadÃ­sticas globales. Ejecuta BE/sql/003_create_global_analyses.sql en Supabase.") from exc
         return {"status": "ok", "analysis": record}
 
     @router.delete("/rois/{roi_id}/analyses/{analysis_id}")
@@ -392,7 +393,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         except RoiAnalysisNotFoundError as exc:
             raise HTTPException(404, str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(502, "No se pudo eliminar la estadística de Supabase.") from exc
+            raise HTTPException(502, "No se pudo eliminar la estadÃ­stica de Supabase.") from exc
         return {"status": "ok"}
 
     def delete_global_analysis(analysis_id: str) -> dict[str, str]:
@@ -401,7 +402,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         except RoiAnalysisNotFoundError as exc:
             raise HTTPException(404, str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(502, "No se pudo eliminar la estadística global de Supabase.") from exc
+            raise HTTPException(502, "No se pudo eliminar la estadÃ­stica global de Supabase.") from exc
         return {"status": "ok"}
 
     @router.get("/bounds")
@@ -413,19 +414,27 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
             return {
                 "status": "ok",
                 "bounds": ast.literal_eval(path.read_text(encoding="utf-8")),
+                "tile_version": raster.tile_cache_version(),
             }
         except HTTPException:
             raise
         except (ValueError, rasterio.errors.RasterioIOError) as exc:
             raise HTTPException(
                 422,
-                "El ortomosaico está incompleto o dañado y no se pueden calcular sus límites.",
+                "El ortomosaico estÃ¡ incompleto o daÃ±ado y no se pueden calcular sus lÃ­mites.",
             ) from exc
 
     @router.get("/tiles/rgb/{z}/{x}/{y}.png")
     def rgb_tile(z: int, x: int, y: int, orthomosaic_id: str | None = Query(None)) -> Response:
         ensure_orthomosaic(orthomosaic_id)
-        return Response(raster.tile("rgb", z, x, y), media_type="image/png")
+        try:
+            return Response(
+                raster.tile("rgb", z, x, y),
+                media_type="image/png",
+                headers={"Cache-Control": "public, max-age=31536000, immutable"},
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @router.get("/tiles/crop/{crop_id}/{z}/{x}/{y}.png")
     def crop_tile(crop_id: str, z: int, x: int, y: int) -> Response:
@@ -445,7 +454,11 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     def ndvi_tile(z: int, x: int, y: int, low: float = Query(-0.05), high: float = Query(1.0), orthomosaic_id: str | None = Query(None)) -> Response:
         ensure_orthomosaic(orthomosaic_id)
         try:
-            return Response(raster.tile("ndvi", z, x, y, low, high), media_type="image/png")
+            return Response(
+                raster.tile("ndvi", z, x, y, low, high),
+                media_type="image/png",
+                headers={"Cache-Control": "no-store"},
+            )
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
@@ -464,6 +477,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
             return Response(
                 raster.index_tile(name.upper(), z, x, y, low, high),
                 media_type="image/png",
+                headers={"Cache-Control": "no-store"},
             )
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
@@ -475,15 +489,15 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     @router.post("/ortho_analysis")
     async def ortho_analysis(request: Request, type: str = Query("rgb"), sensor: str = Query("rgb")) -> dict[str, Any]:
         if type not in {"rgb", "multispectral"}:
-            raise HTTPException(400, "Tipo de ortomosaico no válido")
+            raise HTTPException(400, "Tipo de ortomosaico no vÃ¡lido")
         if sensor not in {"mavic3m", "mavic3rgb", "rgb", "micasense"}:
-            raise HTTPException(400, "Sensor no válido")
+            raise HTTPException(400, "Sensor no vÃ¡lido")
         expected_type = "multispectral" if sensor in {"mavic3m", "micasense"} else "rgb"
         if type != expected_type:
             raise HTTPException(400, "El tipo de ortomosaico no coincide con el sensor")
         content = await request.body()
         if not content:
-            raise HTTPException(400, "No se recibió ningún ortomosaico")
+            raise HTTPException(400, "No se recibiÃ³ ningÃºn ortomosaico")
         filename = request.headers.get("x-filename", "upload.tif")
         try:
             return raster.analyze_uploaded(content, type, filename, sensor)
@@ -511,20 +525,36 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     async def create_ndvi_zoning(request: Request) -> dict[str, Any]:
         payload = await request.json()
         orthomosaic_id = payload.get("orthomosaic_id")
+        index_name = str(payload.get("index_name", "NDVI"))
         if not isinstance(orthomosaic_id, str) or not orthomosaic_id:
             raise HTTPException(400, "Selecciona un vuelo antes de generar la zonificacion.")
         try:
             zone_count = int(payload.get("zone_count", 4))
             cell_size_m = float(payload.get("cell_size_m", 3))
+            grid_angle_deg = float(payload.get("grid_angle_deg", 0))
+            detail_level = float(payload.get("detail_level", 1))
         except (TypeError, ValueError) as exc:
-            raise HTTPException(422, "Zonas y tamaño de celda deben ser numéricos.") from exc
+            raise HTTPException(422, "Zonas, tamano de celda, rotacion y detalle deben ser numericos.") from exc
+        classification_method = str(payload.get("classification_method", "quantiles"))
+        cell_value_mode = str(payload.get("cell_value_mode", "mean"))
+        manual_breaks = payload.get("manual_breaks")
+        analysis_min = payload.get("analysis_min")
+        analysis_max = payload.get("analysis_max")
         geometry = payload_geometry(payload)
         ensure_orthomosaic(orthomosaic_id)
         try:
             return raster.ndvi_zoning_map(
                 geometry,
+                index_name,
                 zone_count,
                 cell_size_m,
+                grid_angle_deg,
+                classification_method,
+                cell_value_mode,
+                manual_breaks,
+                detail_level,
+                float(analysis_min) if analysis_min is not None else None,
+                float(analysis_max) if analysis_max is not None else None,
             )
         except (ValueError, rasterio.errors.RasterioIOError) as exc:
             raise HTTPException(422, str(exc)) from exc
@@ -533,27 +563,88 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     async def create_prescription(request: Request) -> dict[str, Any]:
         payload = await request.json()
         orthomosaic_id = payload.get("orthomosaic_id")
+        index_name = str(payload.get("index_name", "NDVI"))
         if not isinstance(orthomosaic_id, str) or not orthomosaic_id:
-            raise HTTPException(400, "Selecciona un vuelo antes de generar la prescripción.")
+            raise HTTPException(400, "Selecciona un vuelo antes de generar la prescripciÃ³n.")
         try:
             zone_count = int(payload.get("zone_count", 4))
             cell_size_m = float(payload.get("cell_size_m", 3))
+            grid_angle_deg = float(payload.get("grid_angle_deg", 0))
+            detail_level = float(payload.get("detail_level", 1))
         except (TypeError, ValueError) as exc:
-            raise HTTPException(422, "Zonas y tamaño de celda deben ser numéricos.") from exc
+            raise HTTPException(422, "Zonas, tamano de celda, rotacion y detalle deben ser numericos.") from exc
+        classification_method = str(payload.get("classification_method", "quantiles"))
+        cell_value_mode = str(payload.get("cell_value_mode", "mean"))
+        manual_breaks = payload.get("manual_breaks")
+        analysis_min = payload.get("analysis_min")
+        analysis_max = payload.get("analysis_max")
         geometry = payload_geometry(payload)
-        doses = payload.get("doses")
-        if not isinstance(doses, list):
-            raise HTTPException(422, "Debes enviar una dosis por cada clase antes de generar la prescripción.")
         ensure_orthomosaic(orthomosaic_id)
         try:
             return raster.prescription_map_with_doses(
                 geometry,
+                index_name,
                 zone_count,
                 cell_size_m,
-                doses,
+                grid_angle_deg,
+                classification_method,
+                cell_value_mode,
+                manual_breaks,
+                detail_level,
+                float(analysis_min) if analysis_min is not None else None,
+                float(analysis_max) if analysis_max is not None else None,
             )
         except (ValueError, rasterio.errors.RasterioIOError) as exc:
             raise HTTPException(422, str(exc)) from exc
+
+    @router.get("/tiles/prescription/{artifact_id}/{z}/{x}/{y}.png")
+    def prescription_tile(artifact_id: str, z: int, x: int, y: int) -> Response:
+        try:
+            return Response(
+                raster.prescription_tile(artifact_id, z, x, y),
+                media_type="image/png",
+                headers={"Cache-Control": "public, max-age=31536000, immutable"},
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @router.get("/prescriptions/{artifact_id}/download.json")
+    def download_prescription_json(artifact_id: str) -> FileResponse:
+        if len(artifact_id) != 32 or any(character not in "0123456789abcdef" for character in artifact_id):
+            raise HTTPException(404, "La prescripcion solicitada no es valida.")
+        path = output_dir / "prescriptions" / f"{artifact_id}.json"
+        if not path.is_file():
+            raise HTTPException(404, "La prescripcion ya no esta disponible.")
+        return FileResponse(
+            path,
+            media_type="application/json",
+            filename=f"prescripcion_{artifact_id[:8]}.json",
+        )
+
+    @router.get("/crop_tiles/{crop_id}/download")
+    def download_crop(
+        crop_id: str,
+        variant: str = Query("visual"),
+    ) -> Response:
+        if variant not in {"visual", "analytical"}:
+            raise HTTPException(400, "Elige visual o analytical.")
+        try:
+            if variant == "visual":
+                content = raster.export_crop_visual(crop_id)
+                filename = f"recorte_visual_{crop_id[:8]}.tif"
+            else:
+                content = raster.export_crop(crop_id)
+                filename = f"recorte_analitico_{crop_id[:8]}.tif"
+            return Response(
+                content,
+                media_type="image/tiff",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "Cache-Control": "no-store",
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @router.post("/roi_ndvi")
     async def roi_ndvi(request: Request, orthomosaic_id: str | None = Query(None)) -> dict[str, Any]:
@@ -620,3 +711,4 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
             raise HTTPException(400, str(exc)) from exc
 
     return router
+

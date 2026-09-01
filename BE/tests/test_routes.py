@@ -27,6 +27,18 @@ class FakeSupabaseService:
         self.record = record
         self.settings = type("Settings", (), {"cache_dir": cache_dir})()
 
+    def list_orthomosaics(
+        self,
+        _limit: int = 500,
+        _cycle_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return [self.record]
+
+    def get_orthomosaic(self, orthomosaic_id: str) -> dict[str, Any]:
+        if orthomosaic_id != self.record["id"]:
+            raise KeyError(orthomosaic_id)
+        return self.record
+
     def delete_orthomosaic(self, orthomosaic_id: str) -> dict[str, Any]:
         return self.record
 

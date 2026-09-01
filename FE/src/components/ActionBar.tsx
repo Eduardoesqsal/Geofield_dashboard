@@ -3,7 +3,9 @@
  * Centraliza accesos a capas, herramientas y diálogos sin mezclar esa UI
  * con la lógica imperativa del mapa.
  */
+import { useState } from "react";
 import {
+  IconDownload,
   IconLeaf,
   IconMap2,
   IconPolygon,
@@ -20,6 +22,9 @@ interface Props {
   onOpenDetections: () => void;
   onLabels: () => void;
   onImport: () => void;
+  cropAvailable: boolean;
+  cropExporting: boolean;
+  onExportCrop: (variant: "visual" | "analytical") => void;
 }
 
 /** Barra flotante que concentra los accesos principales sin administrar capas. */
@@ -31,7 +36,11 @@ export function ActionBar({
   onOpenDetections,
   onLabels,
   onImport,
+  cropAvailable,
+  cropExporting,
+  onExportCrop,
 }: Props) {
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   return (
     <div className="action-bar">
       <button
@@ -83,6 +92,45 @@ export function ActionBar({
       >
         <IconUpload aria-hidden="true" />
       </button>
+      <div className="crop-download-control">
+        <button
+          className={`action-pill ${cropAvailable ? "is-active" : ""}`}
+          type="button"
+          onClick={() => setDownloadMenuOpen((current) => !current)}
+          disabled={!cropAvailable || cropExporting}
+          title={cropAvailable ? "Descargar recorte" : "Primero recorta un ROI"}
+          aria-label="Descargar recorte del ortomosaico"
+          aria-expanded={downloadMenuOpen}
+        >
+          <IconDownload aria-hidden="true" />
+        </button>
+        {downloadMenuOpen && cropAvailable && (
+          <div className="crop-download-menu" role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setDownloadMenuOpen(false);
+                onExportCrop("visual");
+              }}
+            >
+              <strong>RGB para nube</strong>
+              <span>GeoTIFF uint8 con transparencia</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setDownloadMenuOpen(false);
+                onExportCrop("analytical");
+              }}
+            >
+              <strong>Multibanda para analisis</strong>
+              <span>Bandas y valores originales</span>
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
