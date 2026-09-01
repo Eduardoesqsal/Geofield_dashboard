@@ -118,6 +118,45 @@ class RasterServiceIndexTileTests(unittest.TestCase):
 
         np.testing.assert_array_equal(colors, expected)
 
+    def test_mavic3m_ndvi_ignores_alpha_band_in_five_band_exports(self) -> None:
+        raster_path = self.root / "mavic3m_alpha.tif"
+        bands = np.ones((5, 4, 4), dtype=np.float32)
+        bands[1] = 2.0  # Red, band 2.
+        bands[3] = 8.0  # NIR, band 4.
+        bands[4] = 255.0  # Alpha, band 5.
+        with rasterio.open(
+            raster_path,
+            "w",
+            driver="GTiff",
+            width=4,
+            height=4,
+            count=5,
+            dtype="float32",
+            crs="EPSG:4326",
+            transform=from_origin(0, 4, 1, 1),
+        ) as destination:
+            destination.write(bands)
+            for index, description in enumerate(
+                ("Green", "Red", "Red edge", "NIR", "Alpha"),
+                1,
+            ):
+                destination.set_band_description(index, description)
+            destination.colorinterp = (
+                ColorInterp.undefined,
+                ColorInterp.undefined,
+                ColorInterp.undefined,
+                ColorInterp.undefined,
+                ColorInterp.alpha,
+            )
+
+        service = RasterService(self.service.settings)
+        service.active_path = raster_path
+        service.sensor = "mavic3m"
+
+        self.assertEqual(service._ndvi_bands(), (2, 4))
+        values = service.vegetation_index_data("NDWI")["matrix"]
+        self.assertAlmostEqual(values[0][0], (1.0 - 8.0) / (1.0 + 8.0), places=6)
+
     def test_adjacent_ndvi_tiles_keep_matrix_and_color_aligned(self) -> None:
         raster_path = self.root / "ndvi-adjacent.tif"
         left_bounds = RasterService.tile_bounds_mercator(1, 0, 0)

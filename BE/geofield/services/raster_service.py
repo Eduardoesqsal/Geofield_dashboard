@@ -53,7 +53,7 @@ class RasterService:
     )
     INDEX_RAMPS = {
         "NDVI": VEGETATION_COLOR_RAMP,
-        "NDWI": ["c0003a", "e01a00", "ff5500", "ffaa00", "ffe066", "a8e6a0", "4dd4e0", "2b9aff", "1a4fff", "0000ff"],
+        "NDWI": ["0000ff", "1a4fff", "2b9aff", "4dd4e0", "a8e6a0", "ffe066", "ffaa00", "ff5500", "e01a00", "c0003a"],
         "NDRE": VEGETATION_COLOR_RAMP,
     }
     PIX4D_ZONE_DISPLAY_PALETTES = {
@@ -95,8 +95,8 @@ class RasterService:
         # grandes se limita el escalado para controlar memoria y peso.
         cell_count = max(1, rgba.shape[0] * rgba.shape[1])
         render_scale = max(
-            12,
-            min(24, int(np.sqrt(25_000_000 / cell_count))),
+            16,
+            min(32, int(np.sqrt(36_000_000 / cell_count))),
         )
         rendered = np.repeat(np.repeat(rgba, render_scale, axis=0), render_scale, axis=1)
         rendered_transform = transform * Affine.scale(1 / render_scale, 1 / render_scale)
@@ -109,10 +109,7 @@ class RasterService:
             invert=True,
         )
         rendered[~exact_mask] = 0
-        for grid_edge in (rendered[::render_scale, :, :], rendered[:, ::render_scale, :]):
-            visible_edge = grid_edge[..., 3] > 0
-            grid_edge[visible_edge, :3] = (255, 255, 255)
-            grid_edge[visible_edge, 3] = 255
+        self._apply_crisp_grid_lines(rendered, render_scale, (255, 255, 255))
 
         artifact_dir = self.settings.output_dir / "prescriptions"
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -131,6 +128,31 @@ class RasterService:
         ) as destination:
             destination.write(np.moveaxis(rendered, -1, 0))
         return f"/tiles/prescription/{artifact_id}/{{z}}/{{x}}/{{y}}.png"
+
+    @staticmethod
+    def _apply_crisp_grid_lines(
+        rendered: np.ndarray,
+        render_scale: int,
+        color: tuple[int, int, int] = (255, 255, 255),
+    ) -> None:
+        line_width = 2 if render_scale >= 16 else 1
+        edge_slices = [
+            rendered[::render_scale, :, :],
+            rendered[:, ::render_scale, :],
+            rendered[-1:, :, :],
+            rendered[:, -1:, :],
+        ]
+        if line_width > 1:
+            edge_slices.extend(
+                [
+                    rendered[1::render_scale, :, :],
+                    rendered[:, 1::render_scale, :],
+                ],
+            )
+        for grid_edge in edge_slices:
+            visible_edge = grid_edge[..., 3] > 0
+            grid_edge[visible_edge, :3] = color
+            grid_edge[visible_edge, 3] = 255
 
     def prescription_tile(self, artifact_id: str, z: int, x: int, y: int) -> bytes:
         """Warp a zoning/prescription artifact onto the exact Leaflet XYZ grid."""
@@ -787,10 +809,11 @@ class RasterService:
         if index_name == "NDVI":
             red_band, nir_band = self._ndvi_bands(raster_path, self.sensor)
             return nir_band, red_band
-        if self.sensor == "mavic3m":
-            bands = {"NDWI": (1, 4), "NDRE": (4, 3)}.get(index_name)
-        elif self.sensor == "micasense":
-            bands = {"NDWI": (2, 6), "NDRE": (6, 5)}.get(index_name)
+        if self.sensor in {"mavic3m", "micasense"}:
+            roles = self._multispectral_band_roles(path=raster_path, sensor=self.sensor)
+            formulas = {"NDWI": ("green", "nir"), "NDRE": ("nir", "rededge")}
+            names = formulas.get(index_name)
+            bands = (roles[names[0]], roles[names[1]]) if names else None
         else:
             bands = None
         if not bands:
@@ -1497,19 +1520,13 @@ class RasterService:
         # Cada celda métrica se amplía únicamente para visualización. Un borde
         # carbón de un píxel marca el límite compartido sin introducir huecos
         # y ocupa una proporción pequeña frente al relleno NDVI.
-        render_scale = 12
+        render_scale = 16
         rendered = np.repeat(
             np.repeat(rgba, render_scale, axis=0),
             render_scale,
             axis=1,
         )
-        for grid_edge in (
-            rendered[::render_scale, :, :],
-            rendered[:, ::render_scale, :],
-        ):
-            visible_edge = grid_edge[..., 3] > 0
-            grid_edge[visible_edge, :3] = (245, 247, 250)
-            grid_edge[visible_edge, 3] = 255
+        self._apply_crisp_grid_lines(rendered, render_scale, (255, 255, 255))
 
         prescription_id = uuid4().hex
         prescription_dir = self.settings.output_dir / "prescriptions"
@@ -1589,7 +1606,7 @@ class RasterService:
                     raise ValueError("DJI Mavic 3M requiere al menos 4 bandas: Green, Red, Red Edge y NIR.")
                 # Exportación DJI/Pix4D habitual: Blue, Green, Red, RedEdge, NIR.
                 # Algunos mosaicos omiten Blue y conservan: Green, Red, RedEdge, NIR.
-                return (3, 5) if src.count >= 5 else (2, 4)
+                return 2, 4
         if selected_sensor == "micasense":
             with rasterio.open(path or self._path()) as src:
                 names = {name.strip().lower(): index for index, name in enumerate(src.descriptions, 1) if name}
@@ -1731,6 +1748,12 @@ class RasterService:
                 roles.setdefault("red", 1)
                 roles.setdefault("green", 2)
                 roles.setdefault("blue", 3)
+        elif selected_sensor == "mavic3m" and src.count >= 4:
+            # Mavic 3M has no true blue channel. Use Red, Green and Red edge
+            # to keep the upload preview and overlay generation working.
+            roles.setdefault("red", 2)
+            roles.setdefault("green", 1)
+            roles.setdefault("blue", 3)
 
         missing = [role for role in ("red", "green", "blue") if role not in roles]
         if missing:
