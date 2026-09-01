@@ -1,30 +1,69 @@
 import type { NdviResponse } from "../services/api";
 
-/** Metadatos y rampas cromáticas compartidas por mapa, leyenda e histogramas. */
-export const INDEX_COLOR_RAMPS = {
+interface IndexColorRampDefinition {
+  label: string;
+  fullLabel: string;
+  description: string;
+  noDataColor: string;
+  ramp: readonly string[];
+  stops?: readonly number[];
+}
+
+const VEGETATION_COLOR_RAMP = [
+  "#FF1F1F",
+  "#FF4A1F",
+  "#FF741F",
+  "#FF9B1F",
+  "#FFC21F",
+  "#FFDD1F",
+  "#F3EB23",
+  "#D6E428",
+  "#A9D83A",
+  "#6CCF45",
+] as const;
+const VEGETATION_COLOR_STOPS = [
+  0.0,
+  0.12,
+  0.24,
+  0.38,
+  0.5,
+  0.6,
+  0.68,
+  0.76,
+  0.88,
+  1.0,
+] as const;
+const PRESCRIPTION_HISTOGRAM_STOPS = [
+  0.0,
+  0.12,
+  0.24,
+  0.4,
+  0.56,
+  0.66,
+  0.74,
+  0.82,
+  0.91,
+  1.0,
+] as const;
+
+/** Metadatos y rampas cromaticas compartidas por mapa, leyenda e histogramas. */
+export const INDEX_COLOR_RAMPS: Record<
+  "NDVI" | "GNDVI" | "NDWI" | "NDRE",
+  IndexColorRampDefinition
+> = {
   NDVI: {
     label: "NDVI",
     fullLabel: "Normalized Difference Vegetation Index",
-    description: "Low vegetation / stressed vegetation → high vegetation vigor",
+    description: "Low vegetation / stressed vegetation -> high vegetation vigor",
     noDataColor: "#00000000",
-    ramp: [
-      "#FF7A00",
-      "#FF9500",
-      "#FFB000",
-      "#FFC400",
-      "#E4D200",
-      "#ACF404",
-      "#57F20A",
-      "#27E833",
-      "#00B824",
-      "#009E1F",
-    ],
+    ramp: VEGETATION_COLOR_RAMP,
+    stops: VEGETATION_COLOR_STOPS,
   },
   GNDVI: {
     label: "GNDVI",
     fullLabel: "Green Normalized Difference Vegetation Index",
     description:
-      "Low chlorophyll / bare soil → high chlorophyll / active vegetation",
+      "Low chlorophyll / bare soil -> high chlorophyll / active vegetation",
     noDataColor: "#00000000",
     ramp: [
       "#f5f5dc",
@@ -42,7 +81,7 @@ export const INDEX_COLOR_RAMPS = {
   NDWI: {
     label: "NDWI",
     fullLabel: "Normalized Difference Water Index",
-    description: "Dry / low water → high water / moisture",
+    description: "Dry / low water -> high water / moisture",
     noDataColor: "#00000000",
     ramp: [
       "#c0003a",
@@ -56,31 +95,22 @@ export const INDEX_COLOR_RAMPS = {
       "#1a4fff",
       "#0000ff",
     ],
+    stops: undefined,
   },
   NDRE: {
     label: "NDRE",
     fullLabel: "Normalized Difference Red Edge Index",
     description:
-      "Low red-edge response / crop stress → high chlorophyll activity",
+      "Low red-edge response / crop stress -> high chlorophyll activity",
     noDataColor: "#00000000",
-    ramp: [
-      "#000000",
-      "#1b0a2a",
-      "#3d0965",
-      "#6b0d8a",
-      "#9b1f9e",
-      "#c43c7e",
-      "#e06030",
-      "#f08c00",
-      "#f5b800",
-      "#ffe000",
-    ],
+    ramp: VEGETATION_COLOR_RAMP,
+    stops: VEGETATION_COLOR_STOPS,
   },
 } as const;
 
 export type IndexColorName = keyof typeof INDEX_COLOR_RAMPS;
 
-/** Estadísticos descriptivos junto con los valores usados para recalcular filtros. */
+/** Estadisticos descriptivos junto con los valores usados para recalcular filtros. */
 export interface NdviStats {
   count: number;
   min: number;
@@ -92,12 +122,12 @@ export interface NdviStats {
   values: number[];
 }
 
-/** Convierte bytes 0..255 del backend al dominio canónico NDVI -1..1. */
+/** Convierte bytes 0..255 del backend al dominio canonico NDVI -1..1. */
 export function ndviValue(value: number): number {
   return value > 1 ? (value / 255) * 2 - 1 : value;
 }
 
-/** Extrae únicamente píxeles finitos y válidos según la máscara del raster. */
+/** Extrae unicamente pixeles finitos y validos segun la mascara del raster. */
 export function ndviValues(response: NdviResponse): number[] {
   const values: number[] = [];
   response.matrix.forEach((row, y) =>
@@ -114,7 +144,7 @@ export function ndviValues(response: NdviResponse): number[] {
   return values;
 }
 
-/** Interpolación lineal de un percentil sobre un arreglo previamente ordenado. */
+/** Interpolacion lineal de un percentil sobre un arreglo previamente ordenado. */
 function percentile(sorted: number[], fraction: number): number {
   if (!sorted.length) return 0;
   const index = (sorted.length - 1) * fraction;
@@ -123,7 +153,7 @@ function percentile(sorted: number[], fraction: number): number {
   return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
 }
 
-/** Calcula el resumen estadístico que consumen los paneles e histogramas. */
+/** Calcula el resumen estadistico que consumen los paneles e histogramas. */
 export function ndviStatsFromValues(values: number[]): NdviStats {
   const sorted = [...values].sort((a, b) => a - b);
   const mean = values.length
@@ -150,7 +180,7 @@ export function ndviStatsFromValues(values: number[]): NdviStats {
   };
 }
 
-/** Atajo para obtener estadísticas directamente desde una respuesta raster. */
+/** Atajo para obtener estadisticas directamente desde una respuesta raster. */
 export function ndviStats(response: NdviResponse | null): NdviStats {
   return ndviStatsFromValues(response ? ndviValues(response) : []);
 }
@@ -162,6 +192,42 @@ function rgb(hex: string): [number, number, number] {
     Number.parseInt(hex.slice(3, 5), 16),
     Number.parseInt(hex.slice(5, 7), 16),
   ];
+}
+
+function rampStops(name: IndexColorName): readonly number[] {
+  const rampDefinition = INDEX_COLOR_RAMPS[name] as {
+    ramp: readonly string[];
+    stops?: readonly number[];
+  };
+  const stops = rampDefinition.stops;
+  if (stops) return stops;
+  const ramp = rampDefinition.ramp;
+  return Array.from(
+    { length: ramp.length },
+    (_, index) => index / Math.max(ramp.length - 1, 1),
+  );
+}
+
+function interpolateRampColor(
+  ramp: readonly string[],
+  stops: readonly number[],
+  position: number,
+): string {
+  let upperIndex = stops.findIndex((stop) => position <= stop);
+  if (upperIndex <= 0) upperIndex = 1;
+  if (upperIndex === -1) upperIndex = stops.length - 1;
+  const lowerIndex = upperIndex - 1;
+  const lowerStop = stops[lowerIndex];
+  const upperStop = stops[upperIndex];
+  const start = rgb(ramp[lowerIndex]);
+  const end = rgb(ramp[upperIndex]);
+  const factor =
+    (position - lowerStop) / Math.max(upperStop - lowerStop, Number.EPSILON);
+  return `rgb(${start
+    .map((channel, index) =>
+      Math.round(channel + (end[index] - channel) * factor),
+    )
+    .join(", ")})`;
 }
 
 /** Interpola el color correspondiente a un valor dentro del rango visible. */
@@ -179,11 +245,8 @@ export function indexColor(
     ),
   );
   const ramp = INDEX_COLOR_RAMPS[name].ramp;
-  const raw = position * (ramp.length - 1);
-  const start = rgb(ramp[Math.floor(raw)]);
-  const end = rgb(ramp[Math.min(ramp.length - 1, Math.ceil(raw))]);
-  const factor = raw - Math.floor(raw);
-  return `rgb(${start.map((channel, index) => Math.round(channel + (end[index] - channel) * factor)).join(", ")})`;
+  const stops = rampStops(name);
+  return interpolateRampColor(ramp, stops, position);
 }
 
 /** Construye los segmentos de un gradiente CSS consistente con la capa del mapa. */
@@ -193,11 +256,44 @@ export function indexGradient(
   maximum: number,
 ): string {
   const ramp = INDEX_COLOR_RAMPS[name].ramp;
+  const stops = rampStops(name);
   return ramp
     .map(
       (_, index) =>
-        `${indexColor(name, minimum + ((maximum - minimum) * index) / (ramp.length - 1), minimum, maximum)} ${(index / (ramp.length - 1)) * 100}%`,
+        `${ramp[index]} ${stops[index] * 100}%`,
     )
+    .join(", ");
+}
+
+export function prescriptionHistogramColor(
+  name: IndexColorName,
+  value: number,
+  minimum: number,
+  maximum: number,
+): string {
+  const position = Math.max(
+    0,
+    Math.min(
+      1,
+      (value - minimum) / Math.max(maximum - minimum, Number.EPSILON),
+    ),
+  );
+  const ramp = INDEX_COLOR_RAMPS[name].ramp;
+  const stops =
+    name === "NDVI" || name === "NDRE"
+      ? PRESCRIPTION_HISTOGRAM_STOPS
+      : rampStops(name);
+  return interpolateRampColor(ramp, stops, position);
+}
+
+export function prescriptionHistogramGradient(name: IndexColorName): string {
+  const ramp = INDEX_COLOR_RAMPS[name].ramp;
+  const stops =
+    name === "NDVI" || name === "NDRE"
+      ? PRESCRIPTION_HISTOGRAM_STOPS
+      : rampStops(name);
+  return ramp
+    .map((color, index) => `${color} ${stops[index] * 100}%`)
     .join(", ");
 }
 export const ndviColor = (value: number, minimum: number, maximum: number) =>

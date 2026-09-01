@@ -68,9 +68,15 @@ class OrthomosaicApplicationService:
         return self.supabase.activate_orthomosaic(orthomosaic_id, self.raster)
 
     def delete_orthomosaic(self, orthomosaic_id: str) -> dict[str, Any]:
-        record = self.supabase.delete_orthomosaic(orthomosaic_id)
+        record = self.supabase.get_orthomosaic(orthomosaic_id)
         self.reset_active_orthomosaic(record)
+        self.supabase.delete_orthomosaic(orthomosaic_id)
         return record
+
+    def delete_agricultural_cycle(self, cycle_id: str) -> dict[str, Any]:
+        for record in self.supabase.list_orthomosaics(500, cycle_id):
+            self.reset_active_orthomosaic(record)
+        return self.supabase.delete_agricultural_cycle(cycle_id)
 
     def update_orthomosaic_capture_date(
         self,
@@ -86,8 +92,11 @@ class OrthomosaicApplicationService:
         active_path = self.raster.active_path.resolve() if self.raster.active_path else None
         if not active_path:
             return
-        candidate_paths = {Path(str(record["file_path"])).resolve()}
-        original_filename = record.get("original_filename") or record.get("file_path")
+        file_path = record.get("file_path")
+        if not file_path:
+            return
+        candidate_paths = {Path(str(file_path)).resolve()}
+        original_filename = record.get("original_filename") or file_path
         suffix = Path(str(original_filename)).suffix or ".tif"
         candidate_paths.add((self.supabase.settings.cache_dir / f'{record["id"]}{suffix}').resolve())
         if active_path not in candidate_paths:
