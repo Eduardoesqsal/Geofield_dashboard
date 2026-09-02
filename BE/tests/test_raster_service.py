@@ -15,7 +15,7 @@ from PIL import Image
 from rasterio.enums import ColorInterp
 from rasterio.io import MemoryFile
 from rasterio.transform import from_origin
-from shapely.geometry import Polygon, box
+from shapely.geometry import Polygon, box, shape
 from shapely.ops import transform as project_geometry
 
 from geofield.config import Settings
@@ -213,6 +213,45 @@ class RasterServiceIndexTileTests(unittest.TestCase):
             np.array([*expected_color[:3], 0], dtype=np.uint8),
         )
 
+    def test_equalized_tiles_reuse_cached_cdf_for_same_roi_and_range(self) -> None:
+        calls = 0
+        original = self.service._equalization_response
+
+        def wrapped(name: str, crop_id: str | None):
+            nonlocal calls
+            calls += 1
+            return original(name, crop_id)
+
+        self.service._equalization_response = wrapped  # type: ignore[method-assign]
+
+        first = self._rgba(
+            self.service.crop_index_tile(
+                "NDVI",
+                self.crop_id,
+                0,
+                0,
+                0,
+                low=-0.05,
+                high=1.0,
+                equalized=True,
+            ),
+        )
+        second = self._rgba(
+            self.service.crop_index_tile(
+                "NDVI",
+                self.crop_id,
+                0,
+                0,
+                0,
+                low=-0.05,
+                high=1.0,
+                equalized=True,
+            ),
+        )
+
+        self.assertEqual(calls, 1)
+        np.testing.assert_array_equal(first, second)
+
     def test_crop_export_preserves_bands_crs_and_geometry_mask(self) -> None:
         crop = self.service.begin_crop_tiles(
             box(0, 0, 2, 2).difference(box(1, 1, 2, 2)),
@@ -360,6 +399,8 @@ class RasterServiceIndexTileTests(unittest.TestCase):
         self.assertEqual(prescription["stage"], "prescription")
         self.assertEqual(prescription["index_name"], "NDVI")
         self.assertIn("/{z}/{x}/{y}.png", prescription["tile_url"])
+        self.assertTrue(prescription["grid_url"].endswith("_grid.geojson"))
+        self.assertTrue(prescription["geojson_url"].endswith("_fill.geojson"))
         self.assertTrue(prescription["json_url"].endswith("/download.json"))
         self.assertEqual(prescription["zone_count"], 4)
         self.assertEqual(prescription["cell_size_m"], 3)
@@ -374,6 +415,20 @@ class RasterServiceIndexTileTests(unittest.TestCase):
             ["NDVI muy bajo", "NDVI bajo", "NDVI medio-alto", "NDVI alto"],
         )
         self.assertTrue(all(isinstance(zone["mean"], float) for zone in prescription["legend"]))
+        alignment = prescription["debug"]["alignment"]
+        self.assertEqual(alignment["roi_input_crs"], "EPSG:4326")
+        self.assertEqual(alignment["raster_crs"], "EPSG:32613")
+        self.assertEqual(alignment["grid_crs"], "EPSG:32613")
+        self.assertEqual(alignment["raster_width"], 9)
+        self.assertEqual(alignment["raster_height"], 9)
+        self.assertEqual(alignment["feature_count"], prescription["valid_cell_count"])
+        self.assertEqual(len(alignment["raster_transform"]), 9)
+        self.assertLess(alignment["roi_bounds_raster"][0], alignment["roi_bounds_raster"][2])
+        self.assertLess(alignment["roi_bounds_raster"][1], alignment["roi_bounds_raster"][3])
+        self.assertLessEqual(alignment["grid_bounds"][0], alignment["roi_bounds_raster"][0])
+        self.assertLessEqual(alignment["grid_bounds"][1], alignment["roi_bounds_raster"][1])
+        self.assertGreaterEqual(alignment["grid_bounds"][2], alignment["roi_bounds_raster"][2])
+        self.assertGreaterEqual(alignment["grid_bounds"][3], alignment["roi_bounds_raster"][3])
 
         image_name = Path(prescription["image_url"]).name
         image_path = self.service.settings.output_dir / "prescriptions" / image_name
@@ -390,10 +445,8 @@ class RasterServiceIndexTileTests(unittest.TestCase):
             tuple(color)
             for color in rendered[..., :3][rendered[..., 3] > 0]
         }
-        self.assertIn((255, 255, 255), rendered_colors)
-        fill_colors = rendered_colors - {(255, 255, 255)}
-        self.assertTrue(fill_colors)
-        self.assertTrue(fill_colors.issubset(expected_colors))
+        self.assertTrue(rendered_colors)
+        self.assertTrue(rendered_colors.issubset(expected_colors))
 
         artifact_path = image_path.with_suffix(".tif")
         self.assertTrue(artifact_path.is_file())
@@ -446,6 +499,26 @@ class RasterServiceIndexTileTests(unittest.TestCase):
         )
         self.assertLess(exported_json["originLat"], exported_json["originEndLat"])
         self.assertLess(exported_json["originLng"], exported_json["originEndLng"])
+
+        fill_geojson_path = (
+            self.service.settings.output_dir
+            / "prescriptions"
+            / Path(prescription["geojson_url"]).name
+        )
+        fill_geojson = json.loads(fill_geojson_path.read_text(encoding="utf-8"))
+        self.assertEqual(fill_geojson["type"], "FeatureCollection")
+        self.assertEqual(len(fill_geojson["features"]), prescription["valid_cell_count"])
+        roi_geometry = roi
+        for feature in fill_geojson["features"]:
+            self.assertIn("geometry", feature)
+            self.assertIn("properties", feature)
+            self.assertIn("id", feature)
+            self.assertIn(feature["properties"]["zone"], {1, 2, 3, 4})
+            self.assertIsInstance(feature["properties"]["value"], float)
+            self.assertIsInstance(feature["properties"]["color"], str)
+            clipped_geometry = shape(feature["geometry"])
+            self.assertFalse(clipped_geometry.is_empty)
+            self.assertTrue(clipped_geometry.buffer(1e-12).within(roi_geometry.buffer(1e-9)))
 
     def test_ndre_prescription_uses_same_json_export_flow(self) -> None:
         raster_path = self.root / "prescription_ndre.tif"
@@ -1168,6 +1241,58 @@ class RasterServiceRgbTileTests(unittest.TestCase):
         service.sensor = "micasense"
         first = service.tile("ndvi", 0, 0, 0)
         second = service.tile("ndvi", 0, 0, 0)
+
+        self.assertEqual(service.ndvi_tile_renders, 1)
+        self.assertEqual(first, second)
+
+    def test_equalized_crop_index_tile_is_cached_after_first_render(self) -> None:
+        raster_path = self.root / "ndvi-crop-cache.tif"
+        mercator_bounds = RasterService.tile_bounds_mercator(0, 0, 0)
+        bands = np.ones((6, 256, 256), dtype=np.float32)
+        bands[3] = 2.0
+        bands[5] = 8.0
+        with rasterio.open(
+            raster_path,
+            "w",
+            driver="GTiff",
+            width=256,
+            height=256,
+            count=6,
+            dtype="float32",
+            crs="EPSG:3857",
+            transform=rasterio.transform.from_bounds(*mercator_bounds, 256, 256),
+        ) as destination:
+            destination.write(bands)
+            for index, description in enumerate(
+                ("Blue", "Green", "Panchromatic", "Red", "Red edge", "NIR"),
+                1,
+            ):
+                destination.set_band_description(index, description)
+
+        service = TileCachingRasterService(self._settings(raster_path))
+        service.sensor = "micasense"
+        crop = service.begin_crop_tiles(box(*rasterio.warp.transform_bounds("EPSG:3857", "EPSG:4326", *mercator_bounds)))
+
+        first = service.crop_index_tile(
+            "NDVI",
+            crop["crop_id"],
+            0,
+            0,
+            0,
+            low=-0.05,
+            high=1.0,
+            equalized=True,
+        )
+        second = service.crop_index_tile(
+            "NDVI",
+            crop["crop_id"],
+            0,
+            0,
+            0,
+            low=-0.05,
+            high=1.0,
+            equalized=True,
+        )
 
         self.assertEqual(service.ndvi_tile_renders, 1)
         self.assertEqual(first, second)

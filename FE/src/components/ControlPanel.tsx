@@ -23,7 +23,11 @@ import {
 } from "../utils/tree";
 import type { IndexAnalysis, NdviAnalysis } from "../hooks/useDashboardMap";
 import {
+  buildHistogramEqualization,
+  equalizedPosition,
+  type ClassificationFillMode,
   INDEX_COLOR_RAMPS,
+  indexColorFromPosition,
   indexGradient,
   ndviGradient,
   ndviStatsFromValues,
@@ -41,11 +45,21 @@ interface ControlPanelProps {
   onDiameterRangeChange: (min: number, max: number) => void;
   ndvi: NdviAnalysis;
   onNdviRangeChange: (min: number, max: number) => void;
+  onNdviEqualizationChange: (enabled: boolean) => void;
+  onNdviFillModeChange: (mode: ClassificationFillMode) => void;
   indices: IndexAnalysis[];
   onIndexRangeChange: (
     name: IndexAnalysis["name"],
     min: number,
     max: number,
+  ) => void;
+  onIndexEqualizationChange: (
+    name: IndexAnalysis["name"],
+    enabled: boolean,
+  ) => void;
+  onIndexFillModeChange: (
+    name: IndexAnalysis["name"],
+    mode: ClassificationFillMode,
   ) => void;
   ndviVisible: boolean;
   onToggleNdvi: () => void;
@@ -66,6 +80,9 @@ interface EqualizationHistogramProps {
   id: string;
   label: string;
   indexName: ComparisonIndex;
+  values: number[];
+  domainMinimum: number;
+  domainMaximum: number;
   bins: number[];
   ramp: readonly string[];
   selection: { left: number; right: number };
@@ -76,6 +93,10 @@ interface EqualizationHistogramProps {
   selectedCount: number;
   totalCount: number;
   visible: boolean;
+  equalized: boolean;
+  fillMode: ClassificationFillMode;
+  onEqualizationChange: (enabled: boolean) => void;
+  onFillModeChange: (mode: ClassificationFillMode) => void;
   onToggleVisibility: () => void;
   onClose: () => void;
 }
@@ -138,6 +159,9 @@ function EqualizationHistogram({
   id,
   label,
   indexName,
+  values,
+  domainMinimum,
+  domainMaximum,
   bins,
   ramp,
   selection,
@@ -148,6 +172,10 @@ function EqualizationHistogram({
   selectedCount,
   totalCount,
   visible,
+  equalized,
+  fillMode,
+  onEqualizationChange,
+  onFillModeChange,
   onToggleVisibility,
   onClose,
 }: EqualizationHistogramProps) {
@@ -157,11 +185,61 @@ function EqualizationHistogram({
   const peak = Math.max(...bins, 1);
   const smoothedBins = smoothHistogramBins(bins);
   const areaPath = histogramAreaPath(smoothedBins, peak);
-  const histogramGradient = `linear-gradient(to right, ${indexGradient(
+  const histogramStops = useMemo(() => {
+    if (!equalized || bins.length === 0) {
+      return ramp.map((color, index) => ({
+        color,
+        offset:
+          (INDEX_COLOR_RAMPS[indexName].stops?.[index] ??
+            index / Math.max(ramp.length - 1, 1)) * 100,
+      }));
+    }
+
+    const equalization = buildHistogramEqualization(values, minimum, maximum);
+    if (!equalization) {
+      return ramp.map((color, index) => ({
+        color,
+        offset:
+          (INDEX_COLOR_RAMPS[indexName].stops?.[index] ??
+            index / Math.max(ramp.length - 1, 1)) * 100,
+      }));
+    }
+
+    return bins.map((_bin, index) => {
+      const ratio = index / Math.max(bins.length - 1, 1);
+      const value = domainMinimum + (domainMaximum - domainMinimum) * ratio;
+      const linearPosition = Math.max(
+        0,
+        Math.min(
+          1,
+          (value - minimum) / Math.max(maximum - minimum, Number.EPSILON),
+        ),
+      );
+      const palettePosition =
+        equalizedPosition(value, equalization) ?? linearPosition;
+      return {
+        color: indexColorFromPosition(indexName, palettePosition),
+        offset: ratio * 100,
+      };
+    });
+  }, [
+    bins,
+    domainMaximum,
+    domainMinimum,
+    equalized,
     indexName,
-    minimum,
     maximum,
-  )})`;
+    minimum,
+    ramp,
+    values,
+  ]);
+
+  const histogramGradient = useMemo(() => {
+    const segments = histogramStops.map(
+      ({ color, offset }) => `${color} ${offset.toFixed(3)}%`,
+    );
+    return `linear-gradient(to right, ${segments.join(", ")})`;
+  }, [histogramStops]);
 
   return (
     <div className="equalization-card">
@@ -171,6 +249,32 @@ function EqualizationHistogram({
           <b>{selectedCount.toLocaleString()}</b> /{" "}
           {totalCount.toLocaleString()} pixeles
         </span>
+        <div className="equalization-toggle-group" role="group" aria-label={`Modo de color ${label}`}>
+          <button
+            className={`equalization-toggle ${equalized ? "is-active" : ""}`}
+            type="button"
+            onClick={() => onEqualizationChange(!equalized)}
+            aria-pressed={equalized}
+          >
+            {equalized ? "Eq ON" : "Eq OFF"}
+          </button>
+          <button
+            className={`equalization-toggle ${fillMode === "transparent" ? "is-active" : ""}`}
+            type="button"
+            onClick={() => onFillModeChange("transparent")}
+            aria-pressed={fillMode === "transparent"}
+          >
+            Transparente
+          </button>
+          <button
+            className={`equalization-toggle ${fillMode === "solid" ? "is-active" : ""}`}
+            type="button"
+            onClick={() => onFillModeChange("solid")}
+            aria-pressed={fillMode === "solid"}
+          >
+            Solido
+          </button>
+        </div>
         <button
           className={`equalization-visibility ${visible ? "is-on" : "is-off"}`}
           type="button"
@@ -213,10 +317,10 @@ function EqualizationHistogram({
           >
             <defs>
               <linearGradient id={`${id}-histogram-fill`} x1="0%" y1="0%" x2="100%" y2="0%">
-                {ramp.map((color, index) => (
+                {histogramStops.map(({ color, offset }, index) => (
                   <stop
                     key={`${id}-stop-${color}-${index}`}
-                    offset={`${((INDEX_COLOR_RAMPS[indexName].stops?.[index] ?? (index / Math.max(ramp.length - 1, 1))) * 100)}%`}
+                    offset={`${offset}%`}
                     stopColor={color}
                   />
                 ))}
@@ -335,8 +439,12 @@ export function ControlPanel({
   onDiameterRangeChange,
   ndvi,
   onNdviRangeChange,
+  onNdviEqualizationChange,
+  onNdviFillModeChange,
   indices,
   onIndexRangeChange,
+  onIndexEqualizationChange,
+  onIndexFillModeChange,
   ndviVisible,
   onToggleNdvi,
   onToggleIndex,
@@ -476,10 +584,13 @@ export function ControlPanel({
         <EqualizationHistogram
           id="ndvi"
           label="NDVI"
-          indexName="NDVI"
-          bins={histogramBins(
-            activeNdviStats.values,
-            activeNdviStats.min,
+              indexName="NDVI"
+              values={activeNdviStats.values}
+              domainMinimum={activeNdviStats.min}
+              domainMaximum={activeNdviStats.max}
+              bins={histogramBins(
+                activeNdviStats.values,
+                activeNdviStats.min,
             activeNdviStats.max,
           )}
           ramp={INDEX_COLOR_RAMPS.NDVI.ramp}
@@ -494,6 +605,10 @@ export function ControlPanel({
           selectedCount={selectedNdviStats.count}
           totalCount={activeNdviStats.count}
           visible={ndviVisible}
+          equalized={ndvi.equalized}
+          fillMode={ndvi.fillMode}
+          onEqualizationChange={onNdviEqualizationChange}
+          onFillModeChange={onNdviFillModeChange}
           onToggleVisibility={onToggleNdvi}
           onClose={onHideNdvi}
         />
@@ -703,6 +818,9 @@ export function ControlPanel({
               id={`index-${analysis.name.toLowerCase()}`}
               label={analysis.name}
               indexName={analysis.name}
+              values={analysis.stats.values}
+              domainMinimum={analysis.stats.min}
+              domainMaximum={analysis.stats.max}
               bins={histogramBins(
                 analysis.stats.values,
                 analysis.stats.min,
@@ -723,6 +841,14 @@ export function ControlPanel({
               selectedCount={selectedStats.count}
               totalCount={analysis.stats.count}
               visible={analysis.visible}
+              equalized={analysis.equalized}
+              fillMode={analysis.fillMode}
+              onEqualizationChange={(enabled) =>
+                onIndexEqualizationChange(analysis.name, enabled)
+              }
+              onFillModeChange={(mode) =>
+                onIndexFillModeChange(analysis.name, mode)
+              }
               onToggleVisibility={() => onToggleIndex(analysis.name)}
               onClose={() => onHideIndex(analysis.name)}
             />

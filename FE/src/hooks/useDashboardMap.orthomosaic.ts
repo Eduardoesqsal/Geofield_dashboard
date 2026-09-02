@@ -117,6 +117,7 @@ export function mountStoredOrthomosaic({
       maxZoom: 24,
       keepBuffer: 3,
       updateWhenIdle: true,
+      updateWhenZooming: false,
       opacity: 1,
     },
   ).addTo(map);

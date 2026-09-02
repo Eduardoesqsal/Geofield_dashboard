@@ -23,14 +23,14 @@ const VEGETATION_COLOR_RAMP = [
 ] as const;
 const VEGETATION_COLOR_STOPS = [
   0.0,
-  0.12,
-  0.24,
-  0.38,
-  0.5,
-  0.6,
-  0.68,
-  0.76,
-  0.88,
+  0.08,
+  0.17,
+  0.3,
+  0.48,
+  0.66,
+  0.78,
+  0.87,
+  0.94,
   1.0,
 ] as const;
 const PRESCRIPTION_HISTOGRAM_STOPS = [
@@ -109,6 +109,14 @@ export const INDEX_COLOR_RAMPS: Record<
 } as const;
 
 export type IndexColorName = keyof typeof INDEX_COLOR_RAMPS;
+export type ClassificationFillMode = "transparent" | "solid";
+
+export interface HistogramEqualization {
+  minimum: number;
+  maximum: number;
+  binCount: number;
+  cdf: number[];
+}
 
 /** Estadisticos descriptivos junto con los valores usados para recalcular filtros. */
 export interface NdviStats {
@@ -230,6 +238,15 @@ function interpolateRampColor(
     .join(", ")})`;
 }
 
+export function indexColorFromPosition(
+  name: IndexColorName,
+  position: number,
+): string {
+  const ramp = INDEX_COLOR_RAMPS[name].ramp;
+  const stops = rampStops(name);
+  return interpolateRampColor(ramp, stops, Math.max(0, Math.min(1, position)));
+}
+
 /** Interpola el color correspondiente a un valor dentro del rango visible. */
 export function indexColor(
   name: IndexColorName,
@@ -244,9 +261,7 @@ export function indexColor(
       (value - minimum) / Math.max(maximum - minimum, Number.EPSILON),
     ),
   );
-  const ramp = INDEX_COLOR_RAMPS[name].ramp;
-  const stops = rampStops(name);
-  return interpolateRampColor(ramp, stops, position);
+  return indexColorFromPosition(name, position);
 }
 
 /** Construye los segmentos de un gradiente CSS consistente con la capa del mapa. */
@@ -295,6 +310,67 @@ export function prescriptionHistogramGradient(name: IndexColorName): string {
   return ramp
     .map((color, index) => `${color} ${stops[index] * 100}%`)
     .join(", ");
+}
+
+export function buildHistogramEqualization(
+  values: number[],
+  minimum: number,
+  maximum: number,
+  binCount = 256,
+): HistogramEqualization | null {
+  if (!values.length || !Number.isFinite(minimum) || !Number.isFinite(maximum))
+    return null;
+  const safeMinimum = Math.min(minimum, maximum);
+  const safeMaximum = Math.max(minimum, maximum);
+  const range = safeMaximum - safeMinimum;
+  if (range <= Number.EPSILON) return null;
+
+  const histogram = Array.from({ length: binCount }, () => 0);
+  let sampleCount = 0;
+  values.forEach((value) => {
+    if (!Number.isFinite(value) || value < safeMinimum || value > safeMaximum)
+      return;
+    const position = Math.max(
+      0,
+      Math.min(
+        binCount - 1,
+        Math.floor(((value - safeMinimum) / range) * (binCount - 1)),
+      ),
+    );
+    histogram[position] += 1;
+    sampleCount += 1;
+  });
+  if (!sampleCount) return null;
+
+  const cumulative: number[] = [];
+  histogram.forEach((count, index) => {
+    const previous = index > 0 ? cumulative[index - 1] : 0;
+    cumulative.push(previous + count);
+  });
+  const firstNonZero = cumulative.find((value) => value > 0) ?? 0;
+  const denominator = Math.max(sampleCount - firstNonZero, 1);
+  const cdf = cumulative.map((value) =>
+    Math.max(0, Math.min(1, (value - firstNonZero) / denominator)),
+  );
+  return { minimum: safeMinimum, maximum: safeMaximum, binCount, cdf };
+}
+
+export function equalizedPosition(
+  value: number,
+  equalization: HistogramEqualization | null,
+): number | null {
+  if (!equalization || !Number.isFinite(value)) return null;
+  const { minimum, maximum, binCount, cdf } = equalization;
+  if (value < minimum || value > maximum) return null;
+  const range = Math.max(maximum - minimum, Number.EPSILON);
+  const rawIndex = ((value - minimum) / range) * (binCount - 1);
+  const lowerIndex = Math.max(0, Math.min(binCount - 1, Math.floor(rawIndex)));
+  const upperIndex = Math.max(0, Math.min(binCount - 1, Math.ceil(rawIndex)));
+  if (lowerIndex === upperIndex) return cdf[lowerIndex] ?? 0;
+  const lowerValue = cdf[lowerIndex] ?? 0;
+  const upperValue = cdf[upperIndex] ?? lowerValue;
+  const factor = rawIndex - lowerIndex;
+  return lowerValue + (upperValue - lowerValue) * factor;
 }
 export const ndviColor = (value: number, minimum: number, maximum: number) =>
   indexColor("NDVI", value, minimum, maximum);

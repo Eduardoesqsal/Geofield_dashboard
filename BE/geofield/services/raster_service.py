@@ -30,7 +30,7 @@ from rasterio.transform import array_bounds
 from rasterio.warp import calculate_default_transform, reproject, transform_bounds
 from rasterio.windows import Window, from_bounds, transform as window_transform
 from shapely.affinity import rotate as rotate_geometry
-from shapely.geometry import Polygon, mapping
+from shapely.geometry import MultiLineString, Polygon, mapping
 from shapely.ops import transform as project_geometry
 
 from geofield.config import Settings
@@ -72,6 +72,7 @@ class RasterService:
         dict[tuple[str, int, int], dict[str, Any]]
     ] = {}
     _index_lut_cache: ClassVar[dict[str, np.ndarray]] = {}
+    _equalization_cache_limit = 32
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -82,6 +83,7 @@ class RasterService:
         self.active_path: Path | None = None
         self.sensor: str | None = None
         self.crop_geometries: dict[str, Any] = {}
+        self.equalization_cache: dict[tuple[Any, ...], np.ndarray | None] = {}
 
     def _render_classification_artifact(
         self,
@@ -111,8 +113,6 @@ class RasterService:
             invert=True,
         )
         rendered[~exact_mask] = 0
-        self._apply_crisp_grid_lines(rendered, render_scale, (255, 255, 255))
-
         artifact_dir = self.settings.output_dir / "prescriptions"
         artifact_dir.mkdir(parents=True, exist_ok=True)
         Image.fromarray(rendered, mode="RGBA").save(artifact_dir / f"{artifact_id}.png")
@@ -130,6 +130,169 @@ class RasterService:
         ) as destination:
             destination.write(np.moveaxis(rendered, -1, 0))
         return f"/tiles/prescription/{artifact_id}/{{z}}/{{x}}/{{y}}.png"
+
+    def _save_classification_grid_geojson(
+        self,
+        artifact_id: str,
+        valid_mask: np.ndarray,
+        transform: Affine,
+        crs: Any,
+    ) -> str:
+        def segment_key(
+            start: tuple[float, float],
+            end: tuple[float, float],
+        ) -> tuple[tuple[float, float], tuple[float, float]]:
+            normalized_start = (round(start[0], 9), round(start[1], 9))
+            normalized_end = (round(end[0], 9), round(end[1], 9))
+            return (
+                (normalized_start, normalized_end)
+                if normalized_start <= normalized_end
+                else (normalized_end, normalized_start)
+            )
+
+        height, width = valid_mask.shape
+        if not np.any(valid_mask):
+            geometry = {"type": "MultiLineString", "coordinates": []}
+        else:
+            if crs:
+                crs_value = pyproj.CRS.from_user_input(crs)
+                if crs_value.to_string() != "EPSG:4326":
+                    to_wgs84 = pyproj.Transformer.from_crs(
+                        crs_value,
+                        "EPSG:4326",
+                        always_xy=True,
+                    ).transform
+                else:
+                    to_wgs84 = None
+            else:
+                to_wgs84 = None
+
+            segments: list[list[tuple[float, float]]] = []
+            seen_segments: set[
+                tuple[tuple[float, float], tuple[float, float]]
+            ] = set()
+            for row in range(height):
+                for column in range(width):
+                    if not valid_mask[row, column]:
+                        continue
+                    top_left = transform * (column, row)
+                    top_right = transform * (column + 1, row)
+                    bottom_left = transform * (column, row + 1)
+                    bottom_right = transform * (column + 1, row + 1)
+                    for start, end in (
+                        (top_left, top_right),
+                        (top_left, bottom_left),
+                        (bottom_left, bottom_right),
+                        (top_right, bottom_right),
+                    ):
+                        key = segment_key(start, end)
+                        if key in seen_segments:
+                            continue
+                        seen_segments.add(key)
+                        segments.append([start, end])
+            multiline = MultiLineString(segments)
+            if to_wgs84 is not None:
+                multiline = project_geometry(to_wgs84, multiline)
+            geometry = mapping(multiline)
+
+        artifact_dir = self.settings.output_dir / "prescriptions"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        output_path = artifact_dir / f"{artifact_id}_grid.geojson"
+        output_path.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "properties": {"artifact_id": artifact_id},
+                            "geometry": geometry,
+                        },
+                    ],
+                },
+            ),
+            encoding="utf-8",
+        )
+        return f"/static/prescriptions/{artifact_id}_grid.geojson"
+
+    def _save_classification_fill_geojson(
+        self,
+        artifact_id: str,
+        zones: np.ndarray,
+        index_values: np.ndarray,
+        transform: Affine,
+        crs: Any,
+        clip_geometry: Any,
+        colors: list[np.ndarray] | np.ndarray,
+        index_name: str,
+    ) -> tuple[str, int]:
+        crs_value = pyproj.CRS.from_user_input(crs)
+        to_wgs84 = (
+            pyproj.Transformer.from_crs(
+                crs_value,
+                "EPSG:4326",
+                always_xy=True,
+            ).transform
+            if crs_value.to_string() != "EPSG:4326"
+            else None
+        )
+        features: list[dict[str, Any]] = []
+        for row, column in zip(*np.nonzero(zones > 0), strict=True):
+            class_id = int(zones[row, column])
+            if class_id <= 0:
+                continue
+            cell = Polygon(
+                [
+                    transform * (column, row),
+                    transform * (column + 1, row),
+                    transform * (column + 1, row + 1),
+                    transform * (column, row + 1),
+                ]
+            )
+            clipped = cell.intersection(clip_geometry)
+            if clipped.is_empty:
+                continue
+            if not clipped.is_valid:
+                clipped = clipped.buffer(0)
+            if clipped.is_empty:
+                continue
+            geometry = project_geometry(to_wgs84, clipped) if to_wgs84 is not None else clipped
+            if geometry.is_empty:
+                continue
+            color = colors[class_id - 1]
+            value = float(index_values[row, column]) if np.isfinite(index_values[row, column]) else None
+            features.append(
+                {
+                    "type": "Feature",
+                    "id": f"{artifact_id}:{row}:{column}",
+                    "properties": {
+                        "artifact_id": artifact_id,
+                        "zone": class_id,
+                        "class_id": class_id,
+                        "index_name": index_name,
+                        "value": value,
+                        "mean": value,
+                        "color": "#" + "".join(f"{channel:02x}" for channel in color),
+                        "row": int(row),
+                        "column": int(column),
+                    },
+                    "geometry": mapping(geometry),
+                }
+            )
+
+        artifact_dir = self.settings.output_dir / "prescriptions"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        output_path = artifact_dir / f"{artifact_id}_fill.geojson"
+        output_path.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": features,
+                },
+            ),
+            encoding="utf-8",
+        )
+        return f"/static/prescriptions/{artifact_id}_fill.geojson", len(features)
 
     @staticmethod
     def _apply_crisp_grid_lines(
@@ -647,6 +810,108 @@ class RasterService:
             return 4
         return 5
 
+    @staticmethod
+    def _component_span(component: list[tuple[int, int]]) -> tuple[int, int]:
+        rows = [row for row, _column in component]
+        columns = [column for _row, column in component]
+        return (
+            max(rows) - min(rows) + 1,
+            max(columns) - min(columns) + 1,
+        )
+
+    @classmethod
+    def _preserve_component_shape(
+        cls,
+        component: list[tuple[int, int]],
+        detail_level: float,
+    ) -> bool:
+        if not component:
+            return False
+        row_span, column_span = cls._component_span(component)
+        major_span = max(row_span, column_span)
+        minor_span = min(row_span, column_span)
+        if major_span <= 2:
+            return False
+        if len(component) < max(4, cls._minimum_component_cells(detail_level)):
+            return False
+        max_minor_span = 1 if detail_level <= 0.35 else 2
+        minimum_major_span = 4 if detail_level <= 0.35 else 5
+        return minor_span <= max_minor_span and major_span >= minimum_major_span
+
+    @classmethod
+    def _zone_debug_snapshot(
+        cls,
+        zones: np.ndarray,
+        class_valid: np.ndarray,
+        index_values: np.ndarray,
+        cell_areas_m2: np.ndarray,
+        zone_count: int,
+    ) -> dict[str, Any]:
+        offsets = cls._neighbor_offsets()
+        visited = np.zeros(zones.shape, dtype=bool)
+        component_count = 0
+        isolated_cells = 0
+        valid_area_m2 = float(np.sum(cell_areas_m2[class_valid]))
+        zones_summary: list[dict[str, Any]] = []
+
+        for row, column in zip(*np.nonzero(class_valid), strict=True):
+            class_id = int(zones[row, column])
+            if class_id <= 0 or visited[row, column]:
+                visited[row, column] = True
+                continue
+            component_count += 1
+            queue = deque([(row, column)])
+            visited[row, column] = True
+            component_size = 0
+            while queue:
+                current_row, current_column = queue.popleft()
+                component_size += 1
+                for row_delta, column_delta in offsets:
+                    next_row = current_row + row_delta
+                    next_column = current_column + column_delta
+                    if not (
+                        0 <= next_row < zones.shape[0]
+                        and 0 <= next_column < zones.shape[1]
+                        and class_valid[next_row, next_column]
+                    ):
+                        continue
+                    if visited[next_row, next_column]:
+                        continue
+                    if int(zones[next_row, next_column]) != class_id:
+                        continue
+                    visited[next_row, next_column] = True
+                    queue.append((next_row, next_column))
+            if component_size == 1:
+                isolated_cells += 1
+
+        for zone_index in range(1, zone_count + 1):
+            zone_mask = (zones == zone_index) & class_valid
+            zone_values = index_values[zone_mask & np.isfinite(index_values)]
+            zone_weights = cell_areas_m2[zone_mask & np.isfinite(index_values)]
+            mean_value = cls._weighted_mean(
+                zone_values.astype(np.float64),
+                zone_weights.astype(np.float64),
+            )
+            zone_area_m2 = float(np.sum(cell_areas_m2[zone_mask]))
+            coverage_percent = (
+                zone_area_m2 / valid_area_m2 * 100 if valid_area_m2 > 0 else 0.0
+            )
+            zones_summary.append(
+                {
+                    "class_id": zone_index,
+                    "cell_count": int(np.count_nonzero(zone_mask)),
+                    "area_hectares": zone_area_m2 / 10_000,
+                    "coverage_percent": float(coverage_percent),
+                    "mean": float(mean_value) if mean_value is not None else None,
+                },
+            )
+
+        return {
+            "connected_components": int(component_count),
+            "isolated_cells": int(isolated_cells),
+            "zones": zones_summary,
+        }
+
     def _regularize_zones(
         self,
         initial_zones: np.ndarray,
@@ -654,12 +919,14 @@ class RasterService:
         index_values: np.ndarray,
         breaks: np.ndarray,
         detail_level: float,
+        cell_areas_m2: np.ndarray | None = None,
     ) -> np.ndarray:
         if detail_level >= 0.99:
             return initial_zones.copy()
 
         strength = self._detail_strength(detail_level)
         threshold = self._interpolate_detail(detail_level, 0.88, 0.44)
+        local_threshold = self._interpolate_detail(detail_level, 0.75, 0.34)
         tolerance_alpha = self._interpolate_detail(detail_level, 0.12, 0.95)
         gain_threshold = self._interpolate_detail(detail_level, 0.22, 0.06)
         max_jump = 1 if detail_level >= 0.3 else 2
@@ -693,6 +960,20 @@ class RasterService:
                 current_class = int(result[row, column])
                 if current_class <= 0:
                     continue
+                local_counts = np.zeros(zone_count + 1, dtype=np.float32)
+                local_neighbors = 0.0
+                for row_delta, column_delta in offsets:
+                    next_row = row + row_delta
+                    next_column = column + column_delta
+                    if (
+                        0 <= next_row < result.shape[0]
+                        and 0 <= next_column < result.shape[1]
+                        and class_valid[next_row, next_column]
+                    ):
+                        neighbor_class = int(result[next_row, next_column])
+                        if neighbor_class > 0:
+                            local_neighbors += 1.0
+                            local_counts[neighbor_class] += 1.0
                 counts = np.zeros(zone_count + 1, dtype=np.float32)
                 valid_neighbors = 0.0
                 for row_delta, column_delta in window_offsets:
@@ -716,28 +997,49 @@ class RasterService:
                 if majority_class == current_class or majority_count <= 0:
                     continue
                 majority_ratio = majority_count / valid_neighbors
-                if majority_ratio < threshold:
+                local_majority_class = int(np.argmax(local_counts[1:]) + 1)
+                local_majority_ratio = (
+                    float(local_counts[local_majority_class]) / local_neighbors
+                    if local_neighbors > 0
+                    else 0.0
+                )
+                local_current_ratio = (
+                    float(local_counts[current_class]) / local_neighbors
+                    if local_neighbors > 0
+                    else 0.0
+                )
+                candidate_class = majority_class
+                candidate_ratio = majority_ratio
+                if (
+                    local_neighbors >= 3
+                    and local_majority_class != current_class
+                    and local_majority_ratio >= local_threshold
+                    and local_majority_ratio - local_current_ratio >= gain_threshold
+                ):
+                    candidate_class = local_majority_class
+                    candidate_ratio = local_majority_ratio
+                elif majority_ratio < threshold:
                     continue
-                class_jump = abs(current_class - majority_class)
-                if class_jump > max_jump and majority_ratio < min(1.0, threshold + 0.10):
+                class_jump = abs(current_class - candidate_class)
+                if class_jump > max_jump and candidate_ratio < min(1.0, threshold + 0.10):
                     continue
                 current_ratio = float(counts[current_class]) / valid_neighbors
-                if majority_ratio - current_ratio < gain_threshold:
+                if candidate_class == majority_class and majority_ratio - current_ratio < gain_threshold:
                     continue
                 class_width = max(
-                    float(breaks[majority_class] - breaks[majority_class - 1]),
+                    float(breaks[candidate_class] - breaks[candidate_class - 1]),
                     1e-6,
                 )
                 tolerance = tolerance_alpha * class_width
                 current_mean = float(class_centers[current_class])
-                candidate_mean = float(class_centers[majority_class])
+                candidate_mean = float(class_centers[candidate_class])
                 current_error = abs(float(index_values[row, column]) - current_mean)
                 candidate_error = abs(
                     float(index_values[row, column]) - candidate_mean,
                 )
                 if candidate_error - current_error > tolerance:
                     continue
-                changes.append((row, column, majority_class))
+                changes.append((row, column, candidate_class))
 
             if not changes:
                 break
@@ -750,6 +1052,7 @@ class RasterService:
             index_values,
             breaks,
             detail_level,
+            cell_areas_m2,
         )
 
     def _remove_small_components(
@@ -759,6 +1062,7 @@ class RasterService:
         index_values: np.ndarray,
         breaks: np.ndarray,
         detail_level: float,
+        cell_areas_m2: np.ndarray | None = None,
     ) -> np.ndarray:
         min_component_cells = self._minimum_component_cells(detail_level)
         if min_component_cells <= 1:
@@ -767,6 +1071,7 @@ class RasterService:
         result = zones.copy()
         visited = np.zeros(result.shape, dtype=bool)
         offsets = self._neighbor_offsets()
+        minimum_contact_ratio = self._interpolate_detail(detail_level, 0.92, 0.45)
 
         for start_row, start_column in zip(*np.nonzero(class_valid), strict=True):
             if visited[start_row, start_column]:
@@ -777,6 +1082,7 @@ class RasterService:
                 continue
             component: list[tuple[int, int]] = []
             perimeter_counts: dict[int, int] = {}
+            neighbor_values: dict[int, list[float]] = {}
             queue = deque([(start_row, start_column)])
             visited[start_row, start_column] = True
             while queue:
@@ -798,10 +1104,20 @@ class RasterService:
                         queue.append((next_row, next_column))
                     elif next_class > 0 and next_class != class_id:
                         perimeter_counts[next_class] = perimeter_counts.get(next_class, 0) + 1
+                        neighbor_values.setdefault(next_class, []).append(
+                            float(index_values[next_row, next_column]),
+                        )
             if len(component) >= min_component_cells or not perimeter_counts:
                 continue
+            if self._preserve_component_shape(component, detail_level):
+                continue
+            perimeter_total = sum(perimeter_counts.values())
             dominant_perimeter = max(perimeter_counts.values())
+            if perimeter_total <= 0:
+                continue
             if dominant_perimeter <= len(component):
+                continue
+            if dominant_perimeter / perimeter_total < minimum_contact_ratio:
                 continue
             component_mean = float(
                 np.mean([index_values[row, column] for row, column in component]),
@@ -810,6 +1126,10 @@ class RasterService:
                 perimeter_counts,
                 key=lambda candidate: (
                     -perimeter_counts[candidate],
+                    abs(
+                        component_mean
+                        - float(np.mean(neighbor_values.get(candidate, [component_mean]))),
+                    ),
                     abs(
                         component_mean
                         - float((breaks[candidate - 1] + breaks[candidate]) / 2),
@@ -1111,6 +1431,21 @@ class RasterService:
             index_values,
             breaks,
             detail_level,
+            cell_areas_m2,
+        )
+        debug_before = self._zone_debug_snapshot(
+            initial_zones,
+            class_valid,
+            index_values,
+            cell_areas_m2,
+            zone_count,
+        )
+        debug_after = self._zone_debug_snapshot(
+            final_zones,
+            class_valid,
+            index_values,
+            cell_areas_m2,
+            zone_count,
         )
         colors = self._zone_display_palette(index_name, zone_count)
         grid_footprint = Polygon(
@@ -1176,6 +1511,8 @@ class RasterService:
                     "deviation_percent": float(deviation_percent),
                 }
             )
+        first_cell = destination_transform * (0, 0)
+        last_cell = destination_transform * (width, height)
         return {
             "index_name": index_name,
             "zone_count": zone_count,
@@ -1200,6 +1537,31 @@ class RasterService:
                 display_minimum=active_min,
                 display_maximum=active_max,
             ),
+            "debug": {
+                "alignment": {
+                    "roi_input_crs": "EPSG:4326",
+                    "raster_crs": source_crs.to_string(),
+                    "grid_crs": metric_crs.to_string(),
+                    "raster_transform": tuple(src.transform) if "src" in locals() else None,
+                    "raster_width": int(src.width) if "src" in locals() else None,
+                    "raster_height": int(src.height) if "src" in locals() else None,
+                    "raster_bounds": [
+                        float(src.bounds.left),
+                        float(src.bounds.bottom),
+                        float(src.bounds.right),
+                        float(src.bounds.top),
+                    ]
+                    if "src" in locals()
+                    else None,
+                    "roi_bounds_wgs84": [float(value) for value in geom.bounds],
+                    "roi_bounds_raster": [float(value) for value in source_geometry.bounds],
+                    "grid_bounds": [float(left), float(bottom), float(right), float(top)],
+                    "grid_first_cell_origin": [float(first_cell[0]), float(first_cell[1])],
+                    "grid_last_cell_corner": [float(last_cell[0]), float(last_cell[1])],
+                },
+                "before": debug_before,
+                "after": debug_after,
+            },
             "thresholds": [float(value) for value in breaks],
             "colors": colors,
             "transform": destination_transform,
@@ -1247,6 +1609,31 @@ class RasterService:
             data["crs"],
             data["geometry"],
         )
+        grid_url = self._save_classification_grid_geojson(
+            zoning_id,
+            data["zones"] > 0,
+            data["transform"],
+            data["crs"],
+        )
+        geojson_url, feature_count = self._save_classification_fill_geojson(
+            zoning_id,
+            data["zones"],
+            data["index_values"],
+            data["transform"],
+            data["crs"],
+            data["geometry"],
+            data["colors"],
+            data["index_name"],
+        )
+        data["debug"]["alignment"]["feature_count"] = int(feature_count)
+        logger.warning(
+            "[zoning-alignment] raster_crs=%s grid_crs=%s roi_bounds_raster=%s grid_bounds=%s features=%s",
+            data["debug"]["alignment"]["raster_crs"],
+            data["debug"]["alignment"]["grid_crs"],
+            data["debug"]["alignment"]["roi_bounds_raster"],
+            data["debug"]["alignment"]["grid_bounds"],
+            feature_count,
+        )
         return {
             "status": "ok",
             "stage": "zoning",
@@ -1255,6 +1642,8 @@ class RasterService:
             "zoning_id": zoning_id,
             "image_url": f"/static/prescriptions/{zoning_id}.png",
             "tile_url": tile_url,
+            "grid_url": grid_url,
+            "geojson_url": geojson_url,
             "bounds": data["bounds"],
             "zone_count": data["zone_count"],
             "cell_size_m": data["cell_size_m"],
@@ -1268,6 +1657,7 @@ class RasterService:
             "valid_cell_count": data["valid_cell_count"],
             "area_hectares": data["area_hectares"],
             "legend": data["legend"],
+            "debug": data["debug"],
         }
 
     def prescription_map_with_doses(
@@ -1311,6 +1701,31 @@ class RasterService:
             data["crs"],
             data["geometry"],
         )
+        grid_url = self._save_classification_grid_geojson(
+            prescription_id,
+            data["zones"] > 0,
+            data["transform"],
+            data["crs"],
+        )
+        geojson_url, feature_count = self._save_classification_fill_geojson(
+            prescription_id,
+            data["zones"],
+            data["index_values"],
+            data["transform"],
+            data["crs"],
+            data["geometry"],
+            data["colors"],
+            data["index_name"],
+        )
+        data["debug"]["alignment"]["feature_count"] = int(feature_count)
+        logger.warning(
+            "[prescription-alignment] raster_crs=%s grid_crs=%s roi_bounds_raster=%s grid_bounds=%s features=%s",
+            data["debug"]["alignment"]["raster_crs"],
+            data["debug"]["alignment"]["grid_crs"],
+            data["debug"]["alignment"]["roi_bounds_raster"],
+            data["debug"]["alignment"]["grid_bounds"],
+            feature_count,
+        )
         legend = [dict(zone) for zone in data["legend"]]
         if doses is not None:
             if len(doses) != len(legend):
@@ -1339,6 +1754,8 @@ class RasterService:
             "prescription_id": prescription_id,
             "image_url": f"/static/prescriptions/{prescription_id}.png",
             "tile_url": tile_url,
+            "grid_url": grid_url,
+            "geojson_url": geojson_url,
             "json_url": json_url,
             "bounds": data["bounds"],
             "zone_count": zone_count,
@@ -1353,6 +1770,7 @@ class RasterService:
             "valid_cell_count": data["valid_cell_count"],
             "area_hectares": data["area_hectares"],
             "legend": legend,
+            "debug": data["debug"],
         }
 
     def _save_prescription_geojson(
@@ -1561,8 +1979,6 @@ class RasterService:
             render_scale,
             axis=1,
         )
-        self._apply_crisp_grid_lines(rendered, render_scale, (255, 255, 255))
-
         prescription_id = uuid4().hex
         prescription_dir = self.settings.output_dir / "prescriptions"
         prescription_dir.mkdir(parents=True, exist_ok=True)
@@ -1918,23 +2334,146 @@ class RasterService:
         valid: np.ndarray,
         low: float | None = None,
         high: float | None = None,
+        *,
+        equalized: bool = False,
+        fill_mode: str = "transparent",
+        equalization_cdf: np.ndarray | None = None,
     ) -> np.ndarray:
-        minimum, maximum = cls.INDEX_DOMAINS[name]
-        safe_values = np.where(np.isfinite(values), values, minimum)
-        position = np.clip(
-            ((safe_values - minimum) / (maximum - minimum) * 255).round().astype(np.int16),
+        domain_minimum, domain_maximum = cls.INDEX_DOMAINS[name]
+        safe_values = np.where(np.isfinite(values), values, domain_minimum)
+        visible = valid & np.isfinite(values)
+        range_low = domain_minimum if low is None else low
+        range_high = domain_maximum if high is None else high
+        range_low, range_high = sorted((range_low, range_high))
+        in_range = (values >= range_low) & (values <= range_high)
+        if fill_mode == "transparent":
+            visible &= in_range
+        display_position = np.clip(
+            (
+                (safe_values - range_low)
+                / max(range_high - range_low, np.finfo(np.float32).eps)
+                * 255
+            ).round().astype(np.int16),
             0,
             255,
         )
-        visible = valid & np.isfinite(values)
-        if low is not None or high is not None:
-            range_low = -np.inf if low is None else low
-            range_high = np.inf if high is None else high
-            range_low, range_high = sorted((range_low, range_high))
-            visible &= (values >= range_low) & (values <= range_high)
+        domain_position = np.clip(
+            (
+                (safe_values - domain_minimum)
+                / max(domain_maximum - domain_minimum, np.finfo(np.float32).eps)
+                * 255
+            ).round().astype(np.int16),
+            0,
+            255,
+        )
+        if equalized and equalization_cdf is not None and equalization_cdf.size:
+            raw_index = np.clip(
+                (
+                    (safe_values - range_low)
+                    / max(range_high - range_low, np.finfo(np.float32).eps)
+                    * (equalization_cdf.size - 1)
+                ),
+                0.0,
+                float(equalization_cdf.size - 1),
+            )
+            lower_index = np.floor(raw_index).astype(np.int16)
+            upper_index = np.ceil(raw_index).astype(np.int16)
+            factor = raw_index - lower_index
+            lower_value = equalization_cdf[lower_index]
+            upper_value = equalization_cdf[upper_index]
+            equalized_position = np.clip(
+                np.round((lower_value + (upper_value - lower_value) * factor) * 255),
+                0,
+                255,
+            ).astype(np.int16)
+            position = np.where(in_range, equalized_position, display_position)
+        else:
+            position = domain_position
         rgba = cls._index_color_lut(name)[position].copy()
         rgba[..., 3] = np.where(visible, 255, 0).astype(np.uint8)
         return rgba
+
+    @staticmethod
+    def _response_index_values(name: str, response: dict[str, Any]) -> np.ndarray:
+        matrix_key = "ndvi_matrix" if name == "NDVI" else "matrix"
+        mask_key = "ndvi_mask" if name == "NDVI" else "mask"
+        matrix = np.asarray(response.get(matrix_key), dtype=np.float32)
+        mask = np.asarray(response.get(mask_key), dtype=bool)
+        if matrix.size == 0 or mask.size == 0:
+            return np.asarray([], dtype=np.float32)
+        values = ((matrix / 255.0) * 2.0 - 1.0) if name == "NDVI" else matrix
+        return values[np.isfinite(values) & mask]
+
+    @staticmethod
+    def _build_equalization_cdf(
+        values: np.ndarray,
+        minimum: float,
+        maximum: float,
+        *,
+        bin_count: int = 256,
+    ) -> np.ndarray | None:
+        if values.size == 0 or not np.isfinite(minimum) or not np.isfinite(maximum):
+            return None
+        safe_minimum = min(minimum, maximum)
+        safe_maximum = max(minimum, maximum)
+        value_range = safe_maximum - safe_minimum
+        if value_range <= np.finfo(np.float32).eps:
+            return None
+        histogram = np.zeros(bin_count, dtype=np.float32)
+        sample_values = values[
+            np.isfinite(values) & (values >= safe_minimum) & (values <= safe_maximum)
+        ]
+        if sample_values.size == 0:
+            return None
+        positions = np.clip(
+            np.floor(((sample_values - safe_minimum) / value_range) * (bin_count - 1)).astype(int),
+            0,
+            bin_count - 1,
+        )
+        np.add.at(histogram, positions, 1.0)
+        cumulative = np.cumsum(histogram)
+        first_non_zero = cumulative[np.flatnonzero(cumulative)[0]]
+        denominator = max(float(sample_values.size) - float(first_non_zero), 1.0)
+        cdf = np.clip((cumulative - first_non_zero) / denominator, 0.0, 1.0)
+        return cdf.astype(np.float32)
+
+    def _equalization_cache_key(
+        self,
+        name: str,
+        crop_id: str | None,
+        low: float | None,
+        high: float | None,
+    ) -> tuple[Any, ...]:
+        active_path = str(self._path())
+        return (
+            active_path,
+            self.sensor,
+            name,
+            crop_id,
+            None if low is None else round(float(low), 6),
+            None if high is None else round(float(high), 6),
+        )
+
+    def _cached_equalization_cdf(
+        self,
+        name: str,
+        crop_id: str | None,
+        low: float | None,
+        high: float | None,
+    ) -> np.ndarray | None:
+        key = self._equalization_cache_key(name, crop_id, low, high)
+        if key in self.equalization_cache:
+            return self.equalization_cache[key]
+        cdf = self._build_equalization_cdf(
+            self._response_index_values(name, self._equalization_response(name, crop_id)),
+            self.INDEX_DOMAINS[name][0] if low is None else low,
+            self.INDEX_DOMAINS[name][1] if high is None else high,
+        )
+        self.equalization_cache[key] = cdf
+        if len(self.equalization_cache) > self._equalization_cache_limit:
+            oldest_key = next(iter(self.equalization_cache))
+            self.equalization_cache.pop(oldest_key, None)
+        return cdf
 
     def analyze_uploaded(self, content: bytes, kind: str, filename: str = "upload.tif", sensor: str | None = None) -> dict[str, Any]:
         """Analyze one uploaded raster using the same RGB/NDVI preparation as the configured raster."""
@@ -1947,6 +2486,7 @@ class RasterService:
         self.sensor = sensor
         self.rgb_stretch = None
         self.overlay = None
+        self.equalization_cache.clear()
         try:
             with rasterio.open(uploaded_path) as src:
                 if src.count < 3:
@@ -2610,7 +3150,112 @@ class RasterService:
             Image.fromarray(rgba, mode="RGBA").save(output, format="PNG")
             return output.getvalue()
 
-    def crop_index_tile(self, name: str, crop_id: str, z: int, x: int, y: int, low: float | None = None, high: float | None = None) -> bytes:
+    def _equalization_response(
+        self,
+        name: str,
+        crop_id: str | None,
+    ) -> dict[str, Any]:
+        if crop_id is None:
+            return self.ndvi_data() if name == "NDVI" else self.vegetation_index_data(name)
+        geom = self.crop_geometries.get(crop_id)
+        if geom is None:
+            raise ValueError("El recorte ya no estÃ¡ disponible. Selecciona el ROI nuevamente.")
+        return self.roi_ndvi(geom) if name == "NDVI" else self.roi_vegetation_index(geom, name)
+
+    def _render_index_tile(
+        self,
+        name: str,
+        z: int,
+        x: int,
+        y: int,
+        *,
+        low: float | None = None,
+        high: float | None = None,
+        crop_id: str | None = None,
+        equalized: bool = False,
+        fill_mode: str = "transparent",
+    ) -> bytes:
+        cache_variant = (
+            f"{name.lower()}-"
+            f"{crop_id or 'full'}-"
+            f"{'eq' if equalized else 'linear'}-"
+            f"{fill_mode}-"
+            f"{'none' if low is None else f'{float(low):.4f}'}-"
+            f"{'none' if high is None else f'{float(high):.4f}'}"
+        )
+        cache_path = self._tile_cache_path(
+            "crop-index" if crop_id is not None else "index",
+            self.index_tile_cache_version(),
+            z,
+            x,
+            y,
+            variant=cache_variant,
+        )
+        cached = self._read_tile_cache(cache_path)
+        if cached is not None:
+            return cached
+        equalization_cdf: np.ndarray | None = None
+        if fill_mode not in {"transparent", "solid"}:
+            raise ValueError("fill_mode no soportado.")
+        if equalized:
+            equalization_cdf = self._cached_equalization_cdf(
+                name,
+                crop_id,
+                low,
+                high,
+            )
+        bands = self._index_bands(name)
+        if not bands:
+            raise ValueError("El Ã­ndice requiere un ortomosaico multiespectral compatible.")
+        with rasterio.open(self._path()) as src:
+            values, valid, dst_transform = self._reproject_index_matrix(src, name, z, x, y)
+            if crop_id is not None:
+                geom = self.crop_geometries.get(crop_id)
+                if geom is None:
+                    raise ValueError("El recorte ya no estÃ¡ disponible. Selecciona el ROI nuevamente.")
+                mercator_geom = project_geometry(
+                    pyproj.Transformer.from_crs(
+                        "EPSG:4326",
+                        "EPSG:3857",
+                        always_xy=True,
+                    ).transform,
+                    geom,
+                )
+                roi_mask = geometry_mask(
+                    [mapping(mercator_geom)],
+                    out_shape=(self.RGB_TILE_SIZE, self.RGB_TILE_SIZE),
+                    transform=dst_transform,
+                    invert=True,
+                )
+                valid = valid & roi_mask
+            rgba = self._colorize_index(
+                name,
+                values,
+                valid,
+                low,
+                high,
+                equalized=equalized,
+                fill_mode=fill_mode,
+                equalization_cdf=equalization_cdf,
+            )
+            output = io.BytesIO()
+            Image.fromarray(rgba, mode="RGBA").save(output, format="PNG")
+            content = output.getvalue()
+            self._write_tile_cache(cache_path, content)
+            return content
+
+    def crop_index_tile(self, name: str, crop_id: str, z: int, x: int, y: int, low: float | None = None, high: float | None = None, equalized: bool = False, fill_mode: str = "transparent") -> bytes:
+        return self._render_index_tile(
+            name,
+            z,
+            x,
+            y,
+            low=low,
+            high=high,
+            crop_id=crop_id,
+            equalized=equalized,
+            fill_mode=fill_mode,
+        )
         geom = self.crop_geometries.get(crop_id)
         if geom is None:
             raise ValueError("El recorte ya no está disponible. Selecciona el ROI nuevamente.")
@@ -2654,7 +3299,19 @@ class RasterService:
         y: int,
         low: float | None = None,
         high: float | None = None,
+        equalized: bool = False,
+        fill_mode: str = "transparent",
     ) -> bytes:
+        return self._render_index_tile(
+            name,
+            z,
+            x,
+            y,
+            low=low,
+            high=high,
+            equalized=equalized,
+            fill_mode=fill_mode,
+        )
         bands = self._index_bands(name)
         if not bands:
             raise ValueError("El índice requiere un ortomosaico multiespectral compatible.")
@@ -2695,7 +3352,13 @@ class RasterService:
                 resampling=resampling,
             )
             transform = window_transform(window, src.transform) * Affine.scale(window.width / width, window.height / height)
-            mask = geometry_mask([mapping(geom)], out_shape=(height, width), transform=transform, invert=True)
+            mask = geometry_mask(
+                [mapping(geom)],
+                out_shape=(height, width),
+                transform=transform,
+                invert=True,
+                all_touched=True,
+            )
             source_bounds = array_bounds(height, width, transform)
             response_bounds = transform_bounds(src.crs, "EPSG:4326", *source_bounds) if src.crs and src.crs.to_string() != "EPSG:4326" else source_bounds
             return data, transform, mask, {"col_off": window.col_off, "row_off": window.row_off, "scale": scale, "src_width": src.width, "src_height": src.height, "response_bounds": response_bounds}
@@ -2736,6 +3399,7 @@ class RasterService:
                 out_shape=positive.shape,
                 transform=transform,
                 invert=True,
+                all_touched=True,
             )
             values, valid = self._calculate_index(positive, negative)
             visible_values = values[valid & mask]

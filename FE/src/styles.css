@@ -515,6 +515,42 @@ body {
   margin-left: auto;
 }
 
+.equalization-toggle-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.equalization-toggle {
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid #d4dbd2;
+  border-radius: 999px;
+  background: #fff;
+  color: #657066;
+  font: inherit;
+  font-size: 8px;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s,
+    transform 0.15s;
+}
+
+.equalization-toggle:hover {
+  border-color: #aeb9af;
+  background: #e9eee8;
+  transform: translateY(-1px);
+}
+
+.equalization-toggle.is-active {
+  border-color: #99be9e;
+  background: #edf7ee;
+  color: #356b3e;
+}
+
 .equalization-visibility {
   width: 22px;
   height: 22px;

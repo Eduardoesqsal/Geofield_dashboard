@@ -51,6 +51,19 @@ type DeleteTarget =
   | { kind: "analysis"; record: RoiAnalysisRecord };
 type ComparisonIndex = "NDVI" | "NDWI" | "NDRE";
 type CycleDialogMode = "entry" | "import" | "library";
+const ACTIVE_CYCLE_STORAGE_KEY = "geofield.activeCycle";
+
+const loadStoredActiveCycle = (): AgriculturalCycleRecord | null => {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(ACTIVE_CYCLE_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as AgriculturalCycleRecord;
+  } catch {
+    window.localStorage.removeItem(ACTIVE_CYCLE_STORAGE_KEY);
+    return null;
+  }
+};
 
 const sameMetric = (
   left: number | null | undefined,
@@ -116,9 +129,8 @@ export function MapView() {
   const [agriculturalCycles, setAgriculturalCycles] = useState<
     AgriculturalCycleRecord[]
   >([]);
-  const [activeCycle, setActiveCycle] = useState<AgriculturalCycleRecord | null>(
-    null,
-  );
+  const [activeCycle, setActiveCycle] =
+    useState<AgriculturalCycleRecord | null>(loadStoredActiveCycle);
   const [cycleLoading, setCycleLoading] = useState(false);
   const [cycleSaving, setCycleSaving] = useState(false);
   const [cycleRenamingId, setCycleRenamingId] = useState<string | null>(null);
@@ -174,6 +186,18 @@ export function MapView() {
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!activeCycle) {
+      window.localStorage.removeItem(ACTIVE_CYCLE_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(
+      ACTIVE_CYCLE_STORAGE_KEY,
+      JSON.stringify(activeCycle),
+    );
+  }, [activeCycle]);
 
   useEffect(() => {
     if (activeCycle) return;
@@ -1598,7 +1622,11 @@ export function MapView() {
         indices={map.indexAnalyses}
         onDiameterRangeChange={map.setDiameterRange}
         onNdviRangeChange={map.setNdviRange}
+        onNdviEqualizationChange={map.setNdviEqualization}
+        onNdviFillModeChange={map.setNdviFillMode}
         onIndexRangeChange={map.setIndexRange}
+        onIndexEqualizationChange={map.setIndexEqualization}
+        onIndexFillModeChange={map.setIndexFillMode}
         ndviVisible={map.state.ndvi}
         onToggleNdvi={() => void map.toggleNdvi()}
         onToggleIndex={map.toggleIndexLayer}

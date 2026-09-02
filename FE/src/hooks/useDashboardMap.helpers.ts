@@ -76,6 +76,8 @@ export function createEmptyNdviAnalysis() {
     roiStats: ndviStats(null),
     minimum: -1,
     maximum: 1,
+    equalized: false,
+    fillMode: "transparent" as const,
   };
 }
 

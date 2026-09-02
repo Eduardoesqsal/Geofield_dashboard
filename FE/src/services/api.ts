@@ -114,31 +114,7 @@ export interface NdviZoningResponse {
   zoning_id: string;
   image_url: string;
   tile_url: string;
-  bounds: [[number, number], [number, number]];
-  zone_count: number;
-  cell_size_m: number;
-  grid_angle_deg: number;
-  classification_method?: "quantiles" | "equal_intervals" | "manual";
-  cell_value_mode?: "mean" | "min" | "max";
-  detail_level?: number;
-  field_mean?: number | null;
-  histogram?: PrescriptionHistogram;
-  thresholds?: number[];
-  valid_cell_count: number;
-  area_hectares: number;
-  legend: PrescriptionLegendEntry[];
-}
-
-export interface PrescriptionMapResponse {
-  status: string;
-  stage: "prescription";
-  title: string;
-  index_name?: "NDVI" | "NDWI" | "NDRE";
-  prescription_id: string;
-  image_url: string;
-  tile_url: string;
-  json_url?: string;
-  /** Compatibilidad con prescripciones generadas por versiones anteriores. */
+  grid_url?: string;
   geojson_url?: string;
   bounds: [[number, number], [number, number]];
   zone_count: number;
@@ -153,6 +129,35 @@ export interface PrescriptionMapResponse {
   valid_cell_count: number;
   area_hectares: number;
   legend: PrescriptionLegendEntry[];
+  debug?: Record<string, unknown>;
+}
+
+export interface PrescriptionMapResponse {
+  status: string;
+  stage: "prescription";
+  title: string;
+  index_name?: "NDVI" | "NDWI" | "NDRE";
+  prescription_id: string;
+  image_url: string;
+  tile_url: string;
+  grid_url?: string;
+  geojson_url?: string;
+  json_url?: string;
+  /** Compatibilidad con prescripciones generadas por versiones anteriores. */
+  bounds: [[number, number], [number, number]];
+  zone_count: number;
+  cell_size_m: number;
+  grid_angle_deg: number;
+  classification_method?: "quantiles" | "equal_intervals" | "manual";
+  cell_value_mode?: "mean" | "min" | "max";
+  detail_level?: number;
+  field_mean?: number | null;
+  histogram?: PrescriptionHistogram;
+  thresholds?: number[];
+  valid_cell_count: number;
+  area_hectares: number;
+  legend: PrescriptionLegendEntry[];
+  debug?: Record<string, unknown>;
 }
 
 export interface UpdateOrthomosaicPayload {

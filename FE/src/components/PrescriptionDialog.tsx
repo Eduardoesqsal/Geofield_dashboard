@@ -36,6 +36,19 @@ const zoneColors = (
   return positions.map((position) => ramp[position]);
 };
 
+const sameManualBreaks = (
+  a: number[] | undefined,
+  b: number[] | undefined,
+  tolerance = 1e-6,
+) => {
+  const left = a ?? [];
+  const right = b ?? [];
+  if (left.length !== right.length) return false;
+  return left.every(
+    (value, index) => Math.abs(value - (right[index] ?? Number.NaN)) <= tolerance,
+  );
+};
+
 const continuousGradient = (gradientStops: string) =>
   `linear-gradient(90deg, ${gradientStops})`;
 
@@ -272,6 +285,15 @@ export function PrescriptionDialog({
   const [downloadingJson, setDownloadingJson] = useState(false);
   const [downloadJsonError, setDownloadJsonError] = useState<string | null>(null);
 
+  const parseManualBreaks = (value: string): number[] | undefined => {
+    const tokens = value
+      .split(/[,\s;]+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+    if (!tokens.length) return undefined;
+    return tokens.map((token) => Number(token));
+  };
+
   useEffect(() => {
     const source = zoning ?? prescription;
     if (!source) {
@@ -309,8 +331,20 @@ export function PrescriptionDialog({
   useEffect(() => {
     if (!open || !prescriptionAreaReady) return;
     if (cellSizeM < 1 || cellSizeM > 50) return;
+    const manualBreaks = parseManualBreaks(manualBreaksText);
+    if (zoning) {
+      const sameConfiguration =
+        zoning.zone_count === zoneCount &&
+        Math.abs(zoning.cell_size_m - cellSizeM) <= 1e-6 &&
+        Math.abs(zoning.grid_angle_deg - gridAngleDeg) <= 1e-6 &&
+        (zoning.classification_method ?? "quantiles") === classificationMethod &&
+        (zoning.cell_value_mode ?? "mean") === cellValueMode &&
+        Math.abs((zoning.detail_level ?? 1) - detailLevel) <= 1e-6 &&
+        sameManualBreaks(manualBreaks, zoning.thresholds);
+      if (sameConfiguration) return;
+    }
+    if (prescription) return;
     const timeout = window.setTimeout(() => {
-      const manualBreaks = parseManualBreaks(manualBreaksText);
       if (zoning) {
         void onGenerateZoning(
           zoneCount,
@@ -367,15 +401,6 @@ export function PrescriptionDialog({
       : stage === "zoning"
         ? "La zonificacion ya esta calculada. Los umbrales estadisticos se mantienen y el detalle solo regulariza la distribucion espacial final."
         : "Mapa generado desde la clasificacion final por zonas, conservando los valores originales del indice por celda.";
-
-  const parseManualBreaks = (value: string): number[] | undefined => {
-    const tokens = value
-      .split(/[,\s;]+/)
-      .map((token) => token.trim())
-      .filter(Boolean);
-    if (!tokens.length) return undefined;
-    return tokens.map((token) => Number(token));
-  };
 
   const detailSliderValue = 1 - detailLevel;
   const parsedDoses = doseValues.map((value) => Number(value));

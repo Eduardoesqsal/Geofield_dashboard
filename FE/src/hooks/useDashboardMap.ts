@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import L from "leaflet";
-import type { Feature } from "geojson";
+import type { Feature, FeatureCollection, GeoJsonObject } from "geojson";
 import "@geoman-io/leaflet-geoman-free";
 import {
   backendUrl,
@@ -27,8 +27,11 @@ import {
 } from "../utils/tree";
 import { parseDetectionFiles, parseImportFile } from "../utils/importFormats";
 import {
-  indexColor,
-  ndviColor,
+  buildHistogramEqualization,
+  equalizedPosition,
+  type ClassificationFillMode,
+  type HistogramEqualization,
+  indexColorFromPosition,
   ndviStats,
   type NdviStats,
 } from "../utils/ndvi";
@@ -54,7 +57,6 @@ import {
 import {
   clearSpectralLayers,
   createNdviResponse,
-  createSpectralTileLayer,
   removeSingleSpectralLayer,
   replaceNdviTileLayer,
   replaceSpectralLayer,
@@ -96,6 +98,8 @@ export interface NdviAnalysis {
   roiStats: NdviStats;
   minimum: number;
   maximum: number;
+  equalized: boolean;
+  fillMode: ClassificationFillMode;
 }
 
 /** Estado equivalente para índices adicionales que pueden coexistir. */
@@ -106,6 +110,8 @@ export interface IndexAnalysis {
   minimum: number;
   maximum: number;
   visible: boolean;
+  equalized: boolean;
+  fillMode: ClassificationFillMode;
 }
 
 /**
@@ -129,10 +135,19 @@ export function useDashboardMap(
   const zoningRef = useRef<L.TileLayer>();
   const zoningPreviewRef = useRef<L.TileLayer>();
   const prescriptionRef = useRef<L.TileLayer>();
+  const classificationFillRef = useRef<L.GeoJSON>();
+  const classificationGridRef = useRef<L.GeoJSON>();
   const prescriptionAreaLayerRef = useRef<L.Layer>();
   const prescriptionGeometryRef = useRef<unknown>(null);
   const prescriptionDrawCompleteRef = useRef<(() => void) | null>(null);
   const zoningPreviewTokenRef = useRef(0);
+  const cancelDetectionEditHandlerRef = useRef<() => void>(() => {});
+  const commitTreeCollectionHandlerRef = useRef<
+    (collection: TreeCollection, visible?: boolean) => void
+  >(() => {});
+  const selectRoiHandlerRef = useRef<
+    (geojson: unknown, roiId?: string | null) => void
+  >(() => {});
   // Datos y controles que deben estar disponibles dentro de callbacks de mapa.
   const boundsRef = useRef<L.LatLngBounds>();
   const rawTreeDataRef = useRef<TreeCollection | null>(null);
@@ -154,7 +169,19 @@ export function useDashboardMap(
   const labelsEnabledRef = useRef(false);
   const ratioRef = useRef(0.5);
   const swipeEnabledRef = useRef(false);
-  const ndviRangeRef = useRef({ min: -1, max: 1 });
+  const ndviRangeRef = useRef<{
+    min: number;
+    max: number;
+    equalized: boolean;
+    fillMode: ClassificationFillMode;
+    values: number[];
+  }>({
+    min: -1,
+    max: 1,
+    equalized: false,
+    fillMode: "transparent",
+    values: [],
+  });
   const ndviResponseRef = useRef<NdviResponse | null>(null);
   // Selección ROI, recorte activo y respuestas espectrales asociadas.
   const selectedRoiRef = useRef<unknown>(null);
@@ -208,14 +235,101 @@ export function useDashboardMap(
     activeCycleIdRef.current = activeCycleId;
   }, [activeCycleId]);
 
+  const clearClassificationGrid = useCallback(() => {
+    classificationGridRef.current?.remove();
+    classificationGridRef.current = undefined;
+  }, []);
+
+  const clearClassificationFill = useCallback(() => {
+    classificationFillRef.current?.remove();
+    classificationFillRef.current = undefined;
+  }, []);
+
+  const mountClassificationFill = useCallback(
+    async (geojsonUrl?: string) => {
+      const map = mapRef.current;
+      clearClassificationFill();
+      if (!map || !geojsonUrl) return;
+
+      const response = await fetch(backendUrl(geojsonUrl), {
+        headers: { Accept: "application/geo+json, application/json" },
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(
+          `No se pudo cargar la capa de prescripcion (error ${response.status}).`,
+        );
+      }
+
+      const geojson = (await response.json()) as FeatureCollection;
+      const featureCount = Array.isArray(geojson.features) ? geojson.features.length : 0;
+      console.info("[classification-fill]", {
+        url: geojsonUrl,
+        featureCount,
+      });
+      classificationFillRef.current = L.geoJSON(geojson, {
+        pane: "classificationFillPane",
+        interactive: false,
+        style: (feature) => {
+          const color =
+            typeof feature?.properties?.color === "string"
+              ? feature.properties.color
+              : "#ffffff";
+          return {
+            color: "#ffffff",
+            weight: 1,
+            opacity: 0.7,
+            fillColor: color,
+            fillOpacity: 0.72,
+          };
+        },
+      }).addTo(map);
+    },
+    [clearClassificationFill],
+  );
+
+  const mountClassificationGrid = useCallback(
+    async (gridUrl?: string) => {
+      const map = mapRef.current;
+      clearClassificationGrid();
+      if (!map || !gridUrl) return;
+
+      const response = await fetch(backendUrl(gridUrl), {
+        headers: { Accept: "application/geo+json, application/json" },
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(
+          `No se pudo cargar el overlay de grilla (error ${response.status}).`,
+        );
+      }
+
+      const geojson = (await response.json()) as GeoJsonObject;
+      classificationGridRef.current = L.geoJSON(geojson, {
+        pane: "classificationGridPane",
+        interactive: false,
+        style: {
+          color: "#ffffff",
+          weight: 1,
+          opacity: 0.72,
+          lineCap: "square",
+          lineJoin: "miter",
+        },
+      }).addTo(map);
+    },
+    [clearClassificationGrid],
+  );
+
   const clearZoning = useCallback(() => {
     zoningPreviewTokenRef.current += 1;
     zoningPreviewRef.current?.remove();
     zoningPreviewRef.current = undefined;
     zoningRef.current?.remove();
     zoningRef.current = undefined;
+    clearClassificationFill();
+    clearClassificationGrid();
     setZoning(null);
-  }, []);
+  }, [clearClassificationFill, clearClassificationGrid]);
 
   const clearZoningPreview = useCallback(() => {
     zoningPreviewTokenRef.current += 1;
@@ -360,6 +474,9 @@ export function useDashboardMap(
           className: "zoning-map-overlay",
         }).addTo(map);
         zoningRef.current.setZIndex(520);
+        await mountClassificationFill(result.geojson_url);
+        await mountClassificationGrid(result.grid_url);
+        console.info("[zoning-response-debug]", result.debug ?? null);
         setZoning(result);
         setState((current) => ({ ...current, prescription: true, error: null }));
         map.fitBounds(result.bounds);
@@ -373,6 +490,8 @@ export function useDashboardMap(
       clearZoningPreview,
       clearPrescription,
       indexAnalyses,
+      mountClassificationFill,
+      mountClassificationGrid,
       ndviAnalysis.roiResponse,
       state.orthoMode,
       state.orthomosaicId,
@@ -441,6 +560,9 @@ export function useDashboardMap(
           className: "prescription-map-overlay",
         }).addTo(map);
         prescriptionRef.current.setZIndex(520);
+        await mountClassificationFill(result.geojson_url);
+        await mountClassificationGrid(result.grid_url);
+        console.info("[prescription-response-debug]", result.debug ?? null);
         setPrescription(result);
         setState((current) => ({ ...current, prescription: true, error: null }));
         map.fitBounds(result.bounds);
@@ -453,6 +575,8 @@ export function useDashboardMap(
       activeAnalysisRange,
       clearZoningPreview,
       indexAnalyses,
+      mountClassificationFill,
+      mountClassificationGrid,
       ndviAnalysis.roiResponse,
       state.orthoMode,
       state.orthomosaicId,
@@ -610,6 +734,108 @@ export function useDashboardMap(
     [refreshLabels, renderTreeLayer, syncTreeLayerVisibility],
   );
 
+  const renderClassificationPixel = useCallback(
+    (
+      name: "NDVI" | "NDWI" | "NDRE",
+      value: number,
+      minimum: number,
+      maximum: number,
+      fillMode: ClassificationFillMode,
+      equalization: HistogramEqualization | null,
+    ) => {
+      if (!Number.isFinite(value)) return null;
+      const inRange = value >= minimum && value <= maximum;
+      const normalizedPosition = Math.max(
+        0,
+        Math.min(1, (value - minimum) / Math.max(maximum - minimum, Number.EPSILON)),
+      );
+      const palettePosition =
+        equalization && inRange
+          ? (equalizedPosition(value, equalization) ?? normalizedPosition)
+          : normalizedPosition;
+      const color = indexColorFromPosition(name, palettePosition)
+        .match(/\d+/g)
+        ?.map(Number) ?? [0, 0, 0];
+      const alpha = inRange ? 255 : fillMode === "solid" ? 255 : 0;
+      return { color, alpha };
+    },
+    [],
+  );
+
+  const shouldRenderIndexAsTiles = useCallback(
+    (_equalized: boolean, _fillMode: ClassificationFillMode) => true,
+    [],
+  );
+
+  const spectralTileUrl = useCallback(
+    (
+      name: "NDVI" | IndexAnalysis["name"],
+      minimum: number,
+      maximum: number,
+      cropId: string | null,
+      equalized = false,
+      fillMode: ClassificationFillMode = "transparent",
+    ) => {
+      const safeMinimum = Math.min(minimum, maximum);
+      const safeMaximum = Math.max(minimum, maximum);
+      const params = `low=${safeMinimum}&high=${safeMaximum}&equalized=${equalized ? "true" : "false"}&fill_mode=${fillMode}`;
+      if (cropId)
+        return backendUrl(
+          `/tiles/crop-index/${name}/${cropId}/{z}/{x}/{y}.png?${params}`,
+        );
+      return backendUrl(
+        `/tiles/index/${name}/{z}/{x}/{y}.png?${params}`,
+      );
+    },
+    [],
+  );
+
+  const activeCropRing = useCallback((): number[][] | null => {
+    const source = activeCropGeometryRef.current as {
+      type?: string;
+      geometry?: unknown;
+      coordinates?: unknown;
+    } | null;
+    const geometry =
+      source?.type === "Feature"
+        ? (source.geometry as { type?: string; coordinates?: unknown })
+        : source;
+    if (!geometry) return null;
+    if (geometry.type === "Polygon")
+      return (geometry.coordinates as number[][][])[0] ?? null;
+    if (geometry.type === "MultiPolygon")
+      return (geometry.coordinates as number[][][][])[0]?.[0] ?? null;
+    return null;
+  }, []);
+
+  const currentSpectralClipPath = useCallback(() => {
+    const map = mapRef.current;
+    const ring = activeCropRing();
+    if (map && ring?.length) {
+      const points = ring.map(([longitude, latitude]) =>
+        map.latLngToLayerPoint([latitude, longitude]),
+      );
+      return `polygon(${points.map((point) => `${point.x}px ${point.y}px`).join(", ")})`;
+    }
+    if (swipeEnabledRef.current) return `inset(0 0 0 ${ratioRef.current * 100}%)`;
+    return "none";
+  }, [activeCropRing]);
+
+  const syncSpectralClip = useCallback(() => {
+    const clipPath = currentSpectralClipPath();
+    const image = ndviRef.current?.getElement();
+    if (image) image.style.clipPath = clipPath;
+    indexRefs.current.forEach((layer) => {
+      const element =
+        layer instanceof L.ImageOverlay
+          ? layer.getElement()
+          : layer instanceof L.TileLayer
+            ? layer.getContainer()
+            : undefined;
+      if (element) element.style.clipPath = clipPath;
+    });
+  }, [currentSpectralClipPath]);
+
   /** Rasteriza NDVI en canvas aplicando máscara, rampa y rango seleccionado. */
   const renderNdvi = useCallback((response: NdviResponse) => {
     const matrix = response.matrix;
@@ -622,7 +848,32 @@ export function useDashboardMap(
     if (!context) return;
 
     const image = context.createImageData(canvas.width, canvas.height);
-    const { min, max } = ndviRangeRef.current;
+    const {
+      min,
+      max,
+      equalized,
+      fillMode,
+      values,
+    } = ndviRangeRef.current;
+    if (shouldRenderIndexAsTiles(equalized, fillMode)) {
+      ndviRef.current?.remove();
+      replaceNdviTileLayer({
+        mapRef,
+        ndviTileRef,
+        url: spectralTileUrl(
+          "NDVI",
+          min,
+          max,
+          activeCropIdRef.current,
+          equalized,
+          fillMode,
+        ),
+      });
+      return;
+    }
+    const equalization = equalized
+      ? buildHistogramEqualization(values, min, max)
+      : null;
 
     matrix.forEach((row, y) =>
       row.forEach((value, x) => {
@@ -633,20 +884,28 @@ export function useDashboardMap(
         const canonicalValue =
           numericValue > 1 ? (numericValue / 255) * 2 - 1 : numericValue;
         const position = (y * canvas.width + x) * 4;
-        const color = ndviColor(canonicalValue, min, max)
-          .match(/\d+/g)
-          ?.map(Number) ?? [0, 0, 0];
-        image.data[position] = color[0];
-        image.data[position + 1] = color[1];
-        image.data[position + 2] = color[2];
         const maskValue = response.mask?.[y]?.[x];
-        image.data[position + 3] =
-          Number.isFinite(canonicalValue) &&
-          canonicalValue >= min &&
-          canonicalValue <= max &&
-          (maskValue === undefined || Number(maskValue) > 0)
-            ? 255
-            : 0;
+        const validMask = maskValue === undefined || Number(maskValue) > 0;
+        if (!validMask || !Number.isFinite(canonicalValue)) {
+          image.data[position + 3] = 0;
+          return;
+        }
+        const rendered = renderClassificationPixel(
+          "NDVI",
+          canonicalValue,
+          min,
+          max,
+          fillMode,
+          equalization,
+        );
+        if (!rendered) {
+          image.data[position + 3] = 0;
+          return;
+        }
+        image.data[position] = rendered.color[0];
+        image.data[position + 1] = rendered.color[1];
+        image.data[position + 2] = rendered.color[2];
+        image.data[position + 3] = rendered.alpha;
       }),
     );
 
@@ -657,51 +916,39 @@ export function useDashboardMap(
       : boundsRef.current;
     if (!map || !overlayBounds) return;
 
+    ndviTileRef.current?.remove();
+    ndviTileRef.current = undefined;
     ndviRef.current?.remove();
     ndviRef.current = L.imageOverlay(canvas.toDataURL(), overlayBounds, {
       opacity: 1,
       interactive: false,
+      pane: "classificationImagePane",
     }).addTo(map);
     const overlayImage = ndviRef.current.getElement();
-    if (overlayImage)
-      overlayImage.style.clipPath = swipeEnabledRef.current
-        ? `inset(0 0 0 ${ratioRef.current * 100}%)`
-        : "none";
-  }, []);
+    if (overlayImage) overlayImage.style.clipPath = currentSpectralClipPath();
+  }, [
+    currentSpectralClipPath,
+    renderClassificationPixel,
+    shouldRenderIndexAsTiles,
+    spectralTileUrl,
+  ]);
 
   /** Recalcula el recorte CSS cuando el mapa cambia de zoom o posición. */
   const updateTileClip = useCallback(() => {
     const map = mapRef.current;
     const layer = orthoRef.current;
     const container = layer?.getContainer();
-    const source = activeCropGeometryRef.current as {
-      type?: string;
-      geometry?: unknown;
-      coordinates?: unknown;
-    } | null;
-    const geometry =
-      source?.type === "Feature"
-        ? (source.geometry as { type?: string; coordinates?: unknown })
-        : source;
-    if (
-      !map ||
-      !container ||
-      !geometry ||
-      (geometry.type !== "Polygon" && geometry.type !== "MultiPolygon")
-    )
+    const ring = activeCropRing();
+    if (!map || !container || !ring?.length) {
+      syncSpectralClip();
       return;
-    const ring =
-      geometry.type === "Polygon"
-        ? (geometry.coordinates as number[][][])[0]
-        : (geometry.coordinates as number[][][][])[0]?.[0];
-    if (!ring?.length) return;
-    // El clip se aplica al contenedor de la capa de tiles, por lo que debe
-    // usar coordenadas de capa y no coordenadas del contenedor del mapa.
+    }
     const points = ring.map(([longitude, latitude]) =>
       map.latLngToLayerPoint([latitude, longitude]),
     );
     container.style.clipPath = `polygon(${points.map((point) => `${point.x}px ${point.y}px`).join(", ")})`;
-  }, []);
+    syncSpectralClip();
+  }, [activeCropRing, syncSpectralClip]);
 
   /** Elimina tiles de recorte y cualquier clip aplicado a la capa base. */
   const clearTileClip = useCallback(() => {
@@ -711,17 +958,18 @@ export function useDashboardMap(
     cropTileRef.current = undefined;
     const container = orthoRef.current?.getContainer();
     if (container) container.style.clipPath = "";
+    syncSpectralClip();
     setCropAvailable(false);
-  }, []);
+  }, [syncSpectralClip]);
 
   /** Diferencia visualmente polígonos seleccionados y disponibles. */
   const styleRoiLayer = useCallback((roiId: string, selected: boolean) => {
     const layer = roiLayersRef.current.get(roiId);
     if (!layer) return;
     const style = selected
-      ? { color: "#496f56", weight: 3, fillColor: "#6d9276", fillOpacity: 0.16 }
+      ? { color: "#ffffff", weight: 3, fillColor: "#6d9276", fillOpacity: 0.16 }
       : {
-          color: "#ff3b30",
+          color: "#ffffff",
           weight: 2,
           fillColor: "#ff3b30",
           fillOpacity: 0.08,
@@ -783,7 +1031,13 @@ export function useDashboardMap(
     ndviResponseRef.current = ndviResponse;
     roiIndexResponsesRef.current = { NDVI: ndviResponse };
     activeCropGeometryRef.current = geojson;
-    ndviRangeRef.current = { min: ndviZoneStats.min, max: ndviZoneStats.max };
+    ndviRangeRef.current = {
+      min: ndviZoneStats.min,
+      max: ndviZoneStats.max,
+      equalized: false,
+      fillMode: "transparent",
+      values: ndviZoneStats.values,
+    };
     setNdviAnalysis((current) => ({
       ...current,
       response: null,
@@ -792,6 +1046,8 @@ export function useDashboardMap(
       roiStats: current.roiStats,
       minimum: ndviZoneStats.min,
       maximum: ndviZoneStats.max,
+      equalized: false,
+      fillMode: "transparent",
     }));
     setIndexAnalyses([]);
     ndviRef.current?.remove();
@@ -911,7 +1167,7 @@ export function useDashboardMap(
         if (map && roiId && !roiLayersRef.current.has(roiId)) {
           const geometryLayer = L.geoJSON(geojson as Feature, {
             style: {
-              color: "#496f56",
+              color: "#ffffff",
               weight: 3,
               fillColor: "#6d9276",
               fillOpacity: 0.16,
@@ -953,6 +1209,18 @@ export function useDashboardMap(
     [clearRoiSelection, refreshRoiSelection, styleRoiLayer],
   );
 
+  useEffect(() => {
+    cancelDetectionEditHandlerRef.current = cancelDetectionEdit;
+  }, [cancelDetectionEdit]);
+
+  useEffect(() => {
+    commitTreeCollectionHandlerRef.current = commitTreeCollection;
+  }, [commitTreeCollection]);
+
+  useEffect(() => {
+    selectRoiHandlerRef.current = selectRoi;
+  }, [selectRoi]);
+
   /** Renderizador local de respaldo para matrices NDWI y NDRE. */
   const renderIndex = useCallback(
     (
@@ -960,7 +1228,26 @@ export function useDashboardMap(
       response: NdviResponse,
       minimum: number,
       maximum: number,
+      equalized: boolean,
+      fillMode: ClassificationFillMode,
+      values: number[],
     ) => {
+      if (shouldRenderIndexAsTiles(equalized, fillMode)) {
+        replaceSpectralLayer({
+          indexRefs,
+          mapRef,
+          name,
+          url: spectralTileUrl(
+            name,
+            minimum,
+            maximum,
+            activeCropIdRef.current,
+            equalized,
+            fillMode,
+          ),
+        });
+        return;
+      }
       const matrix = response.matrix;
       if (!matrix?.length || !matrix[0]?.length) return;
       const canvas = document.createElement("canvas");
@@ -969,23 +1256,35 @@ export function useDashboardMap(
       const context = canvas.getContext("2d");
       if (!context || !boundsRef.current) return;
       const image = context.createImageData(canvas.width, canvas.height);
+      const equalization = equalized
+        ? buildHistogramEqualization(values, minimum, maximum)
+        : null;
       matrix.forEach((row, y) =>
         row.forEach((value, x) => {
           const normalized = Number(value);
-          const color = indexColor(name, normalized, minimum, maximum)
-            .match(/\d+/g)
-            ?.map(Number) ?? [0, 0, 0];
           const position = (y * canvas.width + x) * 4;
-          image.data[position] = color[0];
-          image.data[position + 1] = color[1];
-          image.data[position + 2] = color[2];
-          const visible =
-            Number.isFinite(normalized) &&
-            normalized >= minimum &&
-            normalized <= maximum &&
-            (response.mask?.[y]?.[x] === undefined ||
-              Number(response.mask[y][x]) > 0);
-          image.data[position + 3] = visible ? 255 : 0;
+          const validMask =
+            response.mask?.[y]?.[x] === undefined || Number(response.mask[y][x]) > 0;
+          if (!validMask || !Number.isFinite(normalized)) {
+            image.data[position + 3] = 0;
+            return;
+          }
+          const rendered = renderClassificationPixel(
+            name,
+            normalized,
+            minimum,
+            maximum,
+            fillMode,
+            equalization,
+          );
+          if (!rendered) {
+            image.data[position + 3] = 0;
+            return;
+          }
+          image.data[position] = rendered.color[0];
+          image.data[position + 1] = rendered.color[1];
+          image.data[position + 2] = rendered.color[2];
+          image.data[position + 3] = rendered.alpha;
         }),
       );
       context.putImageData(image, 0, 0);
@@ -996,11 +1295,22 @@ export function useDashboardMap(
       const overlay = L.imageOverlay(
         canvas.toDataURL(),
         response.bounds ? L.latLngBounds(response.bounds) : boundsRef.current!,
-        { opacity: 1, interactive: false },
+        {
+          opacity: 1,
+          interactive: false,
+          pane: "classificationImagePane",
+        },
       ).addTo(map);
       indexRefs.current.set(name, overlay);
+      const overlayImage = overlay.getElement();
+      if (overlayImage) overlayImage.style.clipPath = currentSpectralClipPath();
     },
-    [],
+    [
+      currentSpectralClipPath,
+      renderClassificationPixel,
+      shouldRenderIndexAsTiles,
+      spectralTileUrl,
+    ],
   );
 
   // Inicialización única del mapa base, Geoman y listeners de creación de ROI.
@@ -1037,6 +1347,24 @@ export function useDashboardMap(
 
     L.layerGroup([satellite, labels]).addTo(map);
     L.control.zoom({ position: "topright" }).addTo(map);
+    map.createPane("classificationImagePane");
+    const classificationImagePane = map.getPane("classificationImagePane");
+    if (classificationImagePane) {
+      classificationImagePane.style.zIndex = "520";
+      classificationImagePane.style.pointerEvents = "none";
+    }
+    map.createPane("classificationFillPane");
+    const classificationFillPane = map.getPane("classificationFillPane");
+    if (classificationFillPane) {
+      classificationFillPane.style.zIndex = "521";
+      classificationFillPane.style.pointerEvents = "none";
+    }
+    map.createPane("classificationGridPane");
+    const classificationGridPane = map.getPane("classificationGridPane");
+    if (classificationGridPane) {
+      classificationGridPane.style.zIndex = "522";
+      classificationGridPane.style.pointerEvents = "none";
+    }
     map.createPane("treeLabelsPane");
     const pane = map.getPane("treeLabelsPane");
     if (pane) {
@@ -1046,7 +1374,7 @@ export function useDashboardMap(
 
     map.pm?.setGlobalOptions({
       pathOptions: {
-        color: "#ff3b30",
+        color: "#ffffff",
         weight: 2,
         opacity: 0.55,
         fillColor: "#ff3b30",
@@ -1112,8 +1440,8 @@ export function useDashboardMap(
             }),
           };
           event.layer.remove();
-          cancelDetectionEdit();
-          commitTreeCollection(collection);
+          cancelDetectionEditHandlerRef.current();
+          commitTreeCollectionHandlerRef.current(collection);
         }
         return;
       }
@@ -1142,9 +1470,9 @@ export function useDashboardMap(
         );
         roiLayersRef.current.set(saved.roi.id, event.layer);
         event.layer.on("click", () => {
-          selectRoi(roiGeojson, saved.roi.id);
+          selectRoiHandlerRef.current(roiGeojson, saved.roi.id);
         });
-        selectRoi(roiGeojson, saved.roi.id);
+        selectRoiHandlerRef.current(roiGeojson, saved.roi.id);
       } catch (error) {
         if (disposed || mapRef.current !== map) return;
         setState((current) => ({
@@ -1170,10 +1498,7 @@ export function useDashboardMap(
       if (mapRef.current === map) mapRef.current = undefined;
     };
   }, [
-    cancelDetectionEdit,
-    commitTreeCollection,
     mapElement,
-    selectRoi,
     updateTileClip,
   ]);
 
@@ -1258,6 +1583,9 @@ export function useDashboardMap(
           ndviRangeRef.current = {
             min: response.range_min ?? stats.min,
             max: response.range_max ?? stats.max,
+            equalized: false,
+            fillMode: "transparent",
+            values: stats.values,
           };
           setNdviAnalysis(createEmptyNdviAnalysis());
           setState((current) => ({
@@ -1286,32 +1614,118 @@ export function useDashboardMap(
     [clearPrescription, clearTileClip, restoreRoiSelection],
   );
 
-  /** Actualiza contraste y URL de tiles para un índice adicional activo. */
+  /** Actualiza contraste y re-renderiza localmente un índice adicional activo. */
   const setIndexRange = useCallback(
     (name: IndexAnalysis["name"], minimum: number, maximum: number) => {
       const safeMinimum = Math.min(minimum, maximum);
       const safeMaximum = Math.max(minimum, maximum);
       setIndexAnalyses((current) =>
-        current.map((analysis) =>
-          analysis.name === name
-            ? { ...analysis, minimum: safeMinimum, maximum: safeMaximum }
-            : analysis,
+        current.map((analysis) => {
+          if (analysis.name !== name) return analysis;
+          const next = {
+            ...analysis,
+            minimum: safeMinimum,
+            maximum: safeMaximum,
+          };
+          renderIndex(
+            name,
+            next.response,
+            next.minimum,
+            next.maximum,
+            next.equalized,
+            next.fillMode,
+            next.stats.values,
+          );
+          return next;
+        }),
+      );
+    },
+    [renderIndex],
+  );
+
+  const setNdviEqualization = useCallback(
+    (equalized: boolean) => {
+      ndviRangeRef.current = {
+        min: ndviAnalysis.minimum,
+        max: ndviAnalysis.maximum,
+        equalized,
+        fillMode: ndviAnalysis.fillMode,
+        values: (ndviAnalysis.roiResponse ? ndviAnalysis.roiStats : ndviAnalysis.stats)
+          .values,
+      };
+      setNdviAnalysis((current) => ({ ...current, equalized }));
+      if (ndviResponseRef.current) renderNdvi(ndviResponseRef.current);
+    },
+    [
+      ndviAnalysis.fillMode,
+      ndviAnalysis.maximum,
+      ndviAnalysis.minimum,
+      ndviAnalysis.roiResponse,
+      ndviAnalysis.roiStats,
+      ndviAnalysis.stats,
+      renderNdvi,
+    ],
+  );
+
+  const setNdviFillMode = useCallback(
+    (fillMode: ClassificationFillMode) => {
+      setNdviAnalysis((current) => {
+        ndviRangeRef.current = {
+          min: current.minimum,
+          max: current.maximum,
+          equalized: current.equalized,
+          fillMode,
+          values: (current.roiResponse ? current.roiStats : current.stats).values,
+        };
+        return { ...current, fillMode };
+      });
+      if (ndviResponseRef.current) renderNdvi(ndviResponseRef.current);
+    },
+    [renderNdvi],
+  );
+
+  const setIndexEqualization = useCallback(
+    (name: IndexAnalysis["name"], equalized: boolean) => {
+      const analysis = indexAnalyses.find((item) => item.name === name);
+      if (!analysis) return;
+      renderIndex(
+        name,
+        analysis.response,
+        analysis.minimum,
+        analysis.maximum,
+        equalized,
+        analysis.fillMode,
+        analysis.stats.values,
+      );
+      setIndexAnalyses((current) =>
+        current.map((item) =>
+          item.name === name ? { ...item, equalized } : item,
         ),
       );
-      const cropId = activeCropIdRef.current;
-      const layer = indexRefs.current.get(name) as L.TileLayer | undefined;
-      if (layer?.setUrl)
-        layer.setUrl(
-          cropId
-            ? backendUrl(
-                `/tiles/crop-index/${name}/${cropId}/{z}/{x}/{y}.png?low=${safeMinimum}&high=${safeMaximum}`,
-              )
-            : backendUrl(
-                `/tiles/index/${name}/{z}/{x}/{y}.png?low=${safeMinimum}&high=${safeMaximum}`,
-              ),
-        );
     },
-    [],
+    [indexAnalyses, renderIndex],
+  );
+
+  const setIndexFillMode = useCallback(
+    (name: IndexAnalysis["name"], fillMode: ClassificationFillMode) => {
+      setIndexAnalyses((current) =>
+        current.map((analysis) => {
+          if (analysis.name !== name) return analysis;
+          const next = { ...analysis, fillMode };
+          renderIndex(
+            name,
+            next.response,
+            next.minimum,
+            next.maximum,
+            next.equalized,
+            next.fillMode,
+            next.stats.values,
+          );
+          return next;
+        }),
+      );
+    },
+    [renderIndex],
   );
 
   /**
@@ -1338,30 +1752,28 @@ export function useDashboardMap(
           const stats = ndviStats(response);
           const defaultMinimum = response.range_min ?? stats.min;
           const defaultMaximum = response.range_max ?? stats.max;
-          ndviRangeRef.current = { min: defaultMinimum, max: defaultMaximum };
-          setNdviAnalysis((current) => ({
-            ...current,
-            response,
-            stats,
-            roiResponse: roiResponse ?? null,
-            roiStats: roiResponse ? stats : current.roiStats,
-            minimum: defaultMinimum,
-            maximum: defaultMaximum,
-          }));
+          setNdviAnalysis((current) => {
+            ndviRangeRef.current = {
+              min: defaultMinimum,
+              max: defaultMaximum,
+              equalized: current.equalized,
+              fillMode: current.fillMode,
+              values: stats.values,
+            };
+            return {
+              ...current,
+              response,
+              stats,
+              roiResponse: roiResponse ?? null,
+              roiStats: roiResponse ? stats : current.roiStats,
+              minimum: defaultMinimum,
+              maximum: defaultMaximum,
+            };
+          });
           ndviRef.current?.remove();
-          if (roiResponse && cropId) {
-            replaceNdviTileLayer({
-              mapRef,
-              ndviTileRef,
-              url: backendUrl(`/tiles/crop-index/NDVI/${cropId}/{z}/{x}/{y}.png`),
-            });
-            setState((current) => ({ ...current, ndvi: true, error: null }));
-            return;
-          }
-          ndviTileRef.current ??= createSpectralTileLayer(
-            backendUrl("/tiles/index/NDVI/{z}/{x}/{y}.png"),
-          );
-          ndviTileRef.current.addTo(map);
+          ndviTileRef.current?.remove();
+          ndviTileRef.current = undefined;
+          renderNdvi(response);
           setState((current) => ({ ...current, ndvi: true, error: null }));
           return;
         }
@@ -1395,15 +1807,19 @@ export function useDashboardMap(
               minimum: defaultMinimum,
               maximum: defaultMaximum,
               visible: true,
+              equalized: false,
+              fillMode: "transparent",
             },
           ]);
-          renderIndex(name, roiResponse, defaultMinimum, defaultMaximum);
-          replaceSpectralLayer({
-            indexRefs,
-            mapRef,
+          renderIndex(
             name,
-            url: backendUrl(`/tiles/crop-index/${name}/${cropId}/{z}/{x}/{y}.png`),
-          });
+            roiResponse,
+            defaultMinimum,
+            defaultMaximum,
+            false,
+            "transparent",
+            stats.values,
+          );
           setState((current) => ({ ...current, error: null }));
           return;
         }
@@ -1420,15 +1836,19 @@ export function useDashboardMap(
             minimum: defaultMinimum,
             maximum: defaultMaximum,
             visible: true,
+            equalized: false,
+            fillMode: "transparent",
           },
         ]);
-        renderIndex(name, response, defaultMinimum, defaultMaximum);
-        replaceSpectralLayer({
-          indexRefs,
-          mapRef,
+        renderIndex(
           name,
-          url: backendUrl(`/tiles/index/${name}/{z}/{x}/{y}.png`),
-        });
+          response,
+          defaultMinimum,
+          defaultMaximum,
+          false,
+          "transparent",
+          stats.values,
+        );
         setState((current) => ({ ...current, error: null }));
       } catch (error) {
         setState((current) => ({
@@ -1534,24 +1954,21 @@ export function useDashboardMap(
     (minimum: number, maximum: number) => {
       const safeMinimum = Math.min(minimum, maximum);
       const safeMaximum = Math.max(minimum, maximum);
-      ndviRangeRef.current = { min: safeMinimum, max: safeMaximum };
-      setNdviAnalysis((current) => ({
-        ...current,
-        minimum: safeMinimum,
-        maximum: safeMaximum,
-      }));
-      if (ndviTileRef.current) {
-        const cropId = activeCropIdRef.current;
-        ndviTileRef.current.setUrl(
-          cropId
-            ? backendUrl(
-                `/tiles/crop-index/NDVI/${cropId}/{z}/{x}/{y}.png?low=${safeMinimum}&high=${safeMaximum}`,
-              )
-            : backendUrl(
-                `/tiles/ndvi/{z}/{x}/{y}.png?low=${safeMinimum}&high=${safeMaximum}`,
-              ),
-        );
-      } else if (ndviResponseRef.current) renderNdvi(ndviResponseRef.current);
+      setNdviAnalysis((current) => {
+        ndviRangeRef.current = {
+          min: safeMinimum,
+          max: safeMaximum,
+          equalized: current.equalized,
+          fillMode: current.fillMode,
+          values: (current.roiResponse ? current.roiStats : current.stats).values,
+        };
+        return {
+          ...current,
+          minimum: safeMinimum,
+          maximum: safeMaximum,
+        };
+      });
+      if (ndviResponseRef.current) renderNdvi(ndviResponseRef.current);
     },
     [renderNdvi],
   );
@@ -1646,7 +2063,7 @@ export function useDashboardMap(
         const roi = { type: "FeatureCollection" as const, features };
         const layer = L.geoJSON(roi, {
           style: {
-            color: "#ff3b30",
+            color: "#ffffff",
             weight: 2,
             fillColor: "#ff3b30",
             fillOpacity: 0.08,
@@ -2005,16 +2422,24 @@ export function useDashboardMap(
           const defaultMinimum = response.range_min ?? stats.min;
           const defaultMaximum = response.range_max ?? stats.max;
           ndviResponseRef.current = response;
-          ndviRangeRef.current = { min: defaultMinimum, max: defaultMaximum };
-          setNdviAnalysis((current) => ({
-            ...current,
-            response,
-            stats,
-            roiResponse: response,
-            roiStats: stats,
-            minimum: defaultMinimum,
-            maximum: defaultMaximum,
-          }));
+          setNdviAnalysis((current) => {
+            ndviRangeRef.current = {
+              min: defaultMinimum,
+              max: defaultMaximum,
+              equalized: current.equalized,
+              fillMode: current.fillMode,
+              values: stats.values,
+            };
+            return {
+              ...current,
+              response,
+              stats,
+              roiResponse: response,
+              roiStats: stats,
+              minimum: defaultMinimum,
+              maximum: defaultMaximum,
+            };
+          });
           ndviTileRef.current?.remove();
           ndviTileRef.current = undefined;
           renderNdvi(response);
@@ -2191,45 +2616,19 @@ export function useDashboardMap(
     const next = Math.max(2, Math.min(98, position));
     ratioRef.current = next / 100;
     setState((current) => ({ ...current, swipePosition: next }));
-    const image = ndviRef.current?.getElement();
-    if (image) image.style.clipPath = `inset(0 0 0 ${next}%)`;
-    indexRefs.current.forEach((layer) => {
-      const indexImage =
-        layer instanceof L.ImageOverlay
-          ? layer.getElement()
-          : layer instanceof L.TileLayer
-            ? layer.getContainer()
-            : undefined;
-      if (indexImage) indexImage.style.clipPath = `inset(0 0 0 ${next}%)`;
-    });
-  }, []);
+    syncSpectralClip();
+  }, [syncSpectralClip]);
 
   /** Activa o elimina el recorte visual del divisor sin destruir las capas. */
   const toggleSwipe = useCallback(() => {
     setState((current) => {
       const enabled = !current.swipe;
       swipeEnabledRef.current = enabled;
-      const image = ndviRef.current?.getElement();
-      if (image)
-        image.style.clipPath = enabled
-          ? `inset(0 0 0 ${current.swipePosition}%)`
-          : "none";
       swipeEnabledRef.current = enabled;
-      indexRefs.current.forEach((layer) => {
-        const indexImage =
-          layer instanceof L.ImageOverlay
-            ? layer.getElement()
-            : layer instanceof L.TileLayer
-              ? layer.getContainer()
-              : undefined;
-        if (indexImage)
-          indexImage.style.clipPath = enabled
-            ? `inset(0 0 0 ${current.swipePosition}%)`
-            : "none";
-      });
       return { ...current, swipe: enabled };
     });
-  }, []);
+    syncSpectralClip();
+  }, [syncSpectralClip]);
 
   const exportCrop = useCallback(async (variant: "visual" | "analytical") => {
     const cropId = activeCropIdRef.current;
@@ -2280,6 +2679,8 @@ export function useDashboardMap(
     uploadedRgbRef.current = undefined;
     orthoRef.current?.remove();
     orthoRef.current = undefined;
+    clearClassificationFill();
+    clearClassificationGrid();
     boundsRef.current = undefined;
     labelsEnabledRef.current = false;
     swipeEnabledRef.current = false;
@@ -2303,7 +2704,13 @@ export function useDashboardMap(
     setIndexAnalyses([]);
     setState(createInitialMapState());
     mapRef.current?.setView([23.6345, -102.5528], 5);
-  }, [cancelDetectionEdit, clearPrescription, clearRoiSelection]);
+  }, [
+    cancelDetectionEdit,
+    clearClassificationFill,
+    clearClassificationGrid,
+    clearPrescription,
+    clearRoiSelection,
+  ]);
 
   return {
     state,
@@ -2357,6 +2764,10 @@ export function useDashboardMap(
     setSwipePosition,
     setDiameterRange,
     setNdviRange,
+    setNdviEqualization,
+    setNdviFillMode,
     setIndexRange,
+    setIndexEqualization,
+    setIndexFillMode,
   };
 }

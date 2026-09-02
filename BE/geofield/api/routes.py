@@ -444,9 +444,9 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
             raise HTTPException(404, str(exc)) from exc
 
     @router.get("/tiles/crop-index/{name}/{crop_id}/{z}/{x}/{y}.png")
-    def crop_index_tile(name: str, crop_id: str, z: int, x: int, y: int, low: float | None = Query(None), high: float | None = Query(None)) -> Response:
+    def crop_index_tile(name: str, crop_id: str, z: int, x: int, y: int, low: float | None = Query(None), high: float | None = Query(None), equalized: bool = Query(False), fill_mode: str = Query("transparent")) -> Response:
         try:
-            return Response(raster.crop_index_tile(name.upper(), crop_id, z, x, y, low, high), media_type="image/png", headers={"Cache-Control": "no-store"})
+            return Response(raster.crop_index_tile(name.upper(), crop_id, z, x, y, low, high, equalized, fill_mode), media_type="image/png", headers={"Cache-Control": "no-store"})
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
@@ -470,12 +470,14 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         y: int,
         low: float | None = Query(None),
         high: float | None = Query(None),
+        equalized: bool = Query(False),
+        fill_mode: str = Query("transparent"),
         orthomosaic_id: str | None = Query(None),
     ) -> Response:
         ensure_orthomosaic(orthomosaic_id)
         try:
             return Response(
-                raster.index_tile(name.upper(), z, x, y, low, high),
+                raster.index_tile(name.upper(), z, x, y, low, high, equalized, fill_mode),
                 media_type="image/png",
                 headers={"Cache-Control": "no-store"},
             )
