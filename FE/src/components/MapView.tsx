@@ -996,6 +996,7 @@ export function MapView() {
     cellValueMode: "mean" | "min" | "max",
     detailLevel: number,
     manualBreaks?: number[],
+    doses?: number[],
   ) => {
     const indexName = selectedIndex ?? "NDVI";
     setPrescriptionError(null);
@@ -1009,6 +1010,7 @@ export function MapView() {
         cellValueMode,
         detailLevel,
         manualBreaks,
+        doses,
       );
       return result;
     } catch (error) {

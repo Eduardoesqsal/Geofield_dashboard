@@ -4408,6 +4408,74 @@ body {
   line-height: 1.5;
 }
 
+.prescription-dose-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.prescription-dose-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 108px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #dfe6df;
+  border-radius: 12px;
+  background: rgba(248, 250, 247, 0.98);
+}
+
+.prescription-dose-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #26352c;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.prescription-dose-label i {
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(40, 48, 41, 0.22);
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+.prescription-dose-row input {
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid #ccd7ce;
+  border-radius: 10px;
+  background: #fff;
+  color: #223329;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.prescription-dose-input {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.prescription-dose-input strong {
+  color: #607062;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.prescription-dose-row input:focus {
+  outline: 0;
+  border-color: #4f7b5e;
+  box-shadow: 0 0 0 3px rgba(79, 123, 94, 0.12);
+}
+
 .prescription-analytics {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
@@ -4601,7 +4669,7 @@ body {
 .prescription-zones-table-head,
 .prescription-zones-table-row {
   display: grid;
-  grid-template-columns: 52px 78px 72px 72px 70px minmax(0, 1fr);
+  grid-template-columns: 52px 78px 72px 72px 70px 72px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
 }

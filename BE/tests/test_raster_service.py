@@ -379,7 +379,7 @@ class RasterServiceIndexTileTests(unittest.TestCase):
         image_path = self.service.settings.output_dir / "prescriptions" / image_name
         self.assertTrue(image_path.is_file())
         rendered = np.asarray(Image.open(image_path).convert("RGBA"))
-        self.assertEqual(rendered.shape[:2], (72, 72))
+        self.assertEqual(rendered.shape[:2], (96, 96))
         visible_alpha = rendered[..., 3][rendered[..., 3] > 0]
         self.assertTrue(np.all(visible_alpha == 255))
         expected_colors = {
@@ -434,7 +434,7 @@ class RasterServiceIndexTileTests(unittest.TestCase):
         )
         self.assertEqual(
             [item["dosage"] for item in exported_json["dataTypeLevel"]],
-            [round(zone["mean"], 3) for zone in prescription["legend"]],
+            [0.0, 0.0, 0.0, 0.0],
         )
         self.assertTrue(any(value > 0 for value in exported_json["weightData"]))
         self.assertTrue(all(isinstance(value, (int, float)) for value in exported_json["weightData"]))
@@ -492,6 +492,59 @@ class RasterServiceIndexTileTests(unittest.TestCase):
         exported_json = json.loads(json_path.read_text(encoding="utf-8"))
         self.assertEqual(exported_json["dataType"], 4)
         self.assertIn("weightData", exported_json)
+
+    def test_prescription_json_uses_manual_doses_when_provided(self) -> None:
+        raster_path = self.root / "prescription_doses.tif"
+        bands = np.ones((6, 9, 9), dtype=np.float32)
+        bands[3] = np.linspace(1, 5, 81, dtype=np.float32).reshape(9, 9)
+        bands[5] = 8.0
+        with rasterio.open(
+            raster_path,
+            "w",
+            driver="GTiff",
+            width=9,
+            height=9,
+            count=6,
+            dtype="float32",
+            crs="EPSG:32613",
+            transform=from_origin(500_000, 2_500_000, 1, 1),
+        ) as destination:
+            destination.write(bands)
+
+        self.service.active_path = raster_path
+        self.service.sensor = "micasense"
+        roi = project_geometry(
+            pyproj.Transformer.from_crs(
+                "EPSG:32613",
+                "EPSG:4326",
+                always_xy=True,
+            ).transform,
+            box(500_000, 2_499_991, 500_009, 2_500_000),
+        )
+        doses = [120.0, 180.5, 240.25, 300.0]
+
+        prescription = self.service.prescription_map_with_doses(
+            roi,
+            index_name="NDVI",
+            zone_count=4,
+            cell_size_m=3,
+            doses=doses,
+        )
+
+        json_path = (
+            self.service.settings.output_dir
+            / "prescriptions"
+            / f"{prescription['prescription_id']}.json"
+        )
+        exported_json = json.loads(json_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [item["dosage"] for item in exported_json["dataTypeLevel"]],
+            [12.0, 18.05, 24.025, 30.0],
+        )
+        self.assertEqual(
+            [zone["dosage"] for zone in prescription["legend"]],
+            doses,
+        )
 
     def test_quantiles_with_maximum_detail_keep_near_equal_cell_distribution(self) -> None:
         values = np.linspace(0.1, 0.8, 16, dtype=np.float32).reshape(4, 4)

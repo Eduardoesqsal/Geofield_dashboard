@@ -96,6 +96,7 @@ export interface PrescriptionLegendEntry {
   area_hectares: number;
   coverage_percent?: number;
   deviation_percent?: number;
+  dosage?: number;
 }
 
 export interface PrescriptionHistogram {
@@ -341,6 +342,7 @@ export const dashboardApi = {
       manualBreaks?: number[];
       analysisMin?: number;
       analysisMax?: number;
+      doses?: number[];
     },
   ) =>
     request<NdviZoningResponse>("/ndvi_zoning", {
@@ -359,6 +361,7 @@ export const dashboardApi = {
         manual_breaks: options?.manualBreaks,
         analysis_min: options?.analysisMin,
         analysis_max: options?.analysisMax,
+        doses: options?.doses,
       }),
     }),
   createPrescription: (
@@ -375,6 +378,7 @@ export const dashboardApi = {
       manualBreaks?: number[];
       analysisMin?: number;
       analysisMax?: number;
+      doses?: number[];
     },
   ) =>
     request<PrescriptionMapResponse>("/prescriptions", {
@@ -393,6 +397,7 @@ export const dashboardApi = {
         manual_breaks: options?.manualBreaks,
         analysis_min: options?.analysisMin,
         analysis_max: options?.analysisMax,
+        doses: options?.doses,
       }),
     }),
   roiVegetationIndex: (name: "NDWI" | "NDRE", geojson: unknown) =>

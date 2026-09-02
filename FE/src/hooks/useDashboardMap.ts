@@ -389,6 +389,7 @@ export function useDashboardMap(
       cellValueMode: "mean" | "min" | "max" = "mean",
       detailLevel = 1,
       manualBreaks?: number[],
+      doses?: number[],
     ) => {
       const map = mapRef.current;
       if (!map || !state.orthomosaicId)
@@ -421,6 +422,7 @@ export function useDashboardMap(
             manualBreaks,
             analysisMin: activeAnalysisRange(indexName)?.minimum,
             analysisMax: activeAnalysisRange(indexName)?.maximum,
+            doses,
           },
         );
         clearZoningPreview();

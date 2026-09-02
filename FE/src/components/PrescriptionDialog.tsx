@@ -76,6 +76,7 @@ interface PrescriptionDialogProps {
     cellValueMode: "mean" | "min" | "max",
     detailLevel: number,
     manualBreaks?: number[],
+    doses?: number[],
   ) => Promise<PrescriptionMapResponse>;
   onClear: () => void;
   onClose: () => void;
@@ -236,6 +237,9 @@ function histogramAreaPath(values: number[], peak: number): string {
 const quantileLabel = (minimumPercentile: number, maximumPercentile: number) =>
   `P${minimumPercentile.toFixed(0)} - P${maximumPercentile.toFixed(0)}`;
 
+const formatDoseValue = (value: number | null | undefined) =>
+  value == null ? "" : value.toFixed(3).replace(/\.?0+$/, "");
+
 export function PrescriptionDialog({
   open,
   indexName,
@@ -264,6 +268,7 @@ export function PrescriptionDialog({
   );
   const [detailLevel, setDetailLevel] = useState(1);
   const [manualBreaksText, setManualBreaksText] = useState("");
+  const [doseValues, setDoseValues] = useState<string[]>([]);
   const [downloadingJson, setDownloadingJson] = useState(false);
   const [downloadJsonError, setDownloadJsonError] = useState<string | null>(null);
 
@@ -275,6 +280,7 @@ export function PrescriptionDialog({
       setCellValueMode("mean");
       setDetailLevel(1);
       setManualBreaksText("");
+      setDoseValues(Array.from({ length: zoneCount }, () => ""));
       return;
     }
     setZoneCount(source.zone_count ?? 5);
@@ -282,7 +288,18 @@ export function PrescriptionDialog({
     setClassificationMethod(source.classification_method ?? "quantiles");
     setCellValueMode(source.cell_value_mode ?? "mean");
     setDetailLevel(source.detail_level ?? 1);
+    setDoseValues(
+      prescription
+        ? source.legend.map((zone) => formatDoseValue(zone.dosage))
+        : Array.from({ length: source.zone_count ?? 5 }, () => ""),
+    );
   }, [zoning, prescription]);
+
+  useEffect(() => {
+    setDoseValues((current) =>
+      Array.from({ length: zoneCount }, (_, index) => current[index] ?? ""),
+    );
+  }, [zoneCount]);
 
   useEffect(() => {
     if (open) return;
@@ -294,18 +311,6 @@ export function PrescriptionDialog({
     if (cellSizeM < 1 || cellSizeM > 50) return;
     const timeout = window.setTimeout(() => {
       const manualBreaks = parseManualBreaks(manualBreaksText);
-      if (prescription) {
-        void onGeneratePrescription(
-          zoneCount,
-          cellSizeM,
-          gridAngleDeg,
-          classificationMethod,
-          cellValueMode,
-          detailLevel,
-          manualBreaks,
-        );
-        return;
-      }
       if (zoning) {
         void onGenerateZoning(
           zoneCount,
@@ -373,6 +378,11 @@ export function PrescriptionDialog({
   };
 
   const detailSliderValue = 1 - detailLevel;
+  const parsedDoses = doseValues.map((value) => Number(value));
+  const dosesAreValid =
+    parsedDoses.length === zoneCount &&
+    doseValues.every((value) => value.trim() !== "") &&
+    parsedDoses.every((value) => Number.isFinite(value));
   const histogram = activeResponse?.histogram;
   const activeThresholds = activeResponse?.thresholds ?? [];
   const histogramMinimum =
@@ -440,6 +450,7 @@ export function PrescriptionDialog({
       cellValueMode,
       detailLevel,
       parseManualBreaks(manualBreaksText),
+      parsedDoses,
     );
   };
 
@@ -687,6 +698,49 @@ export function PrescriptionDialog({
                 {`El histograma replica la distribucion de las celdas ${activeIndexName} que usa la prescripcion dentro del ROI activo.`}
               </p>
             </section>
+
+            {zoning && (
+              <section className="prescription-panel-card">
+                <div className="prescription-panel-head">
+                  <strong>Dosis por zona</strong>
+                  <span>JSON</span>
+                </div>
+                <div className="prescription-dose-grid">
+                  {Array.from({ length: zoneCount }, (_, index) => {
+                    const zone = zoning.legend[index];
+                    const color = zone?.color ?? colors[index] ?? "#ffffff";
+                    return (
+                      <label key={`dose-${index + 1}`} className="prescription-dose-row">
+                        <span className="prescription-dose-label">
+                          <i style={{ background: color }} />
+                          <b>Zona {index + 1}</b>
+                        </span>
+                        <span className="prescription-dose-input">
+                          <strong>L/ha</strong>
+                          <input
+                            type="number"
+                            step="0.001"
+                            value={doseValues[index] ?? ""}
+                            onChange={(event) =>
+                              setDoseValues((current) =>
+                                current.map((value, valueIndex) =>
+                                  valueIndex === index ? event.target.value : value,
+                                ),
+                              )
+                            }
+                            placeholder="0.000"
+                            disabled={busy}
+                          />
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <small className="prescription-grid-note">
+                  Escribe la dosis exacta que debe exportarse para cada zona en el JSON.
+                </small>
+              </section>
+            )}
           </div>
 
           <div className="prescription-main">
@@ -818,6 +872,7 @@ export function PrescriptionDialog({
                       <span role="columnheader">Desviacion</span>
                       <span role="columnheader">Cobertura</span>
                       <span role="columnheader">Area</span>
+                      <span role="columnheader">Dosis</span>
                       <span role="columnheader">Cuantil</span>
                     </div>
                     {activeResponse.legend.map((zone) => (
@@ -839,6 +894,9 @@ export function PrescriptionDialog({
                           {(zone.coverage_percent ?? 0).toFixed(2)}%
                         </span>
                         <span role="cell">{zone.area_hectares.toFixed(2)} ha</span>
+                        <span role="cell">
+                          {formatDoseValue(zone.dosage)}
+                        </span>
                         <span role="cell" className="prescription-zone-quantile">
                           <strong>
                             {quantileLabel(zone.percentile_min, zone.percentile_max)}
@@ -899,7 +957,7 @@ export function PrescriptionDialog({
             <button
               type="button"
               className="prescription-generate"
-              disabled={busy}
+              disabled={busy || !dosesAreValid}
               onClick={() => void handleGeneratePrescription()}
             >
               {busy ? (

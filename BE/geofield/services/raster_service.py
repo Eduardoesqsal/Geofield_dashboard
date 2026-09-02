@@ -66,6 +66,7 @@ class RasterService:
     RGB_RENDER_VERSION = "webmercator-v3"
     INDEX_RENDER_VERSION = "index-matrix-webmercator-v6"
     RGB_TILE_SIZE = 256
+    EAVISION_DOSAGE_EXPORT_SCALE = 0.1
     _rgb_profile_cache: ClassVar[
         dict[tuple[str, int, int], dict[str, Any]]
     ] = {}
@@ -349,6 +350,15 @@ class RasterService:
                     queue.append((next_row, next_column))
         filled[~target_mask] = 0
         return filled
+
+    @classmethod
+    def _export_prescription_dosage(cls, dosage: float | int | None) -> float:
+        # EAVision interpreta el JSON Pix4D-style con una escala 10x respecto
+        # a la dosis capturada en pantalla. Se exporta en decenas para que la
+        # plataforma muestre la misma unidad ingresada por el usuario.
+        if dosage is None:
+            return 0.0
+        return round(float(dosage) * cls.EAVISION_DOSAGE_EXPORT_SCALE, 3)
 
     @staticmethod
     def _normalize_classification_method(method: str | None) -> str:
@@ -1263,6 +1273,7 @@ class RasterService:
         detail_level: float = 1.0,
         analysis_min: float | None = None,
         analysis_max: float | None = None,
+        doses: list[float] | tuple[float, ...] | None = None,
     ) -> dict[str, Any]:
         data = self._prepare_index_classification(
             index_name,
@@ -1291,6 +1302,20 @@ class RasterService:
             data["geometry"],
         )
         legend = [dict(zone) for zone in data["legend"]]
+        if doses is not None:
+            if len(doses) != len(legend):
+                raise ValueError(
+                    f"Debes enviar exactamente {len(legend)} dosis, una por cada zona.",
+                )
+            try:
+                normalized_doses = [float(value) for value in doses]
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Cada dosis debe ser numerica.") from exc
+            for zone, dosage in zip(legend, normalized_doses, strict=True):
+                zone["dosage"] = dosage
+        else:
+            for zone in legend:
+                zone["dosage"] = 0.0
         json_url = self._save_prescription_geojson(
             prescription_id,
             data,
@@ -1336,7 +1361,7 @@ class RasterService:
                     "zone": int(class_id),
                     "mean": float(zone["mean"]),
                     "label": str(zone["label"]),
-                    "dosage": round(float(zone["mean"]), 3),
+                    "dosage": self._export_prescription_dosage(zone.get("dosage", 0.0)),
                     "level": int(class_id),
                 },
             )

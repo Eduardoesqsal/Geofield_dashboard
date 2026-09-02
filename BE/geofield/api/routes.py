@@ -578,6 +578,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         manual_breaks = payload.get("manual_breaks")
         analysis_min = payload.get("analysis_min")
         analysis_max = payload.get("analysis_max")
+        doses = payload.get("doses")
         geometry = payload_geometry(payload)
         ensure_orthomosaic(orthomosaic_id)
         try:
@@ -593,6 +594,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
                 detail_level,
                 float(analysis_min) if analysis_min is not None else None,
                 float(analysis_max) if analysis_max is not None else None,
+                doses,
             )
         except (ValueError, rasterio.errors.RasterioIOError) as exc:
             raise HTTPException(422, str(exc)) from exc
