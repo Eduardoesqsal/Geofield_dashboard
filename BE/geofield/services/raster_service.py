@@ -59,6 +59,7 @@ class RasterService:
     PIX4D_ZONE_DISPLAY_PALETTES = {
         ("NDVI", 4): ["ff1f1f", "ff9b1f", "d6f01f", "30df1f"],
         ("NDVI", 5): ["ff1f1f", "ffb31f", "fff01f", "b7ef1f", "18e61f"],
+        ("NDWI", 4): ["c0003a", "ffaa00", "4dd4e0", "0000ff"],
         ("NDRE", 4): ["ff1f1f", "ff9b1f", "d6f01f", "30df1f"],
         ("NDRE", 5): ["ff1f1f", "ffb31f", "fff01f", "b7ef1f", "18e61f"],
     }
@@ -299,6 +300,15 @@ class RasterService:
         return sampled
 
     def _zone_palette(self, index_name: str, zone_count: int) -> np.ndarray:
+        palette = self.PIX4D_ZONE_DISPLAY_PALETTES.get((index_name, zone_count))
+        if palette:
+            return np.asarray(
+                [
+                    [int(color[index : index + 2], 16) for index in (0, 2, 4)]
+                    for color in palette
+                ],
+                dtype=np.uint8,
+            )
         positions = np.linspace(0.0, 1.0, max(zone_count, 1), dtype=np.float32)
         return self._sample_ramp(index_name, positions)
 
@@ -1793,6 +1803,76 @@ class RasterService:
             logger.error(message)
             raise ValueError(message)
         return roles["red"], roles["green"], roles["blue"]
+
+    def _multispectral_band_roles(
+        self,
+        src: Any | None = None,
+        *,
+        path: Path | None = None,
+        sensor: str | None = None,
+    ) -> dict[str, int]:
+        """Resolve multispectral semantic roles for NDWI/NDRE style formulas."""
+        if src is None:
+            with rasterio.open(path or self._path()) as dataset:
+                return self._multispectral_band_roles(dataset, sensor=sensor)
+
+        roles: dict[str, int] = {}
+        dataset_wavelengths = self._dataset_wavelengths(src)
+        for index in range(1, src.count + 1):
+            description = src.descriptions[index - 1] or ""
+            tags = src.tags(index)
+            metadata_text = " ".join(
+                [description, *[f"{key} {value}" for key, value in tags.items()]],
+            )
+            role = self._band_role_from_text(metadata_text)
+            if role not in {"blue", "green", "red", "rededge", "nir"}:
+                wavelength = next(
+                    (
+                        self._wavelength_nm(str(value))
+                        for key, value in tags.items()
+                        if "wavelength" in key.lower()
+                    ),
+                    None,
+                )
+                if wavelength is None and dataset_wavelengths:
+                    wavelength = dataset_wavelengths[index - 1]
+                role = self._band_role_from_wavelength(wavelength)
+            if role in {"blue", "green", "red", "rededge", "nir"}:
+                roles.setdefault(role, index)
+
+        selected_sensor = sensor or self.sensor
+        if selected_sensor == "mavic3m" and src.count >= 4:
+            roles.setdefault("green", 1)
+            roles.setdefault("red", 2)
+            roles.setdefault("rededge", 3)
+            roles.setdefault("nir", 4)
+        elif selected_sensor == "micasense":
+            if src.count >= 6:
+                roles.setdefault("blue", 1)
+                roles.setdefault("green", 2)
+                roles.setdefault("red", 4)
+                roles.setdefault("rededge", 5)
+                roles.setdefault("nir", 6)
+            elif src.count >= 5:
+                roles.setdefault("blue", 1)
+                roles.setdefault("green", 2)
+                roles.setdefault("red", 3)
+                roles.setdefault("nir", 4)
+                roles.setdefault("rededge", 5)
+
+        missing = [role for role in ("green", "rededge", "nir") if role not in roles]
+        if missing:
+            details = ", ".join(
+                f"banda {index}: {src.descriptions[index - 1] or 'sin descripcion'}; tags={src.tags(index)}"
+                for index in range(1, src.count + 1)
+            )
+            message = (
+                f"No se pudieron identificar las bandas multiespectrales del raster '{Path(src.name).name}'. "
+                f"Faltan metadatos para: {', '.join(missing)}. {details}"
+            )
+            logger.error(message)
+            raise ValueError(message)
+        return roles
 
     def _index_bands(self, name: str) -> tuple[int, int]:
         """Return bands as (positive, negative) for the normalized difference."""
