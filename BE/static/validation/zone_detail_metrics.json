@@ -1,0 +1,263 @@
+{
+  "source": "BE\\uploads\\2026-09-01\\d5f09b5ed5f0471a8951b66ee96d513e_Ortomosaico.data.tif",
+  "cell_size_m": 3.0,
+  "thresholds": [
+    0.03999999910593033,
+    0.8461115956306458,
+    0.8645126819610596,
+    0.8728929758071899,
+    0.9520000219345093
+  ],
+  "levels": [
+    {
+      "detail_level": 1.0,
+      "parameters": {
+        "strength": 0.0,
+        "nominal_cell_area_m2": 9.0,
+        "minimum_region_area_m2": 9.0,
+        "spectral_iterations": 0,
+        "neighborhood_iterations": 0,
+        "neighbor_support_fraction": 0.9
+      },
+      "connected_components": 487,
+      "isolated_cells": 276,
+      "enclosed_components": 224,
+      "small_components": 12,
+      "mean_component_cells": 20.299794661190965,
+      "maximum_component_cells": 1881,
+      "mean_component_area_m2": 178.71185743979711,
+      "maximum_component_area_m2": 16929.0,
+      "internal_perimeter_m": 13626.0,
+      "zones": [
+        {
+          "class_id": 1,
+          "cell_count": 2472,
+          "area_hectares": 2.07426328125,
+          "coverage_percent": 23.8331542668554,
+          "mean": 0.7740870408508599
+        },
+        {
+          "class_id": 2,
+          "cell_count": 2471,
+          "area_hectares": 2.21891015625,
+          "coverage_percent": 25.49513773696536,
+          "mean": 0.8589242682459788
+        },
+        {
+          "class_id": 3,
+          "cell_count": 2471,
+          "area_hectares": 2.208353515625,
+          "coverage_percent": 25.37384260204702,
+          "mean": 0.8685205026883924
+        },
+        {
+          "class_id": 4,
+          "cell_count": 2472,
+          "area_hectares": 2.201740625,
+          "coverage_percent": 25.297860905875602,
+          "mean": 0.880712064725046
+        }
+      ]
+    },
+    {
+      "detail_level": 0.75,
+      "parameters": {
+        "strength": 0.217637640824031,
+        "nominal_cell_area_m2": 9.0,
+        "minimum_region_area_m2": 101.25698646055537,
+        "spectral_iterations": 3,
+        "neighborhood_iterations": 2,
+        "neighbor_support_fraction": 0.8564724718351938
+      },
+      "connected_components": 27,
+      "isolated_cells": 0,
+      "enclosed_components": 6,
+      "small_components": 3,
+      "mean_component_cells": 366.14814814814815,
+      "maximum_component_cells": 1854,
+      "mean_component_area_m2": 3223.4323915993036,
+      "maximum_component_area_m2": 16686.0,
+      "internal_perimeter_m": 7077.0,
+      "zones": [
+        {
+          "class_id": 1,
+          "cell_count": 2586,
+          "area_hectares": 2.185825390625,
+          "coverage_percent": 25.114995866764488,
+          "mean": 0.7792113116671462
+        },
+        {
+          "class_id": 2,
+          "cell_count": 2498,
+          "area_hectares": 2.23928203125,
+          "coverage_percent": 25.72920929575394,
+          "mean": 0.8594760929720207
+        },
+        {
+          "class_id": 3,
+          "cell_count": 2587,
+          "area_hectares": 2.30911015625,
+          "coverage_percent": 26.531530047576418,
+          "mean": 0.8687948816508649
+        },
+        {
+          "class_id": 4,
+          "cell_count": 2215,
+          "area_hectares": 1.9690498046875,
+          "coverage_percent": 22.62425805752024,
+          "mean": 0.8809647485060207
+        }
+      ]
+    },
+    {
+      "detail_level": 0.5,
+      "parameters": {
+        "strength": 0.4665164957684037,
+        "nominal_cell_area_m2": 9.0,
+        "minimum_region_area_m2": 329.02797309435437,
+        "spectral_iterations": 5,
+        "neighborhood_iterations": 3,
+        "neighbor_support_fraction": 0.8066967008463193
+      },
+      "connected_components": 20,
+      "isolated_cells": 0,
+      "enclosed_components": 5,
+      "small_components": 3,
+      "mean_component_cells": 494.3,
+      "maximum_component_cells": 1842,
+      "mean_component_area_m2": 4351.63372865906,
+      "maximum_component_area_m2": 16578.0,
+      "internal_perimeter_m": 6426.0,
+      "zones": [
+        {
+          "class_id": 1,
+          "cell_count": 2623,
+          "area_hectares": 2.219125390625,
+          "coverage_percent": 25.497610766358147,
+          "mean": 0.7804704165380844
+        },
+        {
+          "class_id": 2,
+          "cell_count": 2467,
+          "area_hectares": 2.21138203125,
+          "coverage_percent": 25.408640055553843,
+          "mean": 0.8598373210971717
+        },
+        {
+          "class_id": 3,
+          "cell_count": 2688,
+          "area_hectares": 2.3979083984375,
+          "coverage_percent": 27.551816249338096,
+          "mean": 0.8688181233752571
+        },
+        {
+          "class_id": 4,
+          "cell_count": 2108,
+          "area_hectares": 1.8748515625,
+          "coverage_percent": 21.541926196364997,
+          "mean": 0.8810825509294097
+        }
+      ]
+    },
+    {
+      "detail_level": 0.25,
+      "parameters": {
+        "strength": 0.7287312433973051,
+        "nominal_cell_area_m2": 9.0,
+        "minimum_region_area_m2": 710.1357423538607,
+        "spectral_iterations": 8,
+        "neighborhood_iterations": 4,
+        "neighbor_support_fraction": 0.754253751320539
+      },
+      "connected_components": 14,
+      "isolated_cells": 0,
+      "enclosed_components": 4,
+      "small_components": 2,
+      "mean_component_cells": 706.1428571428571,
+      "maximum_component_cells": 2605,
+      "mean_component_area_m2": 6216.619612370086,
+      "maximum_component_area_m2": 23360.796108476818,
+      "internal_perimeter_m": 5868.0,
+      "zones": [
+        {
+          "class_id": 1,
+          "cell_count": 2649,
+          "area_hectares": 2.2425240234375,
+          "coverage_percent": 25.766459581498797,
+          "mean": 0.7815361525167178
+        },
+        {
+          "class_id": 2,
+          "cell_count": 2330,
+          "area_hectares": 2.09624609375,
+          "coverage_percent": 24.085735395908667,
+          "mean": 0.8602208972480987
+        },
+        {
+          "class_id": 3,
+          "cell_count": 2944,
+          "area_hectares": 2.612666015625,
+          "coverage_percent": 30.01936772492876,
+          "mean": 0.8684926116206165
+        },
+        {
+          "class_id": 4,
+          "cell_count": 1963,
+          "area_hectares": 1.751831640625,
+          "coverage_percent": 20.128435053535476,
+          "mean": 0.8811958079687875
+        }
+      ]
+    },
+    {
+      "detail_level": 0.0,
+      "parameters": {
+        "strength": 1.0,
+        "nominal_cell_area_m2": 9.0,
+        "minimum_region_area_m2": 1256.804014866094,
+        "spectral_iterations": 10,
+        "neighborhood_iterations": 5,
+        "neighbor_support_fraction": 0.7
+      },
+      "connected_components": 12,
+      "isolated_cells": 0,
+      "enclosed_components": 5,
+      "small_components": 2,
+      "mean_component_cells": 823.8333333333334,
+      "maximum_component_cells": 2714,
+      "mean_component_area_m2": 7252.722881098433,
+      "maximum_component_area_m2": 24341.78160881251,
+      "internal_perimeter_m": 5463.0,
+      "zones": [
+        {
+          "class_id": 1,
+          "cell_count": 2637,
+          "area_hectares": 2.231725390625,
+          "coverage_percent": 25.6423839716098,
+          "mean": 0.7810865074212567
+        },
+        {
+          "class_id": 2,
+          "cell_count": 2318,
+          "area_hectares": 2.08544609375,
+          "coverage_percent": 23.961644077121534,
+          "mean": 0.8603189971962384
+        },
+        {
+          "class_id": 3,
+          "cell_count": 3114,
+          "area_hectares": 2.75079609375,
+          "coverage_percent": 31.606473609993657,
+          "mean": 0.8689414448808263
+        },
+        {
+          "class_id": 4,
+          "cell_count": 1817,
+          "area_hectares": 1.6353,
+          "coverage_percent": 18.789493853018392,
+          "mean": 0.8812057381812596
+        }
+      ]
+    }
+  ]
+}

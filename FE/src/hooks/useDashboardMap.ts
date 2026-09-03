@@ -278,7 +278,7 @@ export function useDashboardMap(
           return {
             color: "#ffffff",
             weight: 1,
-            opacity: 0.7,
+            opacity: 0.1,
             fillColor: color,
             fillOpacity: 0.72,
           };
@@ -305,17 +305,28 @@ export function useDashboardMap(
       }
 
       const geojson = (await response.json()) as GeoJsonObject;
-      classificationGridRef.current = L.geoJSON(geojson, {
+      const gridOpacityForZoom = (zoom: number) => {
+        if (zoom <= 18) return 0.008;
+        if (zoom >= 22) return 0.05;
+        return 0.008 + ((zoom - 18) / 4) * 0.042;
+      };
+      const gridLayer = L.geoJSON(geojson, {
         pane: "classificationGridPane",
         interactive: false,
         style: {
           color: "#ffffff",
           weight: 1,
-          opacity: 0.72,
+          opacity: gridOpacityForZoom(map.getZoom()),
           lineCap: "square",
           lineJoin: "miter",
         },
       }).addTo(map);
+      const updateGridOpacity = () => {
+        gridLayer.setStyle({ opacity: gridOpacityForZoom(map.getZoom()) });
+      };
+      map.on("zoomend", updateGridOpacity);
+      gridLayer.once("remove", () => map.off("zoomend", updateGridOpacity));
+      classificationGridRef.current = gridLayer;
     },
     [clearClassificationGrid],
   );
