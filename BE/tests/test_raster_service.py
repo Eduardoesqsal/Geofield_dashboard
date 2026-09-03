@@ -660,6 +660,69 @@ class RasterServiceIndexTileTests(unittest.TestCase):
             np.quantile(values, [0.25, 0.5, 0.75]).astype(np.float32),
         )
 
+    def test_equal_quantile_and_manual_classification_stay_separate_from_smoothing(self) -> None:
+        values = np.linspace(0.1, 0.9, 100, dtype=np.float32).reshape(10, 10)
+        valid = np.ones_like(values, dtype=bool)
+        configurations = (
+            ("quantiles", None),
+            ("equal_intervals", None),
+            ("manual", [0.30, 0.55, 0.72]),
+        )
+
+        for method, manual_breaks in configurations:
+            with self.subTest(method=method):
+                breaks = self.service._classification_breaks(
+                    values.ravel(),
+                    4,
+                    method,
+                    0.1,
+                    0.9,
+                    manual_breaks,
+                )
+                initial = (np.digitize(values, breaks[1:-1]) + 1).astype(np.uint8)
+                detailed = self.service._regularize_zones(
+                    initial,
+                    valid,
+                    values,
+                    breaks,
+                    1.0,
+                )
+                np.testing.assert_array_equal(detailed, initial)
+                np.testing.assert_array_equal(
+                    breaks,
+                    self.service._classification_breaks(
+                        values.ravel(),
+                        4,
+                        method,
+                        0.1,
+                        0.9,
+                        manual_breaks,
+                    ),
+                )
+
+    def test_cell_aggregation_supports_mean_minimum_and_maximum(self) -> None:
+        values = np.arange(1, 17, dtype=np.float32).reshape(4, 4)
+        valid = np.ones_like(values, dtype=bool)
+        expected = {
+            "mean": np.array([[3.5, 5.5], [11.5, 13.5]], dtype=np.float32),
+            "min": np.array([[1, 3], [9, 11]], dtype=np.float32),
+            "max": np.array([[6, 8], [14, 16]], dtype=np.float32),
+        }
+
+        for mode, expected_values in expected.items():
+            with self.subTest(mode=mode):
+                aggregated, areas = self.service._aggregate_cell_values(
+                    values,
+                    valid,
+                    height=2,
+                    width=2,
+                    oversample=2,
+                    cell_value_mode=mode,
+                    cell_size_m=2,
+                )
+                np.testing.assert_array_equal(aggregated, expected_values)
+                np.testing.assert_array_equal(areas, np.full((2, 2), 4, dtype=np.float32))
+
     def test_slider_preserves_thresholds_but_changes_coverage(self) -> None:
         values = np.array(
             [
@@ -706,7 +769,7 @@ class RasterServiceIndexTileTests(unittest.TestCase):
             len(np.unique(detailed[detailed > 0])),
         )
 
-    def test_low_detail_merges_thin_extreme_bands_into_middle_classes(self) -> None:
+    def test_low_detail_preserves_large_agronomic_bands(self) -> None:
         zones = np.tile(
             np.array([1, 2, 3, 4, 5, 4, 3, 2], dtype=np.uint8),
             (18, 1),
@@ -721,13 +784,9 @@ class RasterServiceIndexTileTests(unittest.TestCase):
         detailed = self.service._regularize_zones(zones, valid, values, breaks, 1.0)
         simplified = self.service._regularize_zones(zones, valid, values, breaks, 0.0)
 
-        detailed_extremes = int(np.count_nonzero(np.isin(detailed, [1, 5])))
-        simplified_extremes = int(np.count_nonzero(np.isin(simplified, [1, 5])))
-        simplified_middle = int(np.count_nonzero(np.isin(simplified, [2, 3, 4])))
-
-        self.assertEqual(detailed_extremes, 36)
-        self.assertLess(simplified_extremes, detailed_extremes)
-        self.assertGreater(simplified_middle, 18 * 6)
+        np.testing.assert_array_equal(detailed, zones)
+        np.testing.assert_array_equal(simplified[1:-1], zones[1:-1])
+        self.assertLessEqual(int(np.count_nonzero(simplified != zones)), 2)
 
     def test_zone_deviation_is_percentage_against_field_mean(self) -> None:
         field_mean = 0.508
@@ -789,6 +848,60 @@ class RasterServiceIndexTileTests(unittest.TestCase):
         self.assertAlmostEqual(histogram["maximum"], 0.85, places=2)
         self.assertEqual(sum(histogram["bins"]), 4)
         self.assertAlmostEqual(zoning["field_mean"], float(np.mean(ndvi_targets)), places=2)
+
+    def test_zoning_mean_integrates_all_native_pixels_in_each_cell(self) -> None:
+        raster_path = self.root / "zoning-native-pixel-mean.tif"
+        ndvi_targets = np.empty((40, 40), dtype=np.float32)
+        ndvi_targets[:20, :20] = 0.10
+        ndvi_targets[:20, 20:] = 0.30
+        ndvi_targets[20:, :20] = 0.50
+        ndvi_targets[20:, 20:] = 0.70
+        # Narrow rows deliberately fall between most points of the previous
+        # 4 x 4-per-cell sampler. A true cell mean must still include them.
+        ndvi_targets[::10] += 0.20
+        red = np.ones_like(ndvi_targets)
+        nir = ((1 + ndvi_targets) / (1 - ndvi_targets)).astype(np.float32)
+        bands = np.ones((6, 40, 40), dtype=np.float32)
+        bands[3] = red
+        bands[5] = nir
+        with rasterio.open(
+            raster_path,
+            "w",
+            driver="GTiff",
+            width=40,
+            height=40,
+            count=6,
+            dtype="float32",
+            crs="EPSG:32613",
+            transform=from_origin(500_000, 2_500_000, 0.1, 0.1),
+        ) as destination:
+            destination.write(bands)
+            for index, description in enumerate(
+                ("Blue", "Green", "Panchromatic", "Red", "Red edge", "NIR"),
+                1,
+            ):
+                destination.set_band_description(index, description)
+
+        self.service.active_path = raster_path
+        self.service.sensor = "micasense"
+        roi = project_geometry(
+            pyproj.Transformer.from_crs(
+                "EPSG:32613",
+                "EPSG:4326",
+                always_xy=True,
+            ).transform,
+            box(500_000, 2_499_996, 500_004, 2_500_000),
+        )
+        prepared = self.service._prepare_index_classification(
+            "NDVI",
+            roi,
+            zone_count=2,
+            cell_size_m=2,
+            cell_value_mode="mean",
+        )
+        expected = ndvi_targets.reshape(2, 20, 2, 20).mean(axis=(1, 3))
+
+        np.testing.assert_allclose(prepared["index_values"], expected, atol=1e-5)
 
     def test_quantile_thresholds_are_computed_from_visible_cell_values(self) -> None:
         raster_path = self.root / "zoning-quantile-cells.tif"
@@ -921,7 +1034,7 @@ class RasterServiceIndexTileTests(unittest.TestCase):
 
         np.testing.assert_array_equal(values, snapshot)
 
-    def test_single_cell_island_survives_max_detail_and_merges_with_simplification(self) -> None:
+    def test_fine_preserves_single_cell_and_coarse_removes_it(self) -> None:
         zones = np.array(
             [
                 [1, 1, 1],
@@ -969,7 +1082,181 @@ class RasterServiceIndexTileTests(unittest.TestCase):
 
         simplified = self.service._regularize_zones(zones, valid, values, breaks, 0.0)
 
-        np.testing.assert_array_equal(simplified[1, 1:6], np.full(5, 2, dtype=np.uint8))
+        np.testing.assert_array_equal(simplified[1, 2:5], np.full(3, 2, dtype=np.uint8))
+        self.assertEqual(int(simplified[1, 1]), 1)
+        self.assertEqual(int(simplified[1, 5]), 1)
+
+    def test_coarse_regularization_fills_small_enclosed_hole(self) -> None:
+        zones = np.array(
+            [
+                [1, 1, 1, 1, 1],
+                [1, 2, 2, 2, 1],
+                [1, 2, 3, 2, 1],
+                [1, 2, 2, 2, 1],
+                [1, 1, 1, 1, 1],
+            ],
+            dtype=np.uint8,
+        )
+        values = np.array(
+            [
+                [0.12, 0.12, 0.12, 0.12, 0.12],
+                [0.12, 0.18, 0.18, 0.18, 0.12],
+                [0.12, 0.18, 0.24, 0.18, 0.12],
+                [0.12, 0.18, 0.18, 0.18, 0.12],
+                [0.12, 0.12, 0.12, 0.12, 0.12],
+            ],
+            dtype=np.float32,
+        )
+        valid = np.ones_like(values, dtype=bool)
+
+        breaks = np.array([0.10, 0.15, 0.21, 0.30], dtype=np.float32)
+        filled = self.service._regularize_zones(zones, valid, values, breaks, 0.0)
+
+        self.assertEqual(int(filled[2, 2]), 2)
+
+    def test_connected_component_does_not_join_corner_touching_islands(self) -> None:
+        zones = np.array(
+            [
+                [2, 1, 1],
+                [1, 2, 1],
+                [1, 1, 3],
+            ],
+            dtype=np.uint8,
+        )
+        valid = np.ones_like(zones, dtype=bool)
+        visited = np.zeros_like(zones, dtype=bool)
+
+        class_id, component, perimeter_counts = self.service._connected_component(
+            zones,
+            valid,
+            visited,
+            0,
+            0,
+            self.service._component_connectivity_offsets(),
+            self.service._neighbor_offsets(),
+        )
+
+        self.assertEqual(class_id, 2)
+        self.assertEqual(component, [(0, 0)])
+        self.assertEqual(perimeter_counts, {1: 2})
+
+    def test_simplification_absorbs_corner_touching_single_cells(self) -> None:
+        zones = np.ones((5, 5), dtype=np.uint8)
+        zones[1, 1] = 2
+        zones[2, 2] = 2
+        zones[3, 3] = 2
+        valid = np.ones_like(zones, dtype=bool)
+        values = np.full(zones.shape, 0.12, dtype=np.float32)
+        values[zones == 2] = 0.18
+        breaks = np.array([0.10, 0.14, 0.20], dtype=np.float32)
+
+        detailed = self.service._regularize_zones(zones, valid, values, breaks, 1.0)
+        simplified = self.service._regularize_zones(zones, valid, values, breaks, 0.0)
+
+        np.testing.assert_array_equal(detailed, zones)
+        np.testing.assert_array_equal(simplified, np.ones_like(zones))
+
+    def test_simple_removes_a_weakly_attached_spur_from_a_large_component(self) -> None:
+        zones = np.ones((13, 17), dtype=np.uint8)
+        zones[2:11, 2:11] = 2
+        zones[6, 11:14] = 2
+        valid = np.ones_like(zones, dtype=bool)
+        values = np.full(zones.shape, 0.12, dtype=np.float32)
+        values[zones == 2] = 0.18
+        breaks = np.array([0.10, 0.14, 0.20], dtype=np.float32)
+
+        detailed = self.service._regularize_zones(zones, valid, values, breaks, 1.0)
+        simplified = self.service._regularize_zones(zones, valid, values, breaks, 0.0)
+
+        self.assertEqual(int(detailed[6, 13]), 2)
+        self.assertEqual(int(detailed[6, 12]), 2)
+        np.testing.assert_array_equal(simplified[2:11, 2:11], np.full((9, 9), 2, dtype=np.uint8))
+        np.testing.assert_array_equal(simplified[6, 11:14], np.array([2, 2, 1], dtype=np.uint8))
+
+    def test_component_merge_combines_boundary_spectral_and_continuity_evidence(self) -> None:
+        zones = np.array(
+            [
+                [1, 1, 1, 2, 2],
+                [1, 3, 1, 2, 2],
+                [1, 1, 2, 2, 2],
+            ],
+            dtype=np.uint8,
+        )
+        values = np.where(zones == 1, 0.10, np.where(zones == 2, 0.48, 0.50)).astype(np.float32)
+        areas = np.ones_like(values, dtype=np.float32)
+        target = self.service._select_component_target(
+            {1: 3, 2: 2},
+            3,
+            [(1, 1)],
+            zones,
+            values,
+            areas,
+            {1: 6.0, 2: 7.0, 3: 1.0},
+            np.array([0.0, 0.2, 0.4, 0.55], dtype=np.float32),
+        )
+
+        self.assertEqual(target, 2)
+
+    def test_regularization_never_crosses_nodata_barrier(self) -> None:
+        zones = np.ones((7, 9), dtype=np.uint8)
+        zones[:, 4] = 0
+        zones[:, 5:] = 2
+        valid = zones > 0
+        values = np.where(zones == 2, 0.8, 0.2).astype(np.float32)
+        values[~valid] = np.nan
+        breaks = np.array([0.0, 0.5, 1.0], dtype=np.float32)
+
+        simplified = self.service._regularize_zones(zones, valid, values, breaks, 0.0)
+
+        np.testing.assert_array_equal(simplified[:, 4], np.zeros(7, dtype=np.uint8))
+        np.testing.assert_array_equal(simplified[:, :4], np.ones((7, 4), dtype=np.uint8))
+        np.testing.assert_array_equal(simplified[:, 5:], np.full((7, 4), 2, dtype=np.uint8))
+
+    def test_detail_levels_progressively_reduce_fragmentation_and_perimeter(self) -> None:
+        height, width = 80, 120
+        rows, columns = np.mgrid[:height, :width]
+        values = (
+            0.12
+            + 0.72 * columns / (width - 1)
+            + 0.06 * np.sin(rows / 8)
+        ).astype(np.float32)
+        breaks = np.array([0.05, 0.25, 0.45, 0.65, 0.90], dtype=np.float32)
+        zones = (np.digitize(values, breaks[1:-1]) + 1).astype(np.uint8)
+        random = np.random.default_rng(42)
+        noisy_rows = random.integers(0, height, 700)
+        noisy_columns = random.integers(0, width, 700)
+        zones[noisy_rows, noisy_columns] = random.integers(1, 5, 700)
+        valid = np.ones_like(zones, dtype=bool)
+        areas = np.full(zones.shape, 9.0, dtype=np.float32)
+        metrics = []
+
+        for detail_level in (1.0, 0.75, 0.50, 0.25, 0.0):
+            result = self.service._regularize_zones(
+                zones,
+                valid,
+                values,
+                breaks,
+                detail_level,
+                areas,
+            )
+            parameters = self.service._spatial_detail_parameters(detail_level, valid, areas)
+            metrics.append(
+                self.service._zone_debug_snapshot(
+                    result,
+                    valid,
+                    values,
+                    areas,
+                    4,
+                    float(parameters["minimum_region_area_m2"]),
+                ),
+            )
+
+        component_counts = [metric["connected_components"] for metric in metrics]
+        perimeters = [metric["internal_perimeter_m"] for metric in metrics]
+        self.assertEqual(component_counts, sorted(component_counts, reverse=True))
+        self.assertLess(component_counts[-1], component_counts[0] * 0.05)
+        self.assertLess(perimeters[-1], perimeters[0] * 0.25)
+        self.assertTrue(all(len(metric["zones"]) == 4 for metric in metrics))
 
 
 class CountingRasterService(RasterService):
