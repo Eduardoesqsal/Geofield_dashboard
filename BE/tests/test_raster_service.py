@@ -701,9 +701,9 @@ class RasterServiceIndexTileTests(unittest.TestCase):
         detailed_counts = [int(np.count_nonzero(detailed == class_id)) for class_id in range(1, 5)]
         simplified_counts = [int(np.count_nonzero(simplified == class_id)) for class_id in range(1, 5)]
         self.assertNotEqual(detailed_counts, simplified_counts)
-        self.assertGreater(
-            simplified_counts[1] + simplified_counts[2],
-            detailed_counts[1] + detailed_counts[2],
+        self.assertLess(
+            len(np.unique(simplified[simplified > 0])),
+            len(np.unique(detailed[detailed > 0])),
         )
 
     def test_low_detail_merges_thin_extreme_bands_into_middle_classes(self) -> None:
@@ -947,6 +947,30 @@ class RasterServiceIndexTileTests(unittest.TestCase):
         self.assertEqual(int(detailed[1, 1]), 4)
         self.assertNotEqual(int(simplified[1, 1]), 4)
 
+    def test_simplification_preserves_long_narrow_component(self) -> None:
+        zones = np.array(
+            [
+                [1, 1, 1, 1, 1, 1, 1],
+                [1, 2, 2, 2, 2, 2, 1],
+                [1, 1, 1, 1, 1, 1, 1],
+            ],
+            dtype=np.uint8,
+        )
+        values = np.array(
+            [
+                [0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12],
+                [0.12, 0.18, 0.18, 0.18, 0.18, 0.18, 0.12],
+                [0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12],
+            ],
+            dtype=np.float32,
+        )
+        valid = np.ones_like(values, dtype=bool)
+        breaks = np.array([0.10, 0.14, 0.16, 0.18, 0.20], dtype=np.float32)
+
+        simplified = self.service._regularize_zones(zones, valid, values, breaks, 0.0)
+
+        np.testing.assert_array_equal(simplified[1, 1:6], np.full(5, 2, dtype=np.uint8))
+
 
 class CountingRasterService(RasterService):
     def __init__(self, settings: Settings) -> None:
@@ -1187,6 +1211,39 @@ class RasterServiceRgbTileTests(unittest.TestCase):
 
         self.assertIn(str(raster_path.stat().st_mtime_ns), version)
         self.assertTrue(version.endswith(service.RGB_RENDER_VERSION))
+
+    def test_tile_cache_path_compacts_long_windows_unsafe_components(self) -> None:
+        raster_path = self.root / ("d5f09b5ed5f0471a8951b66ee96d513e_Ortomosaico.data" * 2 + ".tif")
+        with rasterio.open(
+            raster_path,
+            "w",
+            driver="GTiff",
+            width=2,
+            height=2,
+            count=3,
+            dtype="uint8",
+            crs="EPSG:4326",
+            transform=from_origin(0, 2, 1, 1),
+        ) as destination:
+            destination.write(np.ones((3, 2, 2), dtype=np.uint8))
+
+        service = RasterService(self._settings(raster_path))
+        cache_path = service._tile_cache_path(
+            "crop-index",
+            service.index_tile_cache_version(),
+            18,
+            57184,
+            115699,
+            variant=(
+                "ndvi-759302376c324c8ab2bd5f9633d21b2a-linear-transparent-"
+                "0.0393-0.9516"
+            ),
+        )
+
+        self.assertLess(len(str(cache_path)), 240)
+        self.assertLess(len(cache_path.name), 100)
+        RasterService._write_tile_cache(cache_path, b"png")
+        self.assertEqual(cache_path.read_bytes(), b"png")
 
     def test_rgb_tile_is_cached_after_first_render(self) -> None:
         raster_path = self.root / "rgb-cache.tif"

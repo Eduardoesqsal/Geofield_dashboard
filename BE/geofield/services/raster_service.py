@@ -7,6 +7,7 @@ Encapsula lectura de ortomosaicos, tiles, recortes, reproyección y cálculo de
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import logging
 import re
@@ -810,6 +811,19 @@ class RasterService:
             return 4
         return 5
 
+    @classmethod
+    def _progressive_component_thresholds(cls, detail_level: float) -> list[int]:
+        minimum_cells = cls._minimum_component_cells(detail_level)
+        if minimum_cells <= 1:
+            return [1]
+        thresholds = {
+            2,
+            max(2, int(round(minimum_cells * 0.45))),
+            max(2, int(round(minimum_cells * 0.7))),
+            minimum_cells,
+        }
+        return sorted(thresholds)
+
     @staticmethod
     def _component_span(component: list[tuple[int, int]]) -> tuple[int, int]:
         rows = [row for row, _column in component]
@@ -824,19 +838,149 @@ class RasterService:
         cls,
         component: list[tuple[int, int]],
         detail_level: float,
+        shape: tuple[int, int],
     ) -> bool:
         if not component:
             return False
         row_span, column_span = cls._component_span(component)
         major_span = max(row_span, column_span)
         minor_span = min(row_span, column_span)
+        boundary_contacts = sum(
+            1
+            for row, column in component
+            if row == 0 or column == 0 or row == shape[0] - 1 or column == shape[1] - 1
+        )
         if major_span <= 2:
             return False
-        if len(component) < max(4, cls._minimum_component_cells(detail_level)):
+        if len(component) < 4:
             return False
         max_minor_span = 1 if detail_level <= 0.35 else 2
         minimum_major_span = 4 if detail_level <= 0.35 else 5
-        return minor_span <= max_minor_span and major_span >= minimum_major_span
+        if minor_span > max_minor_span or major_span < minimum_major_span:
+            return False
+        if boundary_contacts / len(component) > 0.3:
+            return False
+        if minor_span == 1:
+            return True
+        density = len(component) / float(row_span * column_span)
+        return density <= 0.7 or major_span >= minimum_major_span + 2
+
+    @staticmethod
+    def _connected_component(
+        zones: np.ndarray,
+        class_valid: np.ndarray,
+        visited: np.ndarray,
+        start_row: int,
+        start_column: int,
+        offsets: tuple[tuple[int, int], ...],
+    ) -> tuple[int, list[tuple[int, int]], dict[int, int]]:
+        class_id = int(zones[start_row, start_column])
+        component: list[tuple[int, int]] = []
+        perimeter_counts: dict[int, int] = {}
+        queue = deque([(start_row, start_column)])
+        visited[start_row, start_column] = True
+        while queue:
+            row, column = queue.popleft()
+            component.append((row, column))
+            for row_delta, column_delta in offsets:
+                next_row = row + row_delta
+                next_column = column + column_delta
+                if not (
+                    0 <= next_row < zones.shape[0]
+                    and 0 <= next_column < zones.shape[1]
+                    and class_valid[next_row, next_column]
+                ):
+                    continue
+                next_class = int(zones[next_row, next_column])
+                if next_class == class_id:
+                    if not visited[next_row, next_column]:
+                        visited[next_row, next_column] = True
+                        queue.append((next_row, next_column))
+                    continue
+                if next_class > 0:
+                    perimeter_counts[next_class] = perimeter_counts.get(next_class, 0) + 1
+        return class_id, component, perimeter_counts
+
+    @staticmethod
+    def _select_component_target(
+        perimeter_counts: dict[int, int],
+        class_sizes: dict[int, int],
+        class_id: int,
+    ) -> int | None:
+        if not perimeter_counts:
+            return None
+        return min(
+            perimeter_counts,
+            key=lambda candidate: (
+                -perimeter_counts[candidate],
+                -class_sizes.get(candidate, 0),
+                abs(candidate - class_id),
+                candidate,
+            ),
+        )
+
+    def _component_class_sizes(
+        self,
+        zones: np.ndarray,
+        class_valid: np.ndarray,
+    ) -> dict[int, int]:
+        class_sizes: dict[int, int] = {}
+        for class_id in zones[class_valid]:
+            zone_id = int(class_id)
+            if zone_id <= 0:
+                continue
+            class_sizes[zone_id] = class_sizes.get(zone_id, 0) + 1
+        return class_sizes
+
+    def _absorb_small_components(
+        self,
+        zones: np.ndarray,
+        class_valid: np.ndarray,
+        min_component_cells: int,
+        detail_level: float,
+    ) -> np.ndarray:
+        if min_component_cells <= 1:
+            return zones.copy()
+        result = zones.copy()
+        visited = np.zeros(result.shape, dtype=bool)
+        offsets = self._neighbor_offsets()
+        class_sizes = self._component_class_sizes(result, class_valid)
+        components_to_absorb: list[tuple[list[tuple[int, int]], int, int]] = []
+
+        for start_row, start_column in zip(*np.nonzero(class_valid), strict=True):
+            if visited[start_row, start_column]:
+                continue
+            class_id, component, perimeter_counts = self._connected_component(
+                result,
+                class_valid,
+                visited,
+                start_row,
+                start_column,
+                offsets,
+            )
+            if class_id <= 0 or len(component) >= min_component_cells:
+                continue
+            if self._preserve_component_shape(component, detail_level, result.shape):
+                continue
+            target_class = self._select_component_target(
+                perimeter_counts,
+                class_sizes,
+                class_id,
+            )
+            if target_class is None or target_class == class_id:
+                continue
+            components_to_absorb.append((component, class_id, target_class))
+
+        for component, class_id, target_class in sorted(
+            components_to_absorb,
+            key=lambda item: (len(item[0]), item[1]),
+        ):
+            for row, column in component:
+                if result[row, column] != class_id:
+                    continue
+                result[row, column] = target_class
+
+        return result
 
     @classmethod
     def _zone_debug_snapshot(
@@ -923,137 +1067,15 @@ class RasterService:
     ) -> np.ndarray:
         if detail_level >= 0.99:
             return initial_zones.copy()
-
-        strength = self._detail_strength(detail_level)
-        threshold = self._interpolate_detail(detail_level, 0.88, 0.44)
-        local_threshold = self._interpolate_detail(detail_level, 0.75, 0.34)
-        tolerance_alpha = self._interpolate_detail(detail_level, 0.12, 0.95)
-        gain_threshold = self._interpolate_detail(detail_level, 0.22, 0.06)
-        max_jump = 1 if detail_level >= 0.3 else 2
-        max_iterations = max(1, int(round(2 + strength * 12)))
-        if max_iterations <= 0:
-            return initial_zones.copy()
         result = initial_zones.copy()
-        zone_count = len(breaks) - 1
-        class_centers = np.asarray(
-            [
-                0.0,
-                *[
-                    float((breaks[class_id - 1] + breaks[class_id]) / 2)
-                    for class_id in range(1, zone_count + 1)
-                ],
-            ],
-            dtype=np.float32,
-        )
-        offsets = self._neighbor_offsets()
-        radius = self._detail_window_radius(detail_level)
-        window_offsets = [
-            (row_delta, column_delta)
-            for row_delta in range(-radius, radius + 1)
-            for column_delta in range(-radius, radius + 1)
-            if row_delta != 0 or column_delta != 0
-        ]
-
-        for _iteration in range(max_iterations):
-            changes: list[tuple[int, int, int]] = []
-            for row, column in zip(*np.nonzero(class_valid), strict=True):
-                current_class = int(result[row, column])
-                if current_class <= 0:
-                    continue
-                local_counts = np.zeros(zone_count + 1, dtype=np.float32)
-                local_neighbors = 0.0
-                for row_delta, column_delta in offsets:
-                    next_row = row + row_delta
-                    next_column = column + column_delta
-                    if (
-                        0 <= next_row < result.shape[0]
-                        and 0 <= next_column < result.shape[1]
-                        and class_valid[next_row, next_column]
-                    ):
-                        neighbor_class = int(result[next_row, next_column])
-                        if neighbor_class > 0:
-                            local_neighbors += 1.0
-                            local_counts[neighbor_class] += 1.0
-                counts = np.zeros(zone_count + 1, dtype=np.float32)
-                valid_neighbors = 0.0
-                for row_delta, column_delta in window_offsets:
-                    next_row = row + row_delta
-                    next_column = column + column_delta
-                    if (
-                        0 <= next_row < result.shape[0]
-                        and 0 <= next_column < result.shape[1]
-                        and class_valid[next_row, next_column]
-                    ):
-                        neighbor_class = int(result[next_row, next_column])
-                        if neighbor_class > 0:
-                            distance = max(abs(row_delta), abs(column_delta))
-                            weight = 1.0 / max(distance, 1)
-                            valid_neighbors += weight
-                            counts[neighbor_class] += weight
-                if not valid_neighbors:
-                    continue
-                majority_class = int(np.argmax(counts[1:]) + 1)
-                majority_count = float(counts[majority_class])
-                if majority_class == current_class or majority_count <= 0:
-                    continue
-                majority_ratio = majority_count / valid_neighbors
-                local_majority_class = int(np.argmax(local_counts[1:]) + 1)
-                local_majority_ratio = (
-                    float(local_counts[local_majority_class]) / local_neighbors
-                    if local_neighbors > 0
-                    else 0.0
-                )
-                local_current_ratio = (
-                    float(local_counts[current_class]) / local_neighbors
-                    if local_neighbors > 0
-                    else 0.0
-                )
-                candidate_class = majority_class
-                candidate_ratio = majority_ratio
-                if (
-                    local_neighbors >= 3
-                    and local_majority_class != current_class
-                    and local_majority_ratio >= local_threshold
-                    and local_majority_ratio - local_current_ratio >= gain_threshold
-                ):
-                    candidate_class = local_majority_class
-                    candidate_ratio = local_majority_ratio
-                elif majority_ratio < threshold:
-                    continue
-                class_jump = abs(current_class - candidate_class)
-                if class_jump > max_jump and candidate_ratio < min(1.0, threshold + 0.10):
-                    continue
-                current_ratio = float(counts[current_class]) / valid_neighbors
-                if candidate_class == majority_class and majority_ratio - current_ratio < gain_threshold:
-                    continue
-                class_width = max(
-                    float(breaks[candidate_class] - breaks[candidate_class - 1]),
-                    1e-6,
-                )
-                tolerance = tolerance_alpha * class_width
-                current_mean = float(class_centers[current_class])
-                candidate_mean = float(class_centers[candidate_class])
-                current_error = abs(float(index_values[row, column]) - current_mean)
-                candidate_error = abs(
-                    float(index_values[row, column]) - candidate_mean,
-                )
-                if candidate_error - current_error > tolerance:
-                    continue
-                changes.append((row, column, candidate_class))
-
-            if not changes:
-                break
-            for row, column, new_class in changes:
-                result[row, column] = new_class
-
-        return self._remove_small_components(
-            result,
-            class_valid,
-            index_values,
-            breaks,
-            detail_level,
-            cell_areas_m2,
-        )
+        for min_component_cells in self._progressive_component_thresholds(detail_level):
+            result = self._absorb_small_components(
+                result,
+                class_valid,
+                min_component_cells,
+                detail_level,
+            )
+        return result
 
     def _remove_small_components(
         self,
@@ -1064,82 +1086,12 @@ class RasterService:
         detail_level: float,
         cell_areas_m2: np.ndarray | None = None,
     ) -> np.ndarray:
-        min_component_cells = self._minimum_component_cells(detail_level)
-        if min_component_cells <= 1:
-            return zones
-
-        result = zones.copy()
-        visited = np.zeros(result.shape, dtype=bool)
-        offsets = self._neighbor_offsets()
-        minimum_contact_ratio = self._interpolate_detail(detail_level, 0.92, 0.45)
-
-        for start_row, start_column in zip(*np.nonzero(class_valid), strict=True):
-            if visited[start_row, start_column]:
-                continue
-            class_id = int(result[start_row, start_column])
-            if class_id <= 0:
-                visited[start_row, start_column] = True
-                continue
-            component: list[tuple[int, int]] = []
-            perimeter_counts: dict[int, int] = {}
-            neighbor_values: dict[int, list[float]] = {}
-            queue = deque([(start_row, start_column)])
-            visited[start_row, start_column] = True
-            while queue:
-                row, column = queue.popleft()
-                component.append((row, column))
-                for row_delta, column_delta in offsets:
-                    next_row = row + row_delta
-                    next_column = column + column_delta
-                    if not (
-                        0 <= next_row < result.shape[0]
-                        and 0 <= next_column < result.shape[1]
-                    ):
-                        continue
-                    if not class_valid[next_row, next_column]:
-                        continue
-                    next_class = int(result[next_row, next_column])
-                    if next_class == class_id and not visited[next_row, next_column]:
-                        visited[next_row, next_column] = True
-                        queue.append((next_row, next_column))
-                    elif next_class > 0 and next_class != class_id:
-                        perimeter_counts[next_class] = perimeter_counts.get(next_class, 0) + 1
-                        neighbor_values.setdefault(next_class, []).append(
-                            float(index_values[next_row, next_column]),
-                        )
-            if len(component) >= min_component_cells or not perimeter_counts:
-                continue
-            if self._preserve_component_shape(component, detail_level):
-                continue
-            perimeter_total = sum(perimeter_counts.values())
-            dominant_perimeter = max(perimeter_counts.values())
-            if perimeter_total <= 0:
-                continue
-            if dominant_perimeter <= len(component):
-                continue
-            if dominant_perimeter / perimeter_total < minimum_contact_ratio:
-                continue
-            component_mean = float(
-                np.mean([index_values[row, column] for row, column in component]),
-            )
-            candidate_class = min(
-                perimeter_counts,
-                key=lambda candidate: (
-                    -perimeter_counts[candidate],
-                    abs(
-                        component_mean
-                        - float(np.mean(neighbor_values.get(candidate, [component_mean]))),
-                    ),
-                    abs(
-                        component_mean
-                        - float((breaks[candidate - 1] + breaks[candidate]) / 2),
-                    ),
-                    abs(candidate - class_id),
-                ),
-            )
-            for row, column in component:
-                result[row, column] = candidate_class
-        return result
+        return self._absorb_small_components(
+            zones,
+            class_valid,
+            self._minimum_component_cells(detail_level),
+            detail_level,
+        )
 
     def _index_band_pair(
         self,
@@ -2581,6 +2533,17 @@ class RasterService:
         _, _, mtime_ns = self._rgb_profile_key(path)
         return f"{mtime_ns}-{self.INDEX_RENDER_VERSION}"
 
+    @staticmethod
+    def _compact_cache_component(component: str, *, prefix_length: int = 48) -> str:
+        safe_component = re.sub(r"[^0-9A-Za-z._-]+", "_", component).strip("._-")
+        if not safe_component:
+            safe_component = "default"
+        digest = hashlib.blake2b(safe_component.encode("utf-8"), digest_size=8).hexdigest()
+        prefix = safe_component[:prefix_length].rstrip("._-")
+        if not prefix:
+            prefix = "cache"
+        return f"{prefix}-{digest}"
+
     def _tile_cache_path(
         self,
         kind: str,
@@ -2591,8 +2554,8 @@ class RasterService:
         variant: str = "default",
     ) -> Path:
         raster_path = self._path().resolve()
-        raster_scope = f"{raster_path.stem}-{version}"
-        safe_variant = re.sub(r"[^0-9A-Za-z._-]+", "_", variant)
+        raster_scope = self._compact_cache_component(f"{raster_path.stem}-{version}")
+        safe_variant = self._compact_cache_component(variant)
         return (
             self.settings.cache_dir
             / "tiles"
