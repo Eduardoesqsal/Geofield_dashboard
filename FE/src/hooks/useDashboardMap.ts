@@ -134,6 +134,7 @@ export function useDashboardMap(
   const labelsRef = useRef<L.LayerGroup>();
   const zoningRef = useRef<L.TileLayer>();
   const zoningPreviewRef = useRef<L.TileLayer>();
+  const zoningPreviewGridRef = useRef<L.GeoJSON>();
   const prescriptionRef = useRef<L.TileLayer>();
   const classificationFillRef = useRef<L.GeoJSON>();
   const classificationGridRef = useRef<L.GeoJSON>();
@@ -335,6 +336,8 @@ export function useDashboardMap(
     zoningPreviewTokenRef.current += 1;
     zoningPreviewRef.current?.remove();
     zoningPreviewRef.current = undefined;
+    zoningPreviewGridRef.current?.remove();
+    zoningPreviewGridRef.current = undefined;
     zoningRef.current?.remove();
     zoningRef.current = undefined;
     clearClassificationFill();
@@ -346,6 +349,8 @@ export function useDashboardMap(
     zoningPreviewTokenRef.current += 1;
     zoningPreviewRef.current?.remove();
     zoningPreviewRef.current = undefined;
+    zoningPreviewGridRef.current?.remove();
+    zoningPreviewGridRef.current = undefined;
   }, []);
 
   const previewZoning = useCallback(
@@ -358,9 +363,14 @@ export function useDashboardMap(
       cellValueMode: "mean" | "min" | "max" = "mean",
       detailLevel = 1,
       manualBreaks?: number[],
+      allowExisting = false,
     ) => {
       const map = mapRef.current;
-      if (!map || !state.orthomosaicId || zoning || prescription) return;
+      if (
+        !map ||
+        !state.orthomosaicId ||
+        (!allowExisting && (zoning || prescription))
+      ) return;
       if (state.orthoMode !== "multispectral") return;
       const indexReady =
         indexName === "NDVI"
@@ -386,9 +396,25 @@ export function useDashboardMap(
           analysisMax: activeAnalysisRange(indexName)?.maximum,
         },
       );
-      if (token !== zoningPreviewTokenRef.current || zoning || prescription) return;
+      if (
+        token !== zoningPreviewTokenRef.current ||
+        (!allowExisting && (zoning || prescription))
+      ) return;
+      let previewGrid: GeoJsonObject | null = null;
+      if (result.grid_url) {
+        const gridResponse = await fetch(backendUrl(result.grid_url), {
+          headers: { Accept: "application/geo+json, application/json" },
+          cache: "no-store",
+        });
+        if (gridResponse.ok) {
+          previewGrid = (await gridResponse.json()) as GeoJsonObject;
+        }
+      }
+      if (token !== zoningPreviewTokenRef.current) return;
       zoningPreviewRef.current?.remove();
+      zoningPreviewGridRef.current?.remove();
       zoningPreviewRef.current = L.tileLayer(backendUrl(result.tile_url), {
+        pane: "classificationPreviewPane",
         tileSize: 256,
         maxNativeZoom: 24,
         maxZoom: 24,
@@ -398,7 +424,19 @@ export function useDashboardMap(
         opacity: 0.92,
         className: "zoning-map-overlay is-preview",
       }).addTo(map);
-      zoningPreviewRef.current.setZIndex(515);
+      if (previewGrid) {
+        zoningPreviewGridRef.current = L.geoJSON(previewGrid, {
+          pane: "classificationPreviewGridPane",
+          interactive: false,
+          style: {
+            color: "#ffffff",
+            weight: 1,
+            opacity: 0.28,
+            lineCap: "square",
+            lineJoin: "miter",
+          },
+        }).addTo(map);
+      }
     },
     [
       activeAnalysisRange,
@@ -475,6 +513,7 @@ export function useDashboardMap(
         clearPrescription();
         zoningRef.current?.remove();
         zoningRef.current = L.tileLayer(backendUrl(result.tile_url), {
+          pane: "classificationImagePane",
           tileSize: 256,
           maxNativeZoom: 24,
           maxZoom: 24,
@@ -484,7 +523,6 @@ export function useDashboardMap(
           opacity: 1,
           className: "zoning-map-overlay",
         }).addTo(map);
-        zoningRef.current.setZIndex(520);
         await mountClassificationFill(result.geojson_url);
         await mountClassificationGrid(result.grid_url);
         console.info("[zoning-response-debug]", result.debug ?? null);
@@ -561,6 +599,7 @@ export function useDashboardMap(
         setZoning(null);
         prescriptionRef.current?.remove();
         prescriptionRef.current = L.tileLayer(backendUrl(result.tile_url), {
+          pane: "classificationImagePane",
           tileSize: 256,
           maxNativeZoom: 24,
           maxZoom: 24,
@@ -570,7 +609,6 @@ export function useDashboardMap(
           opacity: 1,
           className: "prescription-map-overlay",
         }).addTo(map);
-        prescriptionRef.current.setZIndex(520);
         await mountClassificationFill(result.geojson_url);
         await mountClassificationGrid(result.grid_url);
         console.info("[prescription-response-debug]", result.debug ?? null);
@@ -1375,6 +1413,20 @@ export function useDashboardMap(
     if (classificationGridPane) {
       classificationGridPane.style.zIndex = "522";
       classificationGridPane.style.pointerEvents = "none";
+    }
+    map.createPane("classificationPreviewPane");
+    const classificationPreviewPane = map.getPane("classificationPreviewPane");
+    if (classificationPreviewPane) {
+      classificationPreviewPane.style.zIndex = "523";
+      classificationPreviewPane.style.pointerEvents = "none";
+    }
+    map.createPane("classificationPreviewGridPane");
+    const classificationPreviewGridPane = map.getPane(
+      "classificationPreviewGridPane",
+    );
+    if (classificationPreviewGridPane) {
+      classificationPreviewGridPane.style.zIndex = "524";
+      classificationPreviewGridPane.style.pointerEvents = "none";
     }
     map.createPane("treeLabelsPane");
     const pane = map.getPane("treeLabelsPane");

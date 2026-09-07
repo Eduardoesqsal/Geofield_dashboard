@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import {
   IconDownload,
   IconGridDots,
@@ -22,6 +22,7 @@ import {
 
 type VegetationIndexName = "NDVI" | "NDWI" | "NDRE";
 type ZoningResponse = NdviZoningResponse | PrescriptionMapResponse;
+type PrescriptionView = "configuration" | "analysis" | "application";
 
 const zoneColors = (
   indexName: VegetationIndexName,
@@ -54,6 +55,7 @@ const continuousGradient = (gradientStops: string) =>
 
 interface PrescriptionDialogProps {
   open: boolean;
+  configurationRequestId: number;
   indexName: VegetationIndexName;
   displayRange?: { minimum: number; maximum: number } | null;
   busy: boolean;
@@ -79,6 +81,7 @@ interface PrescriptionDialogProps {
     cellValueMode: "mean" | "min" | "max",
     detailLevel: number,
     manualBreaks?: number[],
+    allowExisting?: boolean,
   ) => Promise<void>;
   onClearPreview: () => void;
   onGeneratePrescription: (
@@ -255,6 +258,7 @@ const formatDoseValue = (value: number | null | undefined) =>
 
 export function PrescriptionDialog({
   open,
+  configurationRequestId,
   indexName,
   displayRange = null,
   busy,
@@ -284,6 +288,20 @@ export function PrescriptionDialog({
   const [doseValues, setDoseValues] = useState<string[]>([]);
   const [downloadingJson, setDownloadingJson] = useState(false);
   const [downloadJsonError, setDownloadJsonError] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<PrescriptionView>("configuration");
+  const [rotationMode, setRotationMode] = useState(false);
+  const rotationModeRef = useRef(false);
+  const rotationPreviewRunningRef = useRef(false);
+  const pendingRotationPreviewRef = useRef<{
+    zoneCount: number;
+    cellSizeM: number;
+    gridAngleDeg: number;
+    classificationMethod: "quantiles" | "equal_intervals" | "manual";
+    cellValueMode: "mean" | "min" | "max";
+    detailLevel: number;
+    manualBreaks?: number[];
+  } | null>(null);
+  rotationModeRef.current = rotationMode;
 
   const parseManualBreaks = (value: string): number[] | undefined => {
     const tokens = value
@@ -329,19 +347,60 @@ export function PrescriptionDialog({
   }, [onClearPreview, open]);
 
   useEffect(() => {
-    if (!open || !prescriptionAreaReady) return;
+    setActiveView("configuration");
+  }, [configurationRequestId]);
+
+  useEffect(() => {
+    if (!open || (!prescriptionAreaReady && !rotationMode)) return;
     if (cellSizeM < 1 || cellSizeM > 50) return;
     const manualBreaks = parseManualBreaks(manualBreaksText);
+    const matchesCurrentZoning =
+      !!zoning &&
+      zoning.zone_count === zoneCount &&
+      Math.abs(zoning.cell_size_m - cellSizeM) <= 1e-6 &&
+      Math.abs(zoning.grid_angle_deg - gridAngleDeg) <= 1e-6 &&
+      (zoning.classification_method ?? "quantiles") === classificationMethod &&
+      (zoning.cell_value_mode ?? "mean") === cellValueMode &&
+      Math.abs((zoning.detail_level ?? 1) - detailLevel) <= 1e-6 &&
+      sameManualBreaks(manualBreaks, zoning.thresholds);
+    if (rotationMode && matchesCurrentZoning) return;
+    if (rotationMode) {
+      pendingRotationPreviewRef.current = {
+        zoneCount,
+        cellSizeM,
+        gridAngleDeg,
+        classificationMethod,
+        cellValueMode,
+        detailLevel,
+        manualBreaks,
+      };
+      if (rotationPreviewRunningRef.current) return;
+
+      rotationPreviewRunningRef.current = true;
+      void (async () => {
+        try {
+          while (rotationModeRef.current && pendingRotationPreviewRef.current) {
+            const preview = pendingRotationPreviewRef.current;
+            pendingRotationPreviewRef.current = null;
+            await onPreviewZoning(
+              preview.zoneCount,
+              preview.cellSizeM,
+              preview.gridAngleDeg,
+              preview.classificationMethod,
+              preview.cellValueMode,
+              preview.detailLevel,
+              preview.manualBreaks,
+              true,
+            );
+          }
+        } finally {
+          rotationPreviewRunningRef.current = false;
+        }
+      })();
+      return;
+    }
     if (zoning) {
-      const sameConfiguration =
-        zoning.zone_count === zoneCount &&
-        Math.abs(zoning.cell_size_m - cellSizeM) <= 1e-6 &&
-        Math.abs(zoning.grid_angle_deg - gridAngleDeg) <= 1e-6 &&
-        (zoning.classification_method ?? "quantiles") === classificationMethod &&
-        (zoning.cell_value_mode ?? "mean") === cellValueMode &&
-        Math.abs((zoning.detail_level ?? 1) - detailLevel) <= 1e-6 &&
-        sameManualBreaks(manualBreaks, zoning.thresholds);
-      if (sameConfiguration) return;
+      if (matchesCurrentZoning) return;
     }
     if (prescription) return;
     const timeout = window.setTimeout(() => {
@@ -381,6 +440,7 @@ export function PrescriptionDialog({
     open,
     prescription,
     prescriptionAreaReady,
+    rotationMode,
     zoneCount,
     zoning,
   ]);
@@ -463,6 +523,7 @@ export function PrescriptionDialog({
       detailLevel,
       parseManualBreaks(manualBreaksText),
     );
+    setActiveView("analysis");
   };
 
   const handleGeneratePrescription = async () => {
@@ -477,6 +538,13 @@ export function PrescriptionDialog({
       parseManualBreaks(manualBreaksText),
       parsedDoses,
     );
+    setActiveView("application");
+  };
+
+  const handleReturnToModal = () => {
+    rotationModeRef.current = false;
+    pendingRotationPreviewRef.current = null;
+    setRotationMode(false);
   };
 
   const handleDownloadJson = async () => {
@@ -495,6 +563,50 @@ export function PrescriptionDialog({
       setDownloadingJson(false);
     }
   };
+
+  if (rotationMode) {
+    return (
+      <aside
+        className="prescription-map-rotation-control"
+        role="dialog"
+        aria-label="Rotar reticula sobre el mapa"
+      >
+        <div className="prescription-map-rotation-head">
+          <span>
+            <small>ROTACION EN MAPA</small>
+            <strong>Alinea la reticula con el lote</strong>
+          </span>
+          <b aria-live="polite">{gridAngleDeg}°</b>
+          <button
+            type="button"
+            onClick={handleReturnToModal}
+            aria-label="Cerrar control de rotacion"
+            title="Cerrar"
+          >
+            <IconX aria-hidden="true" />
+          </button>
+        </div>
+        <input
+          type="range"
+          min="-90"
+          max="90"
+          step="1"
+          value={gridAngleDeg}
+          onInput={(event) => setGridAngleDeg(Number(event.currentTarget.value))}
+          disabled={busy}
+          aria-label="Rotacion de la reticula en el mapa"
+        />
+        <div className="prescription-map-rotation-scale" aria-hidden="true">
+          <span>-90°</span>
+          <span>0°</span>
+          <span>90°</span>
+        </div>
+        <p>
+          La reticula y las celdas se actualizan mientras mueves el control.
+        </p>
+      </aside>
+    );
+  }
 
   return (
     <div
@@ -535,8 +647,42 @@ export function PrescriptionDialog({
 
         <p className="import-dialog-copy">{displayCopy}</p>
 
+        <nav
+          className="prescription-view-switcher"
+          aria-label="Vistas de zonificacion y prescripcion"
+        >
+          <button
+            type="button"
+            className={activeView === "configuration" ? "is-active" : ""}
+            onClick={() => setActiveView("configuration")}
+          >
+            <strong>Configuracion</strong>
+            <span>Grilla, clasificacion y detalle espacial</span>
+          </button>
+          <button
+            type="button"
+            className={activeView === "analysis" ? "is-active" : ""}
+            onClick={() => setActiveView("analysis")}
+            disabled={!activeResponse}
+          >
+            <strong>Analisis</strong>
+            <span>Histograma, cobertura y estadisticas</span>
+          </button>
+          <button
+            type="button"
+            className={activeView === "application" ? "is-active" : ""}
+            onClick={() => setActiveView("application")}
+            disabled={!zoning && !prescription}
+          >
+            <strong>Dosis y salida</strong>
+            <span>Aplicacion por zona y exportacion</span>
+          </button>
+        </nav>
+
         <div className="prescription-layout">
-          <div className="prescription-sidebar">
+          <div
+            className={`prescription-sidebar ${activeView !== "configuration" ? "is-hidden-view" : ""}`}
+          >
             {!zoning && !prescription && (
               <button
                 type="button"
@@ -676,6 +822,18 @@ export function PrescriptionDialog({
                   Ajusta la orientacion de las celdas para alinearlas con los surcos o
                   la direccion de trabajo del lote.
                 </small>
+                <button
+                  type="button"
+                  className="prescription-map-rotation-trigger"
+                  onClick={() => {
+                    rotationModeRef.current = true;
+                    setRotationMode(true);
+                  }}
+                  disabled={busy || !!prescription || (!prescriptionAreaReady && !zoning)}
+                >
+                  <IconGridDots aria-hidden="true" />
+                  Rotar
+                </button>
               </div>
 
               <div className="prescription-rotation-card">
@@ -723,8 +881,12 @@ export function PrescriptionDialog({
                 {`El histograma replica la distribucion de las celdas ${activeIndexName} que usa la prescripcion dentro del ROI activo.`}
               </p>
             </section>
+          </div>
 
-            {zoning && (
+          <div
+            className={`prescription-application ${activeView !== "application" ? "is-hidden-view" : ""}`}
+          >
+            {(zoning || prescription) && (
               <section className="prescription-panel-card">
                 <div className="prescription-panel-head">
                   <strong>Dosis por zona</strong>
@@ -732,7 +894,7 @@ export function PrescriptionDialog({
                 </div>
                 <div className="prescription-dose-grid">
                   {Array.from({ length: zoneCount }, (_, index) => {
-                    const zone = zoning.legend[index];
+                    const zone = activeResponse?.legend[index];
                     const color = zone?.color ?? colors[index] ?? "#ffffff";
                     return (
                       <label key={`dose-${index + 1}`} className="prescription-dose-row">
@@ -768,7 +930,9 @@ export function PrescriptionDialog({
             )}
           </div>
 
-          <div className="prescription-main">
+          <div
+            className={`prescription-main ${activeView !== "analysis" ? "is-hidden-view" : ""}`}
+          >
             {activeResponse && (
               <div className="prescription-analytics">
                 <section className="prescription-histogram-card">
@@ -955,7 +1119,10 @@ export function PrescriptionDialog({
             <button
               type="button"
               className="prescription-clear"
-              onClick={onClear}
+              onClick={() => {
+                onClear();
+                setActiveView("configuration");
+              }}
               disabled={busy}
             >
               <IconTrash aria-hidden="true" />
@@ -1021,9 +1188,11 @@ export function PrescriptionDialog({
 export function PrescriptionLegend({
   response,
   onClose,
+  onConfigure,
 }: {
   response: ZoningResponse;
   onClose: () => void;
+  onConfigure: () => void;
 }) {
   const isPrescription = response.stage === "prescription";
   const activeIndexName = response.index_name ?? "NDVI";
@@ -1121,6 +1290,14 @@ export function PrescriptionLegend({
         <span>
           {response.valid_cell_count.toLocaleString("es-MX")} celdas · {response.area_hectares.toFixed(2)} ha · media de campo {response.field_mean?.toFixed(3) ?? "N/D"}
         </span>
+        <button
+          type="button"
+          className="prescription-download-button"
+          onClick={onConfigure}
+        >
+          <IconGridDots aria-hidden="true" />
+          Volver a la configuracion
+        </button>
         {isPrescription && (
           <button
             type="button"

@@ -142,6 +142,8 @@ export function MapView() {
   const [roiOpen, setRoiOpen] = useState(false);
   const [roiLibraryOpen, setRoiLibraryOpen] = useState(false);
   const [prescriptionOpen, setPrescriptionOpen] = useState(false);
+  const [prescriptionConfigurationRequest, setPrescriptionConfigurationRequest] =
+    useState(0);
   const [prescriptionError, setPrescriptionError] = useState<string | null>(null);
   const [rois, setRois] = useState<RoiRecord[]>([]);
   const [orthomosaics, setOrthomosaics] = useState<OrthomosaicRecord[]>([]);
@@ -989,6 +991,7 @@ export function MapView() {
     cellValueMode: "mean" | "min" | "max",
     detailLevel: number,
     manualBreaks?: number[],
+    allowExisting = false,
   ) => {
     const indexName = selectedIndex ?? "NDVI";
     try {
@@ -1001,6 +1004,7 @@ export function MapView() {
         cellValueMode,
         detailLevel,
         manualBreaks,
+        allowExisting,
       );
       setPrescriptionError(null);
     } catch (error) {
@@ -1104,6 +1108,7 @@ export function MapView() {
       />
       <PrescriptionDialog
         open={prescriptionOpen}
+        configurationRequestId={prescriptionConfigurationRequest}
         indexName={selectedIndex ?? "NDVI"}
         displayRange={activePrescriptionDisplayRange}
         busy={map.zoningLoading || map.prescriptionLoading}
@@ -1736,6 +1741,10 @@ export function MapView() {
         <PrescriptionLegend
           response={map.prescription ?? map.zoning!}
           onClose={map.clearPrescription}
+          onConfigure={() => {
+            setPrescriptionConfigurationRequest((current) => current + 1);
+            setPrescriptionOpen(true);
+          }}
         />
       )}
       {map.state.uploading && (
