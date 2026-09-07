@@ -36,6 +36,10 @@ from shapely.ops import transform as project_geometry
 
 from geofield.config import Settings
 from geofield.errors import RasterNotConfiguredError
+from geofield.services import raster_bands
+from geofield.services import raster_cache
+from geofield.services import raster_helpers
+from geofield.services import raster_tiles
 
 
 logger = logging.getLogger(__name__)
@@ -396,187 +400,86 @@ class RasterService:
 
     @staticmethod
     def _neutral_zone_label(zone_index: int, zone_count: int) -> str:
-        if zone_count == 4:
-            return [
-                "NDVI muy bajo",
-                "NDVI bajo",
-                "NDVI medio-alto",
-                "NDVI alto",
-            ][zone_index - 1]
-        if zone_index == 1:
-            return "NDVI muy bajo"
-        if zone_index == zone_count:
-            return "NDVI alto"
-        return f"NDVI nivel {zone_index}"
+        return raster_helpers.neutral_zone_label(zone_index, zone_count)
 
     @staticmethod
     def _normalize_index_name(name: str | None) -> str:
-        normalized = (name or "NDVI").upper()
-        if normalized not in {"NDVI", "NDWI", "NDRE"}:
-            raise ValueError("Indice no soportado. Usa NDVI, NDWI o NDRE.")
-        return normalized
+        return raster_helpers.normalize_index_name(name)
 
     def _index_zone_label(self, name: str, zone_index: int, zone_count: int) -> str:
-        if name == "NDVI":
-            return self._neutral_zone_label(zone_index, zone_count)
-        if zone_count == 4:
-            return [
-                f"{name} muy bajo",
-                f"{name} bajo",
-                f"{name} medio-alto",
-                f"{name} alto",
-            ][zone_index - 1]
-        if zone_index == 1:
-            return f"{name} muy bajo"
-        if zone_index == zone_count:
-            return f"{name} alto"
-        return f"{name} nivel {zone_index}"
+        return raster_helpers.index_zone_label(name, zone_index, zone_count)
 
     @staticmethod
     def _class_percentiles(zone_count: int, zone_index: int) -> tuple[float, float]:
-        return (
-            100.0 * (zone_index - 1) / zone_count,
-            100.0 * zone_index / zone_count,
-        )
+        return raster_helpers.class_percentiles(zone_count, zone_index)
 
     @classmethod
     def _ramp_stops(cls, index_name: str) -> np.ndarray:
-        if index_name in {"NDVI", "NDRE"}:
-            return cls.VEGETATION_COLOR_STOPS
-        ramp = cls.INDEX_RAMPS[index_name]
-        return np.linspace(0.0, 1.0, len(ramp), dtype=np.float32)
+        return raster_helpers.ramp_stops(
+            index_name,
+            cls.VEGETATION_COLOR_STOPS,
+            cls.INDEX_RAMPS,
+        )
 
     @classmethod
     def _sample_ramp(cls, index_name: str, positions: np.ndarray) -> np.ndarray:
-        ramp = np.asarray(
-            [
-                [int(color[index : index + 2], 16) for index in (0, 2, 4)]
-                for color in cls.INDEX_RAMPS[index_name]
-            ],
-            dtype=np.uint8,
+        return raster_helpers.sample_ramp(
+            index_name,
+            positions,
+            cls.VEGETATION_COLOR_STOPS,
+            cls.INDEX_RAMPS,
         )
-        stops = cls._ramp_stops(index_name)
-        sampled = np.empty((len(positions), 3), dtype=np.uint8)
-        for channel in range(3):
-            sampled[:, channel] = np.round(
-                np.interp(positions, stops, ramp[:, channel].astype(np.float32)),
-            ).astype(np.uint8)
-        return sampled
 
     def _zone_palette(self, index_name: str, zone_count: int) -> np.ndarray:
-        palette = self.PIX4D_ZONE_DISPLAY_PALETTES.get((index_name, zone_count))
-        if palette:
-            return np.asarray(
-                [
-                    [int(color[index : index + 2], 16) for index in (0, 2, 4)]
-                    for color in palette
-                ],
-                dtype=np.uint8,
-            )
-        positions = np.linspace(0.0, 1.0, max(zone_count, 1), dtype=np.float32)
-        return self._sample_ramp(index_name, positions)
+        return raster_helpers.zone_palette(
+            index_name,
+            zone_count,
+            self.VEGETATION_COLOR_STOPS,
+            self.INDEX_RAMPS,
+            self.PIX4D_ZONE_DISPLAY_PALETTES,
+        )
 
     @classmethod
     def _zone_display_palette(cls, index_name: str, zone_count: int) -> np.ndarray:
-        palette = cls.PIX4D_ZONE_DISPLAY_PALETTES.get((index_name, zone_count))
-        if palette:
-            return np.asarray(
-                [
-                    [int(color[index : index + 2], 16) for index in (0, 2, 4)]
-                    for color in palette
-                ],
-                dtype=np.uint8,
-            )
-        positions = np.linspace(0.0, 1.0, max(zone_count, 1), dtype=np.float32)
-        return cls._sample_ramp(index_name, positions)
+        return raster_helpers.zone_display_palette(
+            index_name,
+            zone_count,
+            cls.VEGETATION_COLOR_STOPS,
+            cls.INDEX_RAMPS,
+            cls.PIX4D_ZONE_DISPLAY_PALETTES,
+        )
 
     @classmethod
     def _dose_ramp(cls, index_name: str, count: int) -> np.ndarray:
-        if count <= 1:
-            return cls._sample_ramp(index_name, np.asarray([1.0], dtype=np.float32))
-        positions = np.linspace(0.0, 1.0, count, dtype=np.float32)
-        return cls._sample_ramp(index_name, positions)
+        return raster_helpers.dose_ramp(
+            index_name,
+            count,
+            cls.VEGETATION_COLOR_STOPS,
+            cls.INDEX_RAMPS,
+        )
 
     @staticmethod
     def _fill_unclassified_cells(zones: np.ndarray, target_mask: np.ndarray) -> np.ndarray:
-        """Extend the nearest classified zone so every target cell is covered."""
-        filled = zones.copy()
-        visited = zones > 0
-        queue = deque(zip(*np.nonzero(visited), strict=True))
-        height, width = zones.shape
-        neighbours = (
-            (-1, -1), (-1, 0), (-1, 1),
-            (0, -1), (0, 1),
-            (1, -1), (1, 0), (1, 1),
-        )
-        while queue:
-            row, column = queue.popleft()
-            for row_delta, column_delta in neighbours:
-                next_row = row + row_delta
-                next_column = column + column_delta
-                if (
-                    0 <= next_row < height
-                    and 0 <= next_column < width
-                    and not visited[next_row, next_column]
-                ):
-                    visited[next_row, next_column] = True
-                    filled[next_row, next_column] = filled[row, column]
-                    queue.append((next_row, next_column))
-        filled[~target_mask] = 0
-        return filled
+        return raster_helpers.fill_unclassified_cells(zones, target_mask)
 
     @classmethod
     def _export_prescription_dosage(cls, dosage: float | int | None) -> float:
-        # EAVision interpreta el JSON Pix4D-style con una escala 10x respecto
-        # a la dosis capturada en pantalla. Se exporta en decenas para que la
-        # plataforma muestre la misma unidad ingresada por el usuario.
-        if dosage is None:
-            return 0.0
-        return round(float(dosage) * cls.EAVISION_DOSAGE_EXPORT_SCALE, 3)
+        return raster_helpers.export_prescription_dosage(
+            dosage,
+            cls.EAVISION_DOSAGE_EXPORT_SCALE,
+        )
 
     @staticmethod
     def _normalize_classification_method(method: str | None) -> str:
-        normalized = (method or "quantiles").strip().lower()
-        aliases = {
-            "quantile": "quantiles",
-            "quantiles": "quantiles",
-            "equal": "equal_intervals",
-            "equal_interval": "equal_intervals",
-            "equal_intervals": "equal_intervals",
-            "manual": "manual",
-        }
-        result = aliases.get(normalized)
-        if not result:
-            raise ValueError(
-                "Metodo de clasificacion no soportado. Usa quantiles, equal_intervals o manual.",
-            )
-        return result
+        return raster_helpers.normalize_classification_method(method)
 
     @staticmethod
     def _normalize_cell_value_mode(mode: str | None) -> str:
-        normalized = (mode or "mean").strip().lower()
-        aliases = {
-            "mean": "mean",
-            "avg": "mean",
-            "average": "mean",
-            "min": "min",
-            "minimum": "min",
-            "max": "max",
-            "maximum": "max",
-        }
-        result = aliases.get(normalized)
-        if not result:
-            raise ValueError("Valor de celda no soportado. Usa mean, min o max.")
-        return result
+        return raster_helpers.normalize_cell_value_mode(mode)
 
     @staticmethod
     def _normalize_detail_level(detail_level: float | None) -> float:
-        if detail_level is None:
-            return 1.0
-        detail = float(detail_level)
-        if not 0 <= detail <= 1:
-            raise ValueError("El detalle espacial debe estar entre 0 y 1.")
-        return detail
+        return raster_helpers.normalize_detail_level(detail_level)
 
     @staticmethod
     def _validate_manual_breaks(
@@ -585,18 +488,12 @@ class RasterService:
         analysis_min: float,
         analysis_max: float,
     ) -> np.ndarray:
-        if manual_breaks is None:
-            raise ValueError("Los intervalos manuales requieren una lista de cortes.")
-        if len(manual_breaks) != zone_count - 1:
-            raise ValueError("La cantidad de cortes manuales debe ser igual a zonas menos uno.")
-        breaks = np.asarray(manual_breaks, dtype=np.float32)
-        if not np.all(np.isfinite(breaks)):
-            raise ValueError("Los cortes manuales deben ser numericos.")
-        if np.any(np.diff(breaks) <= 0):
-            raise ValueError("Los cortes manuales deben estar ordenados y no repetirse.")
-        if breaks[0] <= analysis_min or breaks[-1] >= analysis_max:
-            raise ValueError("Los cortes manuales deben quedar dentro del rango activo.")
-        return breaks
+        return raster_helpers.validate_manual_breaks(
+            manual_breaks,
+            zone_count,
+            analysis_min,
+            analysis_max,
+        )
 
     @staticmethod
     def _classification_breaks(
@@ -733,12 +630,7 @@ class RasterService:
 
     @staticmethod
     def _weighted_mean(values: np.ndarray, weights: np.ndarray) -> float | None:
-        if not values.size:
-            return None
-        total_weight = float(np.sum(weights))
-        if total_weight <= 0:
-            return None
-        return float(np.sum(values * weights) / total_weight)
+        return raster_helpers.weighted_mean(values, weights)
 
     @staticmethod
     def _validate_prescription_weight_data(
@@ -760,26 +652,15 @@ class RasterService:
 
     @staticmethod
     def _neighbor_offsets() -> tuple[tuple[int, int], ...]:
-        return (
-            (-1, -1), (-1, 0), (-1, 1),
-            (0, -1),           (0, 1),
-            (1, -1),  (1, 0),  (1, 1),
-        )
+        return raster_helpers.neighbor_offsets()
 
     @staticmethod
     def _component_connectivity_offsets() -> tuple[tuple[int, int], ...]:
-        return (
-            (-1, 0),
-            (0, -1), (0, 1),
-            (1, 0),
-        )
+        return raster_helpers.component_connectivity_offsets()
 
     @staticmethod
     def _detail_strength(detail_level: float) -> float:
-        # Fine ocupa una parte amplia del control de PIX4Dfields y el cambio se
-        # acelera hacia Coarse. La curva sigue siendo continua: no hay presets
-        # ni saltos de umbral al cruzar posiciones concretas del slider.
-        return (1.0 - detail_level) ** 1.10
+        return raster_helpers.detail_strength(detail_level)
 
     @staticmethod
     def _interpolate_detail(
@@ -787,8 +668,7 @@ class RasterService:
         maximum: float,
         minimum: float,
     ) -> float:
-        strength = RasterService._detail_strength(detail_level)
-        return maximum + (minimum - maximum) * strength
+        return raster_helpers.interpolate_detail(detail_level, maximum, minimum)
 
     @classmethod
     def _spatial_detail_parameters(
@@ -937,12 +817,7 @@ class RasterService:
 
     @staticmethod
     def _component_span(component: list[tuple[int, int]]) -> tuple[int, int]:
-        rows = [row for row, _column in component]
-        columns = [column for _row, column in component]
-        return (
-            max(rows) - min(rows) + 1,
-            max(columns) - min(columns) + 1,
-        )
+        return raster_helpers.component_span(component)
 
     @classmethod
     def _preserve_linear_component(
@@ -2345,54 +2220,19 @@ class RasterService:
 
     @staticmethod
     def _wavelength_nm(value: str) -> float | None:
-        numbers = re.findall(r"(?<![A-Za-z])\d+(?:\.\d+)?", value)
-        if not numbers:
-            return None
-        wavelength = float(numbers[0])
-        return wavelength * 1000 if 0 < wavelength < 10 else wavelength
+        return raster_bands.wavelength_nm(value)
 
     @classmethod
     def _band_role_from_text(cls, value: str) -> str | None:
-        normalized = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
-        # Red Edge must be rejected before looking for the generic word Red.
-        if re.search(r"\b(red edge|rededge|re)\b", normalized):
-            return "rededge"
-        for role, pattern in (
-            ("blue", r"\b(blue|azul|b02)\b"),
-            ("green", r"\b(green|verde|b03)\b"),
-            ("red", r"\b(red|rojo|b04)\b"),
-        ):
-            if re.search(pattern, normalized):
-                return role
-        return None
+        return raster_bands.band_role_from_text(value)
 
     @staticmethod
     def _band_role_from_wavelength(wavelength_nm: float | None) -> str | None:
-        if wavelength_nm is None:
-            return None
-        if 430 <= wavelength_nm < 510:
-            return "blue"
-        if 510 <= wavelength_nm < 600:
-            return "green"
-        if 600 <= wavelength_nm < 700:
-            return "red"
-        if 700 <= wavelength_nm < 760:
-            return "rededge"
-        if wavelength_nm >= 760:
-            return "nir"
-        return None
+        return raster_bands.band_role_from_wavelength(wavelength_nm)
 
     @classmethod
     def _dataset_wavelengths(cls, src: Any) -> list[float] | None:
-        for key, value in src.tags().items():
-            if "wavelength" not in key.lower():
-                continue
-            numbers = re.findall(r"\d+(?:\.\d+)?", str(value))
-            if len(numbers) < src.count:
-                continue
-            wavelengths = [float(number) for number in numbers[: src.count]]
-            return [number * 1000 if 0 < number < 10 else number for number in wavelengths]
-        return None
+        return raster_bands.dataset_wavelengths(src)
 
     def _rgb_bands(
         self,
@@ -2484,64 +2324,7 @@ class RasterService:
         if src is None:
             with rasterio.open(path or self._path()) as dataset:
                 return self._multispectral_band_roles(dataset, sensor=sensor)
-
-        roles: dict[str, int] = {}
-        dataset_wavelengths = self._dataset_wavelengths(src)
-        for index in range(1, src.count + 1):
-            description = src.descriptions[index - 1] or ""
-            tags = src.tags(index)
-            metadata_text = " ".join(
-                [description, *[f"{key} {value}" for key, value in tags.items()]],
-            )
-            role = self._band_role_from_text(metadata_text)
-            if role not in {"blue", "green", "red", "rededge", "nir"}:
-                wavelength = next(
-                    (
-                        self._wavelength_nm(str(value))
-                        for key, value in tags.items()
-                        if "wavelength" in key.lower()
-                    ),
-                    None,
-                )
-                if wavelength is None and dataset_wavelengths:
-                    wavelength = dataset_wavelengths[index - 1]
-                role = self._band_role_from_wavelength(wavelength)
-            if role in {"blue", "green", "red", "rededge", "nir"}:
-                roles.setdefault(role, index)
-
-        selected_sensor = sensor or self.sensor
-        if selected_sensor == "mavic3m" and src.count >= 4:
-            roles.setdefault("green", 1)
-            roles.setdefault("red", 2)
-            roles.setdefault("rededge", 3)
-            roles.setdefault("nir", 4)
-        elif selected_sensor == "micasense":
-            if src.count >= 6:
-                roles.setdefault("blue", 1)
-                roles.setdefault("green", 2)
-                roles.setdefault("red", 4)
-                roles.setdefault("rededge", 5)
-                roles.setdefault("nir", 6)
-            elif src.count >= 5:
-                roles.setdefault("blue", 1)
-                roles.setdefault("green", 2)
-                roles.setdefault("red", 3)
-                roles.setdefault("nir", 4)
-                roles.setdefault("rededge", 5)
-
-        missing = [role for role in ("green", "rededge", "nir") if role not in roles]
-        if missing:
-            details = ", ".join(
-                f"banda {index}: {src.descriptions[index - 1] or 'sin descripcion'}; tags={src.tags(index)}"
-                for index in range(1, src.count + 1)
-            )
-            message = (
-                f"No se pudieron identificar las bandas multiespectrales del raster '{Path(src.name).name}'. "
-                f"Faltan metadatos para: {', '.join(missing)}. {details}"
-            )
-            logger.error(message)
-            raise ValueError(message)
-        return roles
+        return raster_bands.multispectral_band_roles(src, sensor=sensor, fallback_path=path)
 
     def _index_bands(self, name: str) -> tuple[int, int]:
         """Return bands as (positive, negative) for the normalized difference."""
@@ -2560,12 +2343,7 @@ class RasterService:
 
     @staticmethod
     def _calculate_index(positive: np.ndarray, negative: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        positive = positive.astype(np.float32, copy=False)
-        negative = negative.astype(np.float32, copy=False)
-        denominator = positive + negative
-        valid = (positive > 0) & (negative > 0) & np.isfinite(positive) & np.isfinite(negative) & (denominator != 0)
-        values = np.divide(positive - negative, denominator, out=np.zeros_like(denominator), where=valid)
-        return values, valid
+        return raster_helpers.calculate_index(positive, negative)
 
     @classmethod
     def _index_color_lut(cls, name: str) -> np.ndarray:
@@ -2648,14 +2426,7 @@ class RasterService:
 
     @staticmethod
     def _response_index_values(name: str, response: dict[str, Any]) -> np.ndarray:
-        matrix_key = "ndvi_matrix" if name == "NDVI" else "matrix"
-        mask_key = "ndvi_mask" if name == "NDVI" else "mask"
-        matrix = np.asarray(response.get(matrix_key), dtype=np.float32)
-        mask = np.asarray(response.get(mask_key), dtype=bool)
-        if matrix.size == 0 or mask.size == 0:
-            return np.asarray([], dtype=np.float32)
-        values = ((matrix / 255.0) * 2.0 - 1.0) if name == "NDVI" else matrix
-        return values[np.isfinite(values) & mask]
+        return raster_helpers.response_index_values(name, response)
 
     @staticmethod
     def _build_equalization_cdf(
@@ -2665,30 +2436,12 @@ class RasterService:
         *,
         bin_count: int = 256,
     ) -> np.ndarray | None:
-        if values.size == 0 or not np.isfinite(minimum) or not np.isfinite(maximum):
-            return None
-        safe_minimum = min(minimum, maximum)
-        safe_maximum = max(minimum, maximum)
-        value_range = safe_maximum - safe_minimum
-        if value_range <= np.finfo(np.float32).eps:
-            return None
-        histogram = np.zeros(bin_count, dtype=np.float32)
-        sample_values = values[
-            np.isfinite(values) & (values >= safe_minimum) & (values <= safe_maximum)
-        ]
-        if sample_values.size == 0:
-            return None
-        positions = np.clip(
-            np.floor(((sample_values - safe_minimum) / value_range) * (bin_count - 1)).astype(int),
-            0,
-            bin_count - 1,
+        return raster_helpers.build_equalization_cdf(
+            values,
+            minimum,
+            maximum,
+            bin_count=bin_count,
         )
-        np.add.at(histogram, positions, 1.0)
-        cumulative = np.cumsum(histogram)
-        first_non_zero = cumulative[np.flatnonzero(cumulative)[0]]
-        denominator = max(float(sample_values.size) - float(first_non_zero), 1.0)
-        cdf = np.clip((cumulative - first_non_zero) / denominator, 0.0, 1.0)
-        return cdf.astype(np.float32)
 
     def _equalization_cache_key(
         self,
@@ -2809,41 +2562,21 @@ class RasterService:
 
     @staticmethod
     def scale(src: Any, max_pixels: int) -> int:
-        return max(1, int((src.width * src.height / max_pixels) ** 0.5))
+        return raster_helpers.scale(src.width, src.height, max_pixels)
 
     @staticmethod
     def normalize(band: np.ndarray) -> np.ndarray:
-        band = band.astype(np.float32)
-        valid = band > 0
-        if not np.any(valid):
-            return np.zeros_like(band, dtype=np.uint8)
-        low, high = np.nanmin(band[valid]), np.nanmax(band[valid])
-        return np.zeros_like(band, dtype=np.uint8) if low == high else ((band - low) / (high - low) * 255).clip(0, 255).astype(np.uint8)
+        return raster_helpers.normalize_band(band)
 
     def _rgb_profile_key(self, path: Path | None = None) -> tuple[str, int, int]:
-        raster_path = (path or self._path()).resolve()
-        stat = raster_path.stat()
-        return str(raster_path), stat.st_size, stat.st_mtime_ns
+        return raster_cache.rgb_profile_key(path or self._path())
 
     def tile_cache_version(self, path: Path | None = None) -> str:
         """Return a browser cache key tied to both the file and renderer."""
-        _, _, mtime_ns = self._rgb_profile_key(path)
-        return f"{mtime_ns}-{self.RGB_RENDER_VERSION}"
+        return raster_cache.tile_cache_version(path or self._path(), self.RGB_RENDER_VERSION)
 
     def index_tile_cache_version(self, path: Path | None = None) -> str:
-        _, _, mtime_ns = self._rgb_profile_key(path)
-        return f"{mtime_ns}-{self.INDEX_RENDER_VERSION}"
-
-    @staticmethod
-    def _compact_cache_component(component: str, *, prefix_length: int = 48) -> str:
-        safe_component = re.sub(r"[^0-9A-Za-z._-]+", "_", component).strip("._-")
-        if not safe_component:
-            safe_component = "default"
-        digest = hashlib.blake2b(safe_component.encode("utf-8"), digest_size=8).hexdigest()
-        prefix = safe_component[:prefix_length].rstrip("._-")
-        if not prefix:
-            prefix = "cache"
-        return f"{prefix}-{digest}"
+        return raster_cache.index_tile_cache_version(path or self._path(), self.INDEX_RENDER_VERSION)
 
     def _tile_cache_path(
         self,
@@ -2854,39 +2587,24 @@ class RasterService:
         y: int,
         variant: str = "default",
     ) -> Path:
-        raster_path = self._path().resolve()
-        raster_scope = self._compact_cache_component(f"{raster_path.stem}-{version}")
-        safe_variant = self._compact_cache_component(variant)
-        return (
-            self.settings.cache_dir
-            / "tiles"
-            / kind
-            / raster_scope
-            / str(z)
-            / str(x)
-            / f"{y}-{safe_variant}.png"
+        return raster_cache.tile_cache_path(
+            self.settings.cache_dir,
+            self._path().resolve(),
+            version,
+            kind,
+            z,
+            x,
+            y,
+            variant,
         )
 
     @staticmethod
     def _read_tile_cache(cache_path: Path) -> bytes | None:
-        try:
-            return cache_path.read_bytes()
-        except FileNotFoundError:
-            return None
-        except OSError:
-            return None
+        return raster_cache.read_tile_cache(cache_path)
 
     @staticmethod
     def _write_tile_cache(cache_path: Path, content: bytes) -> None:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            dir=cache_path.parent,
-            suffix=".tmp",
-            delete=False,
-        ) as temporary_file:
-            temporary_file.write(content)
-            temporary_path = Path(temporary_file.name)
-        temporary_path.replace(cache_path)
+        raster_cache.write_tile_cache(cache_path, content)
 
     @staticmethod
     def _rgb_valid_mask(
@@ -3008,22 +2726,11 @@ class RasterService:
 
     @staticmethod
     def tile_bounds(z: int, x: int, y: int) -> tuple[float, float, float, float]:
-        n = 2 ** z
-        left, right = x / n * 360 - 180, (x + 1) / n * 360 - 180
-        top = np.degrees(np.arctan(np.sinh(np.pi * (1 - 2 * y / n))))
-        bottom = np.degrees(np.arctan(np.sinh(np.pi * (1 - 2 * (y + 1) / n))))
-        return left, bottom, right, top
+        return raster_tiles.tile_bounds(z, x, y)
 
     @staticmethod
     def tile_bounds_mercator(z: int, x: int, y: int) -> tuple[float, float, float, float]:
-        """Return exact XYZ tile bounds in the native Leaflet grid."""
-        origin = 20_037_508.342789244
-        span = (origin * 2) / (2**z)
-        left = -origin + x * span
-        right = left + span
-        top = origin - y * span
-        bottom = top - span
-        return left, bottom, right, top
+        return raster_tiles.tile_bounds_mercator(z, x, y)
 
     def _reproject_rgb_tile(
         self,
@@ -3032,82 +2739,18 @@ class RasterService:
         x: int,
         y: int,
     ) -> tuple[np.ndarray, np.ndarray, Affine]:
-        """Warp RGB and validity into one exact 256 px Web Mercator tile."""
-        if not src.crs:
-            raise ValueError("El ortomosaico no tiene CRS y no puede reproyectarse a Web Mercator.")
-        size = self.RGB_TILE_SIZE
         mercator_bounds = self.tile_bounds_mercator(z, x, y)
-        dst_transform = rasterio.transform.from_bounds(*mercator_bounds, size, size)
-        profile = self.rgb_render_profile(src)
-        bands = profile["bands"]
-        destination_dtype = np.result_type(
-            *(np.dtype(src.dtypes[index - 1]) for index in bands),
+        return raster_tiles.reproject_rgb_tile(
+            src,
+            z,
+            x,
+            y,
+            tile_size=self.RGB_TILE_SIZE,
+            mercator_bounds=mercator_bounds,
+            rgb_render_profile=self.rgb_render_profile,
+            rgb_valid_mask=self._rgb_valid_mask,
+            render_rgb_values=self._render_rgb_values,
         )
-        rgb = np.zeros((3, size, size), dtype=destination_dtype)
-        for destination, band_index in zip(rgb, bands):
-            options: dict[str, Any] = {
-                "source": rasterio.band(src, band_index),
-                "destination": destination,
-                "src_transform": src.transform,
-                "src_crs": src.crs,
-                "dst_transform": dst_transform,
-                "dst_crs": "EPSG:3857",
-                "resampling": Resampling.nearest,
-            }
-            nodata = src.nodatavals[band_index - 1]
-            if nodata is not None:
-                options["src_nodata"] = nodata
-            reproject(**options)
-
-        destination_mask = np.zeros((size, size), dtype=np.uint8)
-        source_bounds = transform_bounds(
-            "EPSG:3857",
-            src.crs,
-            *mercator_bounds,
-            densify_pts=21,
-        )
-        try:
-            source_window = from_bounds(*source_bounds, transform=src.transform).intersection(
-                Window(0, 0, src.width, src.height),
-            )
-        except Exception:
-            source_window = None
-        if source_window is not None and source_window.width > 0 and source_window.height > 0:
-            sample_scale = max(1.0, max(source_window.width, source_window.height) / 2048)
-            source_width = max(1, int(np.ceil(source_window.width / sample_scale)))
-            source_height = max(1, int(np.ceil(source_window.height / sample_scale)))
-            source_rgb = src.read(
-                list(bands),
-                window=source_window,
-                out_shape=(3, source_height, source_width),
-                resampling=Resampling.nearest,
-            )
-            source_valid = self._rgb_valid_mask(
-                src,
-                bands,
-                source_rgb,
-                window=source_window,
-            )
-            source_transform = window_transform(source_window, src.transform) * Affine.scale(
-                source_window.width / source_width,
-                source_window.height / source_height,
-            )
-            reproject(
-                source=source_valid.astype(np.uint8),
-                destination=destination_mask,
-                src_transform=source_transform,
-                src_crs=src.crs,
-                dst_transform=dst_transform,
-                dst_crs="EPSG:3857",
-                resampling=Resampling.nearest,
-            )
-
-        valid = (
-            (destination_mask > 0)
-            & np.all(np.isfinite(rgb), axis=0)
-            & np.any(rgb != 0, axis=0)
-        )
-        return self._render_rgb_values(rgb, profile), valid, dst_transform
 
     def _reproject_index_matrix(
         self,
@@ -3117,81 +2760,18 @@ class RasterService:
         x: int,
         y: int,
     ) -> tuple[np.ndarray, np.ndarray, Affine]:
-        """Calculate the native index, then warp its float matrix to one XYZ tile."""
-        if not src.crs:
-            raise ValueError("El ortomosaico no tiene CRS y no puede reproyectar el indice.")
-        size = self.RGB_TILE_SIZE
         mercator_bounds = self.tile_bounds_mercator(z, x, y)
-        dst_transform = rasterio.transform.from_bounds(*mercator_bounds, size, size)
-        tile_values = np.full((size, size), np.nan, dtype=np.float32)
-        tile_valid = np.zeros((size, size), dtype=np.uint8)
-        source_bounds = transform_bounds(
-            "EPSG:3857",
-            src.crs,
-            *mercator_bounds,
-            densify_pts=21,
+        return raster_tiles.reproject_index_matrix(
+            src,
+            name,
+            z,
+            x,
+            y,
+            tile_size=self.RGB_TILE_SIZE,
+            mercator_bounds=mercator_bounds,
+            index_bands=self._index_bands,
+            calculate_index=self._calculate_index,
         )
-        try:
-            source_window = from_bounds(*source_bounds, transform=src.transform).intersection(
-                Window(0, 0, src.width, src.height),
-            )
-        except Exception:
-            source_window = None
-        if source_window is None or source_window.width <= 0 or source_window.height <= 0:
-            return tile_values, tile_valid.astype(bool), dst_transform
-
-        sample_scale = max(1.0, max(source_window.width, source_window.height) / 2048)
-        source_width = max(1, int(np.ceil(source_window.width / sample_scale)))
-        source_height = max(1, int(np.ceil(source_window.height / sample_scale)))
-        bands = self._index_bands(name)
-        positive, negative = src.read(
-            list(bands),
-            window=source_window,
-            out_shape=(2, source_height, source_width),
-            # Preserve local spectral contrast so the overlay reads with more
-            # color intensity on top of the RGB base layer.
-            resampling=Resampling.nearest,
-        ).astype(np.float32)
-        values, valid = self._calculate_index(positive, negative)
-        mask_options = {
-            "window": source_window,
-            "out_shape": (2, source_height, source_width),
-            "resampling": Resampling.nearest,
-        }
-        band_masks = src.read_masks(list(bands), **mask_options)
-        dataset_mask = src.dataset_mask(
-            window=source_window,
-            out_shape=(source_height, source_width),
-            resampling=Resampling.nearest,
-        )
-        valid &= np.all(band_masks > 0, axis=0) & (dataset_mask > 0)
-        source_values = np.where(valid, values, np.nan).astype(np.float32)
-        source_transform = window_transform(source_window, src.transform) * Affine.scale(
-            source_window.width / source_width,
-            source_window.height / source_height,
-        )
-        reproject(
-            source=source_values,
-            destination=tile_values,
-            src_transform=source_transform,
-            src_crs=src.crs,
-            src_nodata=np.nan,
-            dst_transform=dst_transform,
-            dst_crs="EPSG:3857",
-            dst_nodata=np.nan,
-            # Avoid smoothing the computed index during tile reprojection.
-            resampling=Resampling.nearest,
-        )
-        reproject(
-            source=valid.astype(np.uint8),
-            destination=tile_valid,
-            src_transform=source_transform,
-            src_crs=src.crs,
-            dst_transform=dst_transform,
-            dst_crs="EPSG:3857",
-            resampling=Resampling.nearest,
-        )
-        return tile_values, (tile_valid > 0) & np.isfinite(tile_values), dst_transform
 
     def tile(self, kind: str, z: int, x: int, y: int, low: float = -0.05, high: float = 1.0) -> bytes:
         if kind == "rgb":
@@ -3836,5 +3416,4 @@ class RasterService:
 
     @staticmethod
     def _bounds_response(transform: Affine, height: int, width: int, meta: dict[str, Any]) -> dict[str, Any]:
-        minx, miny, maxx, maxy = meta.get("response_bounds", array_bounds(height, width, transform))
-        return {"bounds": [[miny, minx], [maxy, maxx]], "offset_x": round(meta["col_off"] / meta["scale"]), "offset_y": round(meta["row_off"] / meta["scale"]), "base_width": max(1, round(meta["src_width"] / meta["scale"])), "base_height": max(1, round(meta["src_height"] / meta["scale"]))}
+        return raster_helpers.bounds_response(transform, height, width, meta)

@@ -21,6 +21,18 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useDashboardMap } from "../hooks/useDashboardMap";
+import {
+  ACTIVE_CYCLE_STORAGE_KEY,
+  loadStoredActiveCycle,
+  statsForIndex,
+  type ComparisonIndex,
+} from "./MapView.helpers";
+import {
+  buildRoiComparisonCsv,
+  analysisMatchesSavedStats,
+  getActivePrescriptionDisplayRange,
+  getDeleteDialogContent,
+} from "./MapView.logic";
 import { ActionBar } from "./ActionBar";
 import { AgriculturalCycleDialog } from "./AgriculturalCycleDialog";
 import { ControlPanel } from "./ControlPanel";
@@ -39,7 +51,6 @@ import {
   type OrthomosaicRecord,
   type OrthoSensor,
   type RoiAnalysisRecord,
-  type RoiAnalysisStats,
   type SaveRoiAnalysisPayload,
   type RoiRecord,
 } from "../services/api";
@@ -49,61 +60,7 @@ type DeleteTarget =
   | { kind: "orthomosaic"; record: OrthomosaicRecord }
   | { kind: "roi"; record: RoiRecord }
   | { kind: "analysis"; record: RoiAnalysisRecord };
-type ComparisonIndex = "NDVI" | "NDWI" | "NDRE";
 type CycleDialogMode = "entry" | "import" | "library";
-const ACTIVE_CYCLE_STORAGE_KEY = "geofield.activeCycle";
-
-const loadStoredActiveCycle = (): AgriculturalCycleRecord | null => {
-  if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(ACTIVE_CYCLE_STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as AgriculturalCycleRecord;
-  } catch {
-    window.localStorage.removeItem(ACTIVE_CYCLE_STORAGE_KEY);
-    return null;
-  }
-};
-
-const sameMetric = (
-  left: number | null | undefined,
-  right: number | null | undefined,
-) => {
-  if (left == null && right == null) return true;
-  if (left == null || right == null) return false;
-  return Math.abs(left - right) < 1e-6;
-};
-
-const statsForIndex = (
-  analysis: RoiAnalysisRecord,
-  index: ComparisonIndex,
-): RoiAnalysisStats | null =>
-  index === "NDVI"
-    ? analysis.ndvi
-    : index === "NDWI"
-      ? analysis.ndwi
-      : analysis.ndre;
-
-const chronologicalKey = (analysis: RoiAnalysisRecord) =>
-  `${analysis.orthomosaics?.capture_date ?? analysis.created_at}|${analysis.orthomosaics?.name ?? ""}|${analysis.orthomosaic_id}`;
-
-const sameStats = (
-  current: RoiAnalysisStats | null,
-  expected: RoiAnalysisStats,
-) =>
-  current != null &&
-  current.count === expected.count &&
-  sameMetric(current.min, expected.min) &&
-  sameMetric(current.max, expected.max) &&
-  sameMetric(current.mean, expected.mean) &&
-  sameMetric(current.median, expected.median) &&
-  sameMetric(current.standard_deviation, expected.standard_deviation) &&
-  sameMetric(current.p10, expected.p10) &&
-  sameMetric(current.p25, expected.p25) &&
-  sameMetric(current.p75, expected.p75) &&
-  sameMetric(current.p90, expected.p90) &&
-  sameMetric(current.range_min, expected.range_min) &&
-  sameMetric(current.range_max, expected.range_max);
 
 function IndexIcon({ name }: { name: "NDVI" | "NDWI" | "NDRE" }) {
   if (name === "NDVI")
@@ -513,16 +470,6 @@ export function MapView() {
       setRoiAnalysisLoading(false);
     }
   };
-  const historyContainsSavedStats = (
-    analysis: RoiAnalysisRecord,
-    roiId: string,
-    orthomosaicId: string,
-    payload: SaveRoiAnalysisPayload,
-  ) => {
-    if (analysis.roi_id !== roiId || analysis.orthomosaic_id !== orthomosaicId)
-      return false;
-    return sameStats(statsForIndex(analysis, payload.index), payload.stats);
-  };
   const loadRoiAnalysisHistory = async (index: ComparisonIndex) => {
     const roiId = map.state.selectedRoiId;
     if (roiId) {
@@ -595,11 +542,12 @@ export function MapView() {
       setComparisonIndex(payload.index);
       setComparisonRoiId(roiId);
       if (
-        !historyContainsSavedStats(
+        !analysisMatchesSavedStats(
           response.analysis,
           roiId,
           orthomosaicId,
-          payload,
+          payload.index,
+          payload.stats,
         )
       ) {
         const persisted = statsForIndex(response.analysis, payload.index);
@@ -656,96 +604,7 @@ export function MapView() {
       const items = await requestRoiAnalysisHistory(roiId, comparisonIndex);
       if (!items.length)
         throw new Error("No hay estadísticas vigentes para exportar.");
-      const chronological = [...items].sort((left, right) =>
-        chronologicalKey(left).localeCompare(chronologicalKey(right)),
-      );
-      // Escapa texto para CSV y neutraliza fórmulas inyectadas desde nombres.
-      const csvCell = (value: string | number | null | undefined) => {
-        if (value == null) return "";
-        if (typeof value === "number")
-          return Number.isFinite(value) ? String(value) : "";
-        const protectedValue = /^[=+\-@]/.test(value) ? `'${value}` : value;
-        return `"${protectedValue.replace(/"/g, '""')}"`;
-      };
-      const rows: Array<Array<string | number | null | undefined>> = [
-        [
-          "registro_id",
-          "roi_id",
-          "orthomosaico_id",
-          "ortomosaico",
-          "fecha_captura",
-          "fecha_guardado",
-          "pixeles_ndvi",
-          "ndvi_minimo",
-          "ndvi_maximo",
-          "ndvi_promedio",
-          "ndvi_mediana",
-          "ndvi_desviacion_estandar",
-          "ndvi_p10",
-          "ndvi_p25",
-          "ndvi_p75",
-          "ndvi_p90",
-          "pixeles_ndwi",
-          "ndwi_minimo",
-          "ndwi_maximo",
-          "ndwi_promedio",
-          "ndwi_mediana",
-          "ndwi_desviacion_estandar",
-          "ndwi_p10",
-          "ndwi_p25",
-          "ndwi_p75",
-          "ndwi_p90",
-          "pixeles_ndre",
-          "ndre_minimo",
-          "ndre_maximo",
-          "ndre_promedio",
-          "ndre_mediana",
-          "ndre_desviacion_estandar",
-          "ndre_p10",
-          "ndre_p25",
-          "ndre_p75",
-          "ndre_p90",
-        ],
-        ...chronological.map((analysis) => [
-          analysis.id,
-          analysis.roi_id,
-          analysis.orthomosaic_id,
-          analysis.orthomosaics?.name ?? "Ortomosaico eliminado",
-          analysis.orthomosaics?.capture_date ?? "",
-          analysis.created_at,
-          analysis.ndvi.count,
-          analysis.ndvi.min,
-          analysis.ndvi.max,
-          analysis.ndvi.mean,
-          analysis.ndvi.median ?? null,
-          analysis.ndvi.standard_deviation,
-          analysis.ndvi.p10 ?? null,
-          analysis.ndvi.p25 ?? null,
-          analysis.ndvi.p75 ?? null,
-          analysis.ndvi.p90 ?? null,
-          analysis.ndwi?.count ?? null,
-          analysis.ndwi?.min ?? null,
-          analysis.ndwi?.max ?? null,
-          analysis.ndwi?.mean ?? null,
-          analysis.ndwi?.median ?? null,
-          analysis.ndwi?.standard_deviation ?? null,
-          analysis.ndwi?.p10 ?? null,
-          analysis.ndwi?.p25 ?? null,
-          analysis.ndwi?.p75 ?? null,
-          analysis.ndwi?.p90 ?? null,
-          analysis.ndre?.count ?? null,
-          analysis.ndre?.min ?? null,
-          analysis.ndre?.max ?? null,
-          analysis.ndre?.mean ?? null,
-          analysis.ndre?.median ?? null,
-          analysis.ndre?.standard_deviation ?? null,
-          analysis.ndre?.p10 ?? null,
-          analysis.ndre?.p25 ?? null,
-          analysis.ndre?.p75 ?? null,
-          analysis.ndre?.p90 ?? null,
-        ]),
-      ];
-      const contents = `\uFEFF${rows.map((row) => row.map(csvCell).join(";")).join("\r\n")}`;
+      const contents = buildRoiComparisonCsv(items);
       const blobUrl = URL.createObjectURL(
         new Blob([contents], { type: "text/csv;charset=utf-8" }),
       );
@@ -836,39 +695,7 @@ export function MapView() {
     }
   };
 
-  // Un único diálogo de confirmación adapta su mensaje al tipo de registro.
-  const deleteDialogContent =
-    deleteTarget?.kind === "cycle"
-      ? {
-          title: "¿Eliminar este ciclo agrícola?",
-          description:
-            "Se eliminarán todos sus ortomosaicos, archivos, ROI y análisis asociados. Esta acción no se puede deshacer.",
-          subject: deleteTarget.record.name,
-        }
-      : deleteTarget?.kind === "orthomosaic"
-      ? {
-          title: "¿Eliminar este ortomosaico?",
-          description:
-            "Se eliminarán el registro y su archivo almacenado. Esta acción no se puede deshacer.",
-          subject: deleteTarget.record.name,
-        }
-      : deleteTarget?.kind === "roi"
-        ? {
-            title: "¿Eliminar esta región?",
-            description:
-              "El ROI y su historial asociado dejarán de estar disponibles. Esta acción no se puede deshacer.",
-            subject: deleteTarget.record.name,
-          }
-        : deleteTarget?.kind === "analysis"
-          ? {
-              title: "¿Eliminar estas estadísticas?",
-              description:
-                "Se quitará este registro del historial comparativo del ROI. Esta acción no se puede deshacer.",
-              subject:
-                deleteTarget.record.orthomosaics?.name ??
-                "Ortomosaico eliminado",
-            }
-          : { title: "", description: "", subject: "" };
+  const deleteDialogContent = getDeleteDialogContent(deleteTarget);
 
   /** Convierte la posición horizontal del puntero al porcentaje del swipe. */
   const moveDivider = (event: React.PointerEvent) => {
@@ -893,40 +720,11 @@ export function MapView() {
     setPrescriptionOpen(true);
   };
 
-  const activePrescriptionDisplayRange =
-    selectedIndex === "NDVI"
-      ? map.ndviAnalysis.roiResponse
-        ? {
-            minimum:
-              map.ndviAnalysis.roiResponse.range_min ??
-              map.ndviAnalysis.roiStats.min,
-            maximum:
-              map.ndviAnalysis.roiResponse.range_max ??
-              map.ndviAnalysis.roiStats.max,
-          }
-        : map.ndviAnalysis.response
-          ? {
-              minimum:
-                map.ndviAnalysis.response.range_min ??
-                map.ndviAnalysis.stats.min,
-              maximum:
-                map.ndviAnalysis.response.range_max ??
-                map.ndviAnalysis.stats.max,
-            }
-          : null
-      : selectedIndex
-        ? (() => {
-            const analysis = map.indexAnalyses.find(
-              (item) => item.name === selectedIndex,
-            );
-            return analysis
-              ? {
-                  minimum: analysis.response.range_min ?? analysis.stats.min,
-                  maximum: analysis.response.range_max ?? analysis.stats.max,
-                }
-              : null;
-          })()
-        : null;
+  const activePrescriptionDisplayRange = getActivePrescriptionDisplayRange(
+    selectedIndex,
+    map.ndviAnalysis,
+    map.indexAnalyses,
+  );
 
   const generatePrescription = async (
     zoneCount: number,

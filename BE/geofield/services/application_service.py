@@ -88,6 +88,51 @@ class OrthomosaicApplicationService:
             capture_date,
         )
 
+    def create_agricultural_cycle(
+        self,
+        *,
+        name: str,
+        crop_name: str | None,
+        start_date: date,
+        end_date: date | None,
+        notes: str | None,
+    ) -> dict[str, Any]:
+        return self.supabase.create_agricultural_cycle(
+            name=name,
+            crop_name=crop_name,
+            start_date=start_date,
+            end_date=end_date,
+            notes=notes,
+        )
+
+    def update_agricultural_cycle(self, cycle_id: str, *, name: str) -> dict[str, Any]:
+        return self.supabase.update_agricultural_cycle(cycle_id, name=name)
+
+    def reorder_orthomosaics(
+        self,
+        cycle_id: str,
+        orthomosaic_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        return self.supabase.reorder_orthomosaics(cycle_id, orthomosaic_ids)
+
+    def create_roi(
+        self,
+        *,
+        name: str,
+        geojson: dict[str, Any],
+        orthomosaic_id: str | None,
+        agricultural_cycle_id: str | None,
+    ) -> dict[str, Any]:
+        return self.supabase.create_roi(
+            name,
+            geojson,
+            orthomosaic_id,
+            agricultural_cycle_id,
+        )
+
+    def set_roi_active(self, roi_id: str, active: bool) -> dict[str, Any]:
+        return self.supabase.set_roi_active(roi_id, active)
+
     def reset_active_orthomosaic(self, record: dict[str, Any]) -> None:
         active_path = self.raster.active_path.resolve() if self.raster.active_path else None
         if not active_path:
@@ -156,6 +201,35 @@ class RoiApplicationService:
             selected_index,
             self._stats(selected_index, geometry),
         )
+
+    def save_roi_analysis_for_roi(
+        self,
+        *,
+        roi_id: str,
+        orthomosaic_id: str,
+        geometry: Any,
+        selected_index: str | None = None,
+        selected_stats: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        record = self.save_roi_analysis(
+            roi_id=roi_id,
+            orthomosaic_id=orthomosaic_id,
+            geometry=geometry,
+            selected_index=selected_index,
+            selected_stats=selected_stats,
+        )
+        if selected_index and selected_stats:
+            persisted_stats = record.get(selected_index.lower())
+            normalized_stats = self.normalize_roi_analysis_stats(selected_stats)
+            if not self.stats_match(persisted_stats, normalized_stats):
+                raise ValueError(
+                    f"Se guardo un registro distinto al resumen numerico actual de {selected_index}. "
+                    "La base de datos devolvio estadisticas diferentes a las enviadas desde el histograma.",
+                )
+        return record
+
+    def save_global_analysis(self, *, orthomosaic_id: str) -> dict[str, Any]:
+        return self.supabase.save_global_analysis(orthomosaic_id=orthomosaic_id)
 
     @staticmethod
     def normalize_roi_analysis_stats(stats: dict[str, Any]) -> dict[str, Any]:

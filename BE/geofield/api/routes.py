@@ -14,10 +14,16 @@ from typing import Any
 import rasterio
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
-from shapely.geometry import shape
-from shapely.ops import unary_union
 
 from geofield.errors import OrthomosaicNotFoundError, RoiAnalysisNotFoundError, SupabaseNotConfiguredError
+from geofield.api.request_utils import (
+    geojson_geometry,
+    optional_string,
+    parse_iso_date,
+    payload_object,
+    require_list_of_strings,
+    require_string,
+)
 from geofield.services.application_service import OrthomosaicApplicationService, RoiApplicationService
 from geofield.services.raster_service import RasterService
 from geofield.services.supabase_service import SupabaseService
@@ -28,31 +34,6 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     router = APIRouter()
     orthomosaics = OrthomosaicApplicationService(raster, supabase)
     rois = RoiApplicationService(raster, supabase)
-
-    def payload_geometry(payload: Any) -> Any:
-        if not isinstance(payload, dict) or "geojson" not in payload:
-            raise HTTPException(400, "No GeoJSON recibido")
-        geojson = payload["geojson"]
-        if not isinstance(geojson, dict):
-            raise HTTPException(400, "El campo geojson debe ser un objeto GeoJSON")
-        if geojson.get("type") == "Feature":
-            geojson = geojson.get("geometry")
-        elif geojson.get("type") == "FeatureCollection":
-            geometries = [item.get("geometry") for item in geojson.get("features", []) if isinstance(item, dict) and isinstance(item.get("geometry"), dict)]
-            if not geometries:
-                raise HTTPException(400, "El FeatureCollection no contiene geometrÃ­as")
-            try:
-                return unary_union([shape(item) for item in geometries])
-            except (TypeError, ValueError) as exc:
-                raise HTTPException(400, "GeometrÃ­as GeoJSON invÃ¡lidas") from exc
-        elif "geometry" in geojson and geojson.get("type") != "FeatureCollection":
-            geojson = geojson["geometry"]
-        if not isinstance(geojson, dict) or not geojson.get("type") or "coordinates" not in geojson:
-            raise HTTPException(400, "Se requiere una geometrÃ­a GeoJSON vÃ¡lida")
-        try:
-            return shape(geojson)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(400, "GeometrÃ­a GeoJSON invÃ¡lida") from exc
 
     def ensure_orthomosaic(orthomosaic_id: str | None) -> None:
         if not orthomosaic_id:
@@ -115,25 +96,18 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     @router.post("/agricultural_cycles")
     async def create_agricultural_cycle(request: Request) -> dict[str, Any]:
         payload = await request.json()
-        name = str(payload.get("name") or "").strip()
-        crop_name = str(payload.get("crop_name") or "").strip() or None
-        notes = str(payload.get("notes") or "").strip() or None
-        start_date_raw = payload.get("start_date")
-        end_date_raw = payload.get("end_date")
-        if not name:
-            raise HTTPException(400, "Captura un nombre para el ciclo agricola.")
-        if not start_date_raw:
-            raise HTTPException(400, "Captura la fecha inicial del ciclo agricola.")
+        name = require_string(payload, "name", "Captura un nombre para el ciclo agricola.")
+        payload_data = payload_object(payload)
+        start_date = parse_iso_date(
+            payload_data.get("start_date"),
+            "La fecha inicial debe usar el formato YYYY-MM-DD.",
+        )
+        end_date_raw = payload_data.get("end_date")
+        end_date = parse_iso_date(end_date_raw, "La fecha final debe usar el formato YYYY-MM-DD.") if end_date_raw else None
+        crop_name = optional_string(payload, "crop_name")
+        notes = optional_string(payload, "notes")
         try:
-            start_date = date.fromisoformat(str(start_date_raw))
-        except ValueError as exc:
-            raise HTTPException(422, "La fecha inicial debe usar el formato YYYY-MM-DD.") from exc
-        try:
-            end_date = date.fromisoformat(str(end_date_raw)) if end_date_raw else None
-        except ValueError as exc:
-            raise HTTPException(422, "La fecha final debe usar el formato YYYY-MM-DD.") from exc
-        try:
-            cycle = supabase.create_agricultural_cycle(
+            cycle = orthomosaics.create_agricultural_cycle(
                 name=name,
                 crop_name=crop_name,
                 start_date=start_date,
@@ -149,14 +123,9 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     @router.patch("/agricultural_cycles/{cycle_id}")
     async def update_agricultural_cycle(cycle_id: str, request: Request) -> dict[str, Any]:
         payload = await request.json()
-        name = str(payload.get("name") or "").strip()
-        if not name:
-            raise HTTPException(400, "Captura un nombre valido para el ciclo agricola.")
+        name = require_string(payload, "name", "Captura un nombre valido para el ciclo agricola.")
         try:
-            cycle = supabase.update_agricultural_cycle(
-                cycle_id,
-                name=name,
-            )
+            cycle = orthomosaics.update_agricultural_cycle(cycle_id, name=name)
         except SupabaseNotConfiguredError as exc:
             raise HTTPException(503, str(exc)) from exc
         except OrthomosaicNotFoundError as exc:
@@ -180,13 +149,13 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     @router.patch("/agricultural_cycles/{cycle_id}/orthomosaics/order")
     async def reorder_cycle_orthomosaics(cycle_id: str, request: Request) -> dict[str, Any]:
         payload = await request.json()
-        raw_ids = payload.get("orthomosaic_ids") if isinstance(payload, dict) else None
-        if not isinstance(raw_ids, list) or any(
-            not isinstance(item, str) or not item.strip() for item in raw_ids
-        ):
-            raise HTTPException(400, "EnvÃ­a la lista completa de ortomosaicos en el orden deseado.")
+        raw_ids = require_list_of_strings(
+            payload,
+            "orthomosaic_ids",
+            "Envía la lista completa de ortomosaicos en el orden deseado.",
+        )
         try:
-            items = supabase.reorder_orthomosaics(cycle_id, raw_ids)
+            items = orthomosaics.reorder_orthomosaics(cycle_id, raw_ids)
         except SupabaseNotConfiguredError as exc:
             raise HTTPException(503, str(exc)) from exc
         except OrthomosaicNotFoundError as exc:
@@ -255,13 +224,10 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     @router.patch("/orthomosaics/{orthomosaic_id}")
     async def update_orthomosaic(orthomosaic_id: str, request: Request) -> dict[str, Any]:
         payload = await request.json()
-        capture_date_raw = payload.get("capture_date")
-        if not capture_date_raw:
-            raise HTTPException(400, "Selecciona una fecha valida para el vuelo.")
-        try:
-            capture_date = date.fromisoformat(str(capture_date_raw))
-        except ValueError as exc:
-            raise HTTPException(422, "La fecha del vuelo debe usar el formato YYYY-MM-DD.") from exc
+        capture_date = parse_iso_date(
+            payload_object(payload).get("capture_date"),
+            "La fecha del vuelo debe usar el formato YYYY-MM-DD.",
+        )
         try:
             record = orthomosaics.update_orthomosaic_capture_date(
                 orthomosaic_id,
@@ -285,15 +251,17 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     async def create_roi(request: Request) -> dict[str, Any]:
         try:
             payload = await request.json()
-            geojson = payload.get("geojson") if isinstance(payload, dict) else None
-            if not isinstance(geojson, dict): raise HTTPException(400, "Se requiere un GeoJSON vÃ¡lido.")
-            payload_geometry({"geojson": geojson})
-            name = str(payload.get("name") or "ROI").strip() or "ROI"
+            payload_data = payload_object(payload)
+            geojson = payload_data.get("geojson")
+            if not isinstance(geojson, dict):
+                raise HTTPException(400, "Se requiere un GeoJSON válido.")
+            geojson_geometry({"geojson": geojson})
+            name = str(payload_data.get("name") or "ROI").strip() or "ROI"
             record = rois.create_roi(
                 name=name,
                 geojson=geojson,
-                orthomosaic_id=payload.get("orthomosaic_id"),
-                agricultural_cycle_id=payload.get("cycle_id"),
+                orthomosaic_id=payload_data.get("orthomosaic_id"),
+                agricultural_cycle_id=payload_data.get("cycle_id"),
             )
             return {"status": "ok", "roi": record}
         except HTTPException:
@@ -304,7 +272,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     @router.patch("/rois/{roi_id}")
     async def update_roi(roi_id: str, request: Request) -> dict[str, Any]:
         payload = await request.json()
-        return {"status": "ok", "roi": supabase.set_roi_active(roi_id, bool(payload.get("is_active")))}
+        return {"status": "ok", "roi": rois.set_roi_active(roi_id, bool(payload_object(payload).get("is_active")))}
 
     @router.delete("/rois/{roi_id}")
     def delete_roi(roi_id: str) -> dict[str, str]:
@@ -336,30 +304,24 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     @router.post("/rois/{roi_id}/analyses")
     async def save_roi_analysis(roi_id: str, request: Request) -> dict[str, Any]:
         payload = await request.json()
-        orthomosaic_id = str(payload.get("orthomosaic_id") or "")
-        if not orthomosaic_id: raise HTTPException(400, "Selecciona un ortomosaico.")
-        selected_index = str(payload.get("index") or "").upper() or None
-        selected_stats = payload.get("stats")
+        orthomosaic_id = require_string(
+            payload,
+            "orthomosaic_id",
+            "Selecciona un ortomosaico.",
+        )
+        selected_index = str(payload_object(payload).get("index") or "").upper() or None
+        selected_stats = payload_object(payload).get("stats")
         roi = supabase.get_roi(roi_id)
         ensure_orthomosaic(orthomosaic_id)
-        geometry = payload_geometry({"geojson": roi["geojson"]})
+        geometry = geojson_geometry({"geojson": roi["geojson"]})
         try:
-            record = rois.save_roi_analysis(
+            record = rois.save_roi_analysis_for_roi(
                 roi_id=roi_id,
                 orthomosaic_id=orthomosaic_id,
                 geometry=geometry,
                 selected_index=selected_index,
                 selected_stats=selected_stats,
             )
-            if selected_index and selected_stats:
-                persisted_stats = record.get(selected_index.lower())
-                normalized_stats = rois.normalize_roi_analysis_stats(selected_stats)
-                if not rois.stats_match(persisted_stats, normalized_stats):
-                    raise HTTPException(
-                        502,
-                        f"Se guardo un registro distinto al resumen numerico actual de {selected_index}. "
-                        "La base de datos devolvio estadisticas diferentes a las enviadas desde el histograma.",
-                    )
         except HTTPException:
             raise
         except ValueError as exc:
@@ -374,9 +336,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
 
     async def save_global_analysis(request: Request) -> dict[str, Any]:
         payload = await request.json()
-        orthomosaic_id = str(payload.get("orthomosaic_id") or "")
-        if not orthomosaic_id:
-            raise HTTPException(400, "Selecciona un ortomosaico.")
+        orthomosaic_id = require_string(payload, "orthomosaic_id", "Selecciona un ortomosaico.")
         ensure_orthomosaic(orthomosaic_id)
         try:
             record = rois.save_global_analysis(orthomosaic_id=orthomosaic_id)
@@ -526,23 +486,25 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     @router.post("/ndvi_zoning")
     async def create_ndvi_zoning(request: Request) -> dict[str, Any]:
         payload = await request.json()
-        orthomosaic_id = payload.get("orthomosaic_id")
-        index_name = str(payload.get("index_name", "NDVI"))
-        if not isinstance(orthomosaic_id, str) or not orthomosaic_id:
-            raise HTTPException(400, "Selecciona un vuelo antes de generar la zonificacion.")
+        orthomosaic_id = require_string(
+            payload,
+            "orthomosaic_id",
+            "Selecciona un vuelo antes de generar la zonificacion.",
+        )
+        index_name = str(payload_object(payload).get("index_name", "NDVI"))
         try:
-            zone_count = int(payload.get("zone_count", 4))
-            cell_size_m = float(payload.get("cell_size_m", 3))
-            grid_angle_deg = float(payload.get("grid_angle_deg", 0))
-            detail_level = float(payload.get("detail_level", 1))
+            zone_count = int(payload_object(payload).get("zone_count", 4))
+            cell_size_m = float(payload_object(payload).get("cell_size_m", 3))
+            grid_angle_deg = float(payload_object(payload).get("grid_angle_deg", 0))
+            detail_level = float(payload_object(payload).get("detail_level", 1))
         except (TypeError, ValueError) as exc:
             raise HTTPException(422, "Zonas, tamano de celda, rotacion y detalle deben ser numericos.") from exc
-        classification_method = str(payload.get("classification_method", "quantiles"))
-        cell_value_mode = str(payload.get("cell_value_mode", "mean"))
-        manual_breaks = payload.get("manual_breaks")
-        analysis_min = payload.get("analysis_min")
-        analysis_max = payload.get("analysis_max")
-        geometry = payload_geometry(payload)
+        classification_method = str(payload_object(payload).get("classification_method", "quantiles"))
+        cell_value_mode = str(payload_object(payload).get("cell_value_mode", "mean"))
+        manual_breaks = payload_object(payload).get("manual_breaks")
+        analysis_min = payload_object(payload).get("analysis_min")
+        analysis_max = payload_object(payload).get("analysis_max")
+        geometry = geojson_geometry(payload)
         ensure_orthomosaic(orthomosaic_id)
         try:
             return raster.ndvi_zoning_map(
@@ -564,24 +526,26 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     @router.post("/prescriptions")
     async def create_prescription(request: Request) -> dict[str, Any]:
         payload = await request.json()
-        orthomosaic_id = payload.get("orthomosaic_id")
-        index_name = str(payload.get("index_name", "NDVI"))
-        if not isinstance(orthomosaic_id, str) or not orthomosaic_id:
-            raise HTTPException(400, "Selecciona un vuelo antes de generar la prescripciÃ³n.")
+        orthomosaic_id = require_string(
+            payload,
+            "orthomosaic_id",
+            "Selecciona un vuelo antes de generar la prescripción.",
+        )
+        index_name = str(payload_object(payload).get("index_name", "NDVI"))
         try:
-            zone_count = int(payload.get("zone_count", 4))
-            cell_size_m = float(payload.get("cell_size_m", 3))
-            grid_angle_deg = float(payload.get("grid_angle_deg", 0))
-            detail_level = float(payload.get("detail_level", 1))
+            zone_count = int(payload_object(payload).get("zone_count", 4))
+            cell_size_m = float(payload_object(payload).get("cell_size_m", 3))
+            grid_angle_deg = float(payload_object(payload).get("grid_angle_deg", 0))
+            detail_level = float(payload_object(payload).get("detail_level", 1))
         except (TypeError, ValueError) as exc:
             raise HTTPException(422, "Zonas, tamano de celda, rotacion y detalle deben ser numericos.") from exc
-        classification_method = str(payload.get("classification_method", "quantiles"))
-        cell_value_mode = str(payload.get("cell_value_mode", "mean"))
-        manual_breaks = payload.get("manual_breaks")
-        analysis_min = payload.get("analysis_min")
-        analysis_max = payload.get("analysis_max")
-        doses = payload.get("doses")
-        geometry = payload_geometry(payload)
+        classification_method = str(payload_object(payload).get("classification_method", "quantiles"))
+        cell_value_mode = str(payload_object(payload).get("cell_value_mode", "mean"))
+        manual_breaks = payload_object(payload).get("manual_breaks")
+        analysis_min = payload_object(payload).get("analysis_min")
+        analysis_max = payload_object(payload).get("analysis_max")
+        doses = payload_object(payload).get("doses")
+        geometry = geojson_geometry(payload)
         ensure_orthomosaic(orthomosaic_id)
         try:
             return raster.prescription_map_with_doses(
@@ -655,7 +619,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         ensure_orthomosaic(orthomosaic_id)
         payload = await request.json()
         try:
-            data = raster.roi_ndvi(payload_geometry(payload))
+            data = raster.roi_ndvi(geojson_geometry(payload))
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         return data | {"matrix": data["ndvi_matrix"], "mask": data["ndvi_mask"]}
@@ -665,7 +629,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         ensure_orthomosaic(orthomosaic_id)
         payload = await request.json()
         try:
-            geometry = payload_geometry(payload)
+            geometry = geojson_geometry(payload)
             indices = {name: raster.roi_vegetation_index(geometry, name) for name in ("NDVI", "NDWI", "NDRE")}
             ndvi = indices["NDVI"]
             indices["NDVI"] = ndvi | {"matrix": ndvi["ndvi_matrix"], "mask": ndvi["ndvi_mask"]}
@@ -683,7 +647,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         payload = await request.json()
         try:
             data = raster.roi_vegetation_index(
-                payload_geometry(payload),
+                geojson_geometry(payload),
                 name.upper(),
             )
         except ValueError as exc:
@@ -696,21 +660,19 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     async def crop(request: Request, orthomosaic_id: str | None = Query(None)) -> dict[str, Any]:
         ensure_orthomosaic(orthomosaic_id)
         payload = await request.json()
-        return raster.crop(payload_geometry(payload))
+        return raster.crop(geojson_geometry(payload))
 
     @router.post("/crop_tiles")
     async def crop_tiles(request: Request, orthomosaic_id: str | None = Query(None)) -> dict[str, Any]:
         ensure_orthomosaic(orthomosaic_id)
         payload = await request.json()
-        return raster.begin_crop_tiles(payload_geometry(payload))
+        return raster.begin_crop_tiles(geojson_geometry(payload))
 
     @router.post("/tree_points")
     async def tree_points(request: Request) -> dict[str, Any]:
         payload = await request.json()
-        if not isinstance(payload, dict) or "geojson" not in payload:
-            raise HTTPException(400, "No GeoJSON recibido")
         try:
-            return TreeService.process(payload["geojson"])
+            return TreeService.process(payload_object(payload)["geojson"])
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 

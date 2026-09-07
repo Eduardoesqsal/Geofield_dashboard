@@ -57,7 +57,7 @@ interface PrescriptionDialogProps {
   open: boolean;
   configurationRequestId: number;
   indexName: VegetationIndexName;
-  displayRange?: { minimum: number; maximum: number } | null;
+  displayRange?: { minimum: number | null; maximum: number | null } | null;
   busy: boolean;
   error: string | null;
   zoning: NdviZoningResponse | null;
