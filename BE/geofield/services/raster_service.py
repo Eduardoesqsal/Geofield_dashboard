@@ -1384,6 +1384,14 @@ class RasterService:
                 * Affine.translation(left, top)
                 * Affine.scale(cell_size_m, -cell_size_m)
             )
+            grid_footprint = Polygon(
+                [
+                    destination_transform * (0, 0),
+                    destination_transform * (width, 0),
+                    destination_transform * (width, height),
+                    destination_transform * (0, height),
+                ]
+            )
             total_cells = width * height
             if total_cells > 150_000:
                 minimum_size = cell_size_m * (total_cells / 150_000) ** 0.5
@@ -1400,10 +1408,7 @@ class RasterService:
             source_bounds = transform_bounds(
                 metric_crs,
                 src.crs,
-                left,
-                bottom,
-                right,
-                top,
+                *grid_footprint.bounds,
                 densify_pts=21,
             )
             try:
@@ -1498,14 +1503,6 @@ class RasterService:
             float(spatial_parameters["minimum_region_area_m2"]),
         )
         colors = self._zone_display_palette(index_name, zone_count)
-        grid_footprint = Polygon(
-            [
-                destination_transform * (0, 0),
-                destination_transform * (width, 0),
-                destination_transform * (width, height),
-                destination_transform * (0, height),
-            ]
-        )
         wgs84_footprint = project_geometry(
             pyproj.Transformer.from_crs(
                 metric_crs,

@@ -921,6 +921,7 @@ export function MapView() {
         }}
         onGenerateZoning={generateZoning}
         onPreviewZoning={previewZoning}
+        onLiveRotationChange={map.setLivePrescriptionRotation}
         onClearPreview={map.clearZoningPreview}
         onGeneratePrescription={generatePrescriptionV2}
         onClear={() => {

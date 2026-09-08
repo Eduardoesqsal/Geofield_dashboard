@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import {
   IconDownload,
   IconGridDots,
@@ -83,6 +83,13 @@ interface PrescriptionDialogProps {
     manualBreaks?: number[],
     allowExisting?: boolean,
   ) => Promise<void>;
+  onLiveRotationChange: (
+    cellSizeM: number,
+    gridAngleDeg: number,
+    visible: boolean,
+    baseAngleDeg?: number,
+    hasCurrentMap?: boolean,
+  ) => void;
   onClearPreview: () => void;
   onGeneratePrescription: (
     zoneCount: number,
@@ -269,6 +276,7 @@ export function PrescriptionDialog({
   onDrawArea,
   onGenerateZoning,
   onPreviewZoning,
+  onLiveRotationChange,
   onClearPreview,
   onGeneratePrescription,
   onClear,
@@ -290,18 +298,8 @@ export function PrescriptionDialog({
   const [downloadJsonError, setDownloadJsonError] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<PrescriptionView>("configuration");
   const [rotationMode, setRotationMode] = useState(false);
-  const rotationModeRef = useRef(false);
-  const rotationPreviewRunningRef = useRef(false);
-  const pendingRotationPreviewRef = useRef<{
-    zoneCount: number;
-    cellSizeM: number;
-    gridAngleDeg: number;
-    classificationMethod: "quantiles" | "equal_intervals" | "manual";
-    cellValueMode: "mean" | "min" | "max";
-    detailLevel: number;
-    manualBreaks?: number[];
-  } | null>(null);
-  rotationModeRef.current = rotationMode;
+  const [rotationConfirmed, setRotationConfirmed] = useState(false);
+  const needsRotationDecision = !zoning && !prescription && !rotationConfirmed;
 
   const parseManualBreaks = (value: string): number[] | undefined => {
     const tokens = value
@@ -321,6 +319,7 @@ export function PrescriptionDialog({
       setDetailLevel(1);
       setManualBreaksText("");
       setDoseValues(Array.from({ length: zoneCount }, () => ""));
+      setRotationConfirmed(false);
       return;
     }
     setZoneCount(source.zone_count ?? 5);
@@ -333,6 +332,7 @@ export function PrescriptionDialog({
         ? source.legend.map((zone) => formatDoseValue(zone.dosage))
         : Array.from({ length: source.zone_count ?? 5 }, () => ""),
     );
+    setRotationConfirmed(true);
   }, [zoning, prescription]);
 
   useEffect(() => {
@@ -343,79 +343,61 @@ export function PrescriptionDialog({
 
   useEffect(() => {
     if (open) return;
+    onLiveRotationChange(cellSizeM, gridAngleDeg, false);
     onClearPreview();
-  }, [onClearPreview, open]);
+  }, [cellSizeM, gridAngleDeg, onClearPreview, onLiveRotationChange, open]);
+
+  useEffect(() => {
+    const currentMap = zoning ?? prescription;
+    onLiveRotationChange(
+      cellSizeM,
+      gridAngleDeg,
+      open && rotationMode,
+      currentMap?.grid_angle_deg ?? 0,
+      !!currentMap,
+    );
+  }, [
+    cellSizeM,
+    gridAngleDeg,
+    onLiveRotationChange,
+    open,
+    prescription,
+    rotationMode,
+    zoning,
+  ]);
 
   useEffect(() => {
     setActiveView("configuration");
+    setRotationConfirmed(false);
   }, [configurationRequestId]);
+
+  useEffect(() => {
+    if (zoning || prescription) return;
+    setRotationConfirmed(false);
+  }, [cellSizeM, classificationMethod, cellValueMode, detailLevel, gridAngleDeg, manualBreaksText, prescription, zoneCount, zoning]);
 
   useEffect(() => {
     if (!open || (!prescriptionAreaReady && !rotationMode)) return;
     if (cellSizeM < 1 || cellSizeM > 50) return;
     const manualBreaks = parseManualBreaks(manualBreaksText);
-    const matchesCurrentZoning =
-      !!zoning &&
-      zoning.zone_count === zoneCount &&
-      Math.abs(zoning.cell_size_m - cellSizeM) <= 1e-6 &&
-      Math.abs(zoning.grid_angle_deg - gridAngleDeg) <= 1e-6 &&
-      (zoning.classification_method ?? "quantiles") === classificationMethod &&
-      (zoning.cell_value_mode ?? "mean") === cellValueMode &&
-      Math.abs((zoning.detail_level ?? 1) - detailLevel) <= 1e-6 &&
-      sameManualBreaks(manualBreaks, zoning.thresholds);
-    if (rotationMode && matchesCurrentZoning) return;
+    const currentMap = zoning ?? prescription;
+    const currentMapManualBreaks = currentMap?.thresholds?.slice(1, -1);
+    const matchesCurrentMap =
+      !!currentMap &&
+      currentMap.zone_count === zoneCount &&
+      Math.abs(currentMap.cell_size_m - cellSizeM) <= 1e-6 &&
+      Math.abs(currentMap.grid_angle_deg - gridAngleDeg) <= 1e-6 &&
+      (currentMap.classification_method ?? "quantiles") === classificationMethod &&
+      (currentMap.cell_value_mode ?? "mean") === cellValueMode &&
+      Math.abs((currentMap.detail_level ?? 1) - detailLevel) <= 1e-6 &&
+      (classificationMethod !== "manual" ||
+        sameManualBreaks(manualBreaks, currentMapManualBreaks));
+    if (rotationMode && matchesCurrentMap) return;
     if (rotationMode) {
-      pendingRotationPreviewRef.current = {
-        zoneCount,
-        cellSizeM,
-        gridAngleDeg,
-        classificationMethod,
-        cellValueMode,
-        detailLevel,
-        manualBreaks,
-      };
-      if (rotationPreviewRunningRef.current) return;
-
-      rotationPreviewRunningRef.current = true;
-      void (async () => {
-        try {
-          while (rotationModeRef.current && pendingRotationPreviewRef.current) {
-            const preview = pendingRotationPreviewRef.current;
-            pendingRotationPreviewRef.current = null;
-            await onPreviewZoning(
-              preview.zoneCount,
-              preview.cellSizeM,
-              preview.gridAngleDeg,
-              preview.classificationMethod,
-              preview.cellValueMode,
-              preview.detailLevel,
-              preview.manualBreaks,
-              true,
-            );
-          }
-        } finally {
-          rotationPreviewRunningRef.current = false;
-        }
-      })();
       return;
     }
-    if (zoning) {
-      if (matchesCurrentZoning) return;
-    }
-    if (prescription) return;
+    if (currentMap) return;
     const timeout = window.setTimeout(() => {
-      if (zoning) {
-        void onGenerateZoning(
-          zoneCount,
-          cellSizeM,
-          gridAngleDeg,
-          classificationMethod,
-          cellValueMode,
-          detailLevel,
-          manualBreaks,
-        );
-        return;
-      }
       void onPreviewZoning(
         zoneCount,
         cellSizeM,
@@ -450,6 +432,18 @@ export function PrescriptionDialog({
   const activeResponse: ZoningResponse | null = prescription ?? zoning;
   const stage = prescription ? "prescription" : zoning ? "zoning" : "idle";
   const activeIndexName = activeResponse?.index_name ?? indexName;
+  const parsedManualBreaks = parseManualBreaks(manualBreaksText);
+  const activeResponseMatchesSettings =
+    !!activeResponse &&
+    activeResponse.zone_count === zoneCount &&
+    Math.abs(activeResponse.cell_size_m - cellSizeM) <= 1e-6 &&
+    Math.abs(activeResponse.grid_angle_deg - gridAngleDeg) <= 1e-6 &&
+    (activeResponse.classification_method ?? "quantiles") === classificationMethod &&
+    (activeResponse.cell_value_mode ?? "mean") === cellValueMode &&
+    Math.abs((activeResponse.detail_level ?? 1) - detailLevel) <= 1e-6 &&
+    (classificationMethod !== "manual" ||
+      sameManualBreaks(parsedManualBreaks, activeResponse.thresholds?.slice(1, -1)));
+  const shouldRegenerateZoning = !!activeResponse && !activeResponseMatchesSettings;
   const colors = zoneColors(activeIndexName, zoneCount, activeResponse);
   const displayTitle =
     stage === "prescription"
@@ -513,21 +507,35 @@ export function PrescriptionDialog({
     prescriptionHistogramGradient(activeIndexName),
   );
 
-  const handleGenerateZoning = async () => {
+  const generateZoningWithAngle = async (angleDeg: number) => {
     await onGenerateZoning(
       zoneCount,
       cellSizeM,
-      gridAngleDeg,
+      angleDeg,
       classificationMethod,
       cellValueMode,
       detailLevel,
-      parseManualBreaks(manualBreaksText),
+      parsedManualBreaks,
     );
     setActiveView("analysis");
   };
 
+  const handleGenerateZoning = async () => {
+    if (needsRotationDecision) {
+      setRotationMode(true);
+      return;
+    }
+    await generateZoningWithAngle(gridAngleDeg);
+  };
+
+  const handleGenerateWithoutRotation = async () => {
+    setGridAngleDeg(0);
+    setRotationConfirmed(true);
+    await generateZoningWithAngle(0);
+  };
+
   const handleGeneratePrescription = async () => {
-    if (!zoning) return;
+    if (!zoning && !prescription) return;
     await onGeneratePrescription(
       zoneCount,
       cellSizeM,
@@ -535,16 +543,24 @@ export function PrescriptionDialog({
       classificationMethod,
       cellValueMode,
       detailLevel,
-      parseManualBreaks(manualBreaksText),
+      parsedManualBreaks,
       parsedDoses,
     );
     setActiveView("application");
   };
 
   const handleReturnToModal = () => {
-    rotationModeRef.current = false;
-    pendingRotationPreviewRef.current = null;
     setRotationMode(false);
+  };
+
+  const handleConfirmRotation = async () => {
+    setRotationConfirmed(true);
+    setRotationMode(false);
+    if (!zoning && !prescription) {
+      await generateZoningWithAngle(gridAngleDeg);
+      return;
+    }
+    setActiveView("configuration");
   };
 
   const handleDownloadJson = async () => {
@@ -602,8 +618,16 @@ export function PrescriptionDialog({
           <span>90°</span>
         </div>
         <p>
-          La reticula y las celdas se actualizan mientras mueves el control.
+          La reticula se actualiza mientras mueves el control.
         </p>
+        <button
+          type="button"
+          onClick={() => void handleConfirmRotation()}
+          disabled={busy}
+        >
+          <IconMap2 aria-hidden="true" />
+          {!zoning && !prescription ? "Usar este angulo y generar" : "Usar este angulo"}
+        </button>
       </aside>
     );
   }
@@ -822,18 +846,42 @@ export function PrescriptionDialog({
                   Ajusta la orientacion de las celdas para alinearlas con los surcos o
                   la direccion de trabajo del lote.
                 </small>
-                <button
-                  type="button"
-                  className="prescription-map-rotation-trigger"
-                  onClick={() => {
-                    rotationModeRef.current = true;
-                    setRotationMode(true);
-                  }}
-                  disabled={busy || !!prescription || (!prescriptionAreaReady && !zoning)}
-                >
-                  <IconGridDots aria-hidden="true" />
-                  Rotar
-                </button>
+                {needsRotationDecision ? (
+                  <div className="prescription-rotation-choice">
+                    <button
+                      type="button"
+                      className="prescription-map-rotation-trigger"
+                      onClick={() => {
+                        setRotationMode(true);
+                      }}
+                      disabled={busy || !prescriptionAreaReady}
+                    >
+                      <IconGridDots aria-hidden="true" />
+                      Rotar en mapa
+                    </button>
+                    <button
+                      type="button"
+                      className="prescription-map-rotation-trigger is-secondary"
+                      onClick={() => void handleGenerateWithoutRotation()}
+                      disabled={busy || !prescriptionAreaReady || cellSizeM < 1 || cellSizeM > 50}
+                    >
+                      <IconMap2 aria-hidden="true" />
+                      Generar sin rotar
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="prescription-map-rotation-trigger"
+                    onClick={() => {
+                      setRotationMode(true);
+                    }}
+                    disabled={busy || (!prescriptionAreaReady && !zoning && !prescription)}
+                  >
+                    <IconGridDots aria-hidden="true" />
+                    Rotar
+                  </button>
+                )}
               </div>
 
               <div className="prescription-rotation-card">
@@ -1129,7 +1177,7 @@ export function PrescriptionDialog({
               Quitar mapa actual
             </button>
           )}
-          {!zoning ? (
+          {!zoning && !prescription ? (
             <button
               type="button"
               className="prescription-generate"
@@ -1143,7 +1191,25 @@ export function PrescriptionDialog({
               )}
               {busy
                 ? "Generando zonificacion..."
-                : `Generar zonificacion ${activeIndexName}`}
+                : needsRotationDecision
+                  ? "Definir rotacion"
+                  : `Generar zonificacion ${activeIndexName}`}
+            </button>
+          ) : shouldRegenerateZoning ? (
+            <button
+              type="button"
+              className="prescription-generate"
+              disabled={busy || cellSizeM < 1 || cellSizeM > 50}
+              onClick={() => void handleGenerateZoning()}
+            >
+              {busy ? (
+                <IconLoader2 className="spin" aria-hidden="true" />
+              ) : (
+                <IconMap2 aria-hidden="true" />
+              )}
+              {busy
+                ? "Regenerando zonificacion..."
+                : `Regenerar zonificacion ${activeIndexName}`}
             </button>
           ) : (
             <button

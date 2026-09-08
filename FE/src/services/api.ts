@@ -348,11 +348,13 @@ export const dashboardApi = {
       analysisMin?: number;
       analysisMax?: number;
       doses?: number[];
+      signal?: AbortSignal;
     },
   ) =>
     request<NdviZoningResponse>("/ndvi_zoning", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: options?.signal,
       body: JSON.stringify({
         orthomosaic_id: orthomosaicId,
         index_name: indexName,

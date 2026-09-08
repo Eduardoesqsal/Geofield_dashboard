@@ -4910,6 +4910,23 @@ body {
   height: 17px;
 }
 
+.prescription-rotation-choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.prescription-map-rotation-trigger.is-secondary {
+  border-color: #c9d8cd;
+  background: #ffffff;
+  color: #3f5147;
+}
+
+.prescription-map-rotation-trigger.is-secondary:hover:not(:disabled) {
+  border-color: #7a9180;
+  background: #f7faf7;
+}
+
 .prescription-map-rotation-control {
   position: fixed;
   z-index: 2800;
@@ -5166,6 +5183,17 @@ body {
 
 .zoning-map-overlay {
   image-rendering: pixelated;
+}
+
+.prescription-live-grid {
+  position: absolute;
+  z-index: 545;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.4));
 }
 
 .prescription-panel-action {
