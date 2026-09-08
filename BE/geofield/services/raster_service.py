@@ -27,6 +27,7 @@ from rasterio.errors import RasterioIOError
 from rasterio.features import geometry_mask
 from rasterio.io import MemoryFile
 from rasterio.mask import mask as raster_mask
+from rasterio.mask import raster_geometry_mask
 from rasterio.transform import array_bounds
 from rasterio.warp import calculate_default_transform, reproject, transform_bounds
 from rasterio.windows import Window, from_bounds, transform as window_transform
@@ -40,6 +41,7 @@ from geofield.services import raster_bands
 from geofield.services import raster_cache
 from geofield.services import raster_helpers
 from geofield.services import raster_tiles
+from geofield.services import raster_processing
 
 
 logger = logging.getLogger(__name__)
@@ -1423,90 +1425,11 @@ class RasterService:
                 max(1, sample_col_end - sample_col_off),
                 max(1, sample_row_end - sample_row_off),
             ).intersection(Window(0, 0, src.width, src.height))
-            sample_width = max(1, int(sample_window.width))
-            sample_height = max(1, int(sample_window.height))
-            sample_positive, sample_negative = src.read(
-                [first_band, second_band],
-                window=sample_window,
-            ).astype(np.float32)
-            sample_band_masks = src.read_masks(
-                [first_band, second_band],
-                window=sample_window,
-            )
-            sample_dataset_mask = src.dataset_mask(
-                window=sample_window,
-            )
-            sample_transform = window_transform(sample_window, src.transform)
-            sample_index_values, sample_valid_source = self._calculate_index(
-                sample_positive,
-                sample_negative,
-            )
-            sample_valid_source &= (
-                np.all(sample_band_masks > 0, axis=0) & (sample_dataset_mask > 0)
-            )
-            sample_roi_mask = geometry_mask(
-                [mapping(source_geometry)],
-                out_shape=(sample_height, sample_width),
-                transform=sample_transform,
-                invert=True,
-                all_touched=True,
-            )
-            analysis_sample_valid = (
-                sample_roi_mask
-                & np.isfinite(sample_index_values)
-                & sample_valid_source
-            )
-            if analysis_min is not None:
-                analysis_sample_valid &= sample_index_values >= analysis_min
-            if analysis_max is not None:
-                analysis_sample_valid &= sample_index_values <= analysis_max
-            sample_values = sample_index_values[analysis_sample_valid]
-            if not sample_values.size:
-                raise ValueError(
-                    f"El ROI no contiene muestras {index_name} validas dentro del filtro de analisis.",
-                )
-
-            # PIX4Dfields calcula el valor de cada celda con todos los pixeles
-            # visibles que caen en ella. La implementacion anterior reproyectaba
-            # el indice a solo 4 x 4 puntos por celda y despues los agregaba. En
-            # ortomosaicos centimetricos eso descartaba miles de observaciones y
-            # producia aliasing (islas y clases que no coincidian con el indice).
-            #
-            # Reproyectar el indice nativo directamente a la grilla hace que GDAL
-            # integre el area completa de cada pixel fuente. Mean, Min y Max se
-            # aplican ahora al mismo conjunto visible usado por el histograma.
-            source_values = np.where(
-                analysis_sample_valid,
-                sample_index_values,
-                np.nan,
-            ).astype(np.float32)
-            index_values = np.full((height, width), np.nan, dtype=np.float32)
-            valid_fraction = np.zeros((height, width), dtype=np.float32)
-            aggregation_resampling = {
-                "mean": Resampling.average,
-                "min": Resampling.min,
-                "max": Resampling.max,
-            }[cell_value_mode]
-            reproject(
-                source=source_values,
-                destination=index_values,
-                src_transform=sample_transform,
-                src_crs=src.crs,
-                src_nodata=np.nan,
-                dst_transform=destination_transform,
-                dst_crs=metric_crs,
-                dst_nodata=np.nan,
-                resampling=aggregation_resampling,
-            )
-            reproject(
-                source=analysis_sample_valid.astype(np.float32),
-                destination=valid_fraction,
-                src_transform=sample_transform,
-                src_crs=src.crs,
-                dst_transform=destination_transform,
-                dst_crs=metric_crs,
-                dst_nodata=0,
-                resampling=Resampling.average,
+            index_values, valid_fraction, sample_stats = raster_processing.classification_grid(
+                src, sample_window, source_geometry, (first_band, second_band),
+                self._calculate_index, destination_transform, metric_crs,
+                height, width, cell_value_mode, analysis_min, analysis_max,
+                self.settings.cache_dir,
             )
         effective_cell_areas = self._effective_cell_areas(
             metric_geometry,
@@ -1527,8 +1450,8 @@ class RasterService:
             raise ValueError(
                 f"El ROI no contiene celdas {index_name} validas dentro del filtro de analisis.",
             )
-        active_min = float(np.min(sample_values)) if analysis_min is None else float(analysis_min)
-        active_max = float(np.max(sample_values)) if analysis_max is None else float(analysis_max)
+        active_min = float(sample_stats[0]) if analysis_min is None else float(analysis_min)
+        active_max = float(sample_stats[1]) if analysis_max is None else float(analysis_max)
         if active_max <= active_min:
             raise ValueError("El rango activo del indice debe tener amplitud positiva.")
 
@@ -1600,7 +1523,7 @@ class RasterService:
             cell_areas_m2[class_valid].astype(np.float64),
         )
         if field_mean is None:
-            field_mean = float(np.mean(sample_values, dtype=np.float64))
+            field_mean = float(sample_stats[2])
         legend: list[dict[str, Any]] = []
         for zone_index, color in enumerate(colors, 1):
             zone_mask = final_zones == zone_index
@@ -2858,41 +2781,43 @@ class RasterService:
                     geom,
                 )
             try:
-                cropped, cropped_transform = raster_mask(
-                    source,
-                    [mapping(source_geometry)],
-                    crop=True,
-                    filled=False,
+                outside, cropped_transform, crop_window = raster_geometry_mask(
+                    source, [mapping(source_geometry)], crop=True,
                 )
             except ValueError as exc:
                 raise ValueError("El ROI no intersecta el ortomosaico activo.") from exc
 
             profile = source.profile.copy()
             profile.update(
-                driver="GTiff",
-                width=cropped.shape[2],
-                height=cropped.shape[1],
-                transform=cropped_transform,
-                compress="deflate",
-                tiled=False,
+                driver="GTiff", width=outside.shape[1], height=outside.shape[0],
+                transform=cropped_transform, compress="deflate", tiled=True,
+                blockxsize=256, blockysize=256, BIGTIFF="IF_SAFER",
             )
-            profile.pop("blockxsize", None)
-            profile.pop("blockysize", None)
             fill_value = source.nodata if source.nodata is not None else 0
-            valid_mask = np.any(~np.ma.getmaskarray(cropped), axis=0)
-
-            with MemoryFile() as memory_file:
-                with memory_file.open(**profile) as destination:
-                    destination.write(cropped.filled(fill_value))
-                    destination.write_mask(valid_mask.astype(np.uint8) * 255)
-                    destination.update_tags(**source.tags())
-                    for band_index in range(1, source.count + 1):
-                        description = source.descriptions[band_index - 1]
-                        if description:
-                            destination.set_band_description(band_index, description)
-                        destination.update_tags(band_index, **source.tags(band_index))
-                    destination.colorinterp = source.colorinterp
-                return memory_file.read()
+            with tempfile.TemporaryDirectory(dir=self.settings.cache_dir, prefix="crop-") as temporary:
+                output_path = Path(temporary) / "crop.tif"
+                with rasterio.Env(GDAL_TIFF_INTERNAL_MASK=True):
+                    with rasterio.open(output_path, "w", **profile) as destination:
+                        for local in raster_processing.windows(outside.shape[1], outside.shape[0]):
+                            window = Window(
+                                crop_window.col_off + local.col_off,
+                                crop_window.row_off + local.row_off,
+                                local.width, local.height,
+                            )
+                            cropped = source.read(window=window, masked=True)
+                            rows, cols = local.toslices()
+                            cropped.mask = np.ma.getmaskarray(cropped) | outside[rows, cols]
+                            destination.write(cropped.filled(fill_value), window=local)
+                            valid = np.any(~np.ma.getmaskarray(cropped), axis=0)
+                            destination.write_mask(valid.astype(np.uint8) * 255, window=local)
+                        destination.update_tags(**source.tags())
+                        for band_index in range(1, source.count + 1):
+                            description = source.descriptions[band_index - 1]
+                            if description:
+                                destination.set_band_description(band_index, description)
+                            destination.update_tags(band_index, **source.tags(band_index))
+                        destination.colorinterp = source.colorinterp
+                return output_path.read_bytes()
 
     def export_crop_visual(self, crop_id: str) -> bytes:
         """Export a broadly compatible uint8 RGBA GeoTIFF for cloud viewers."""
@@ -2970,29 +2895,34 @@ class RasterService:
         geom = self.crop_geometries.get(crop_id)
         if geom is None:
             raise ValueError("El recorte ya no está disponible. Selecciona el ROI nuevamente.")
-        with rasterio.open(self._path()) as src:
-            rendered, raster_mask, dst_transform = self._reproject_rgb_tile(src, z, x, y)
-            mercator_geom = project_geometry(
-                pyproj.Transformer.from_crs(
-                    "EPSG:4326",
-                    "EPSG:3857",
-                    always_xy=True,
-                ).transform,
-                geom,
-            )
-            roi_mask = geometry_mask(
-                [mapping(mercator_geom)],
-                out_shape=(self.RGB_TILE_SIZE, self.RGB_TILE_SIZE),
-                transform=dst_transform,
-                invert=True,
-            )
-            mask = raster_mask & roi_mask
-            rgba = np.dstack(
-                (*rendered, np.where(mask, 255, 0).astype(np.uint8)),
-            )
-            output = io.BytesIO()
-            Image.fromarray(rgba, mode="RGBA").save(output, format="PNG")
-            return output.getvalue()
+        variant = hashlib.sha256(geom.wkb).hexdigest()
+        cache_path = self._tile_cache_path(
+            "crop-rgb", self.tile_cache_version(), z, x, y, variant=variant,
+        )
+        cached = self._read_tile_cache(cache_path)
+        if cached is not None:
+            return cached
+        with Image.open(io.BytesIO(self.tile("rgb", z, x, y))) as tile:
+            rgba = np.array(tile.convert("RGBA"))
+        mercator_geom = project_geometry(
+            pyproj.Transformer.from_crs(
+                "EPSG:4326", "EPSG:3857", always_xy=True,
+            ).transform,
+            geom,
+        )
+        dst_transform = rasterio.transform.from_bounds(
+            *self.tile_bounds_mercator(z, x, y), self.RGB_TILE_SIZE, self.RGB_TILE_SIZE,
+        )
+        roi_mask = geometry_mask(
+            [mapping(mercator_geom)], out_shape=rgba.shape[:2],
+            transform=dst_transform, invert=True,
+        )
+        rgba[~roi_mask, 3] = 0
+        output = io.BytesIO()
+        Image.fromarray(rgba, mode="RGBA").save(output, format="PNG")
+        content = output.getvalue()
+        self._write_tile_cache(cache_path, content)
+        return content
 
     def _equalization_response(
         self,
@@ -3235,21 +3165,10 @@ class RasterService:
                 return None, None
             if window.width <= 0 or window.height <= 0:
                 return None, None
-            positive = src.read(positive_band, window=window).astype(np.float32)
-            negative = src.read(negative_band, window=window).astype(np.float32)
-            transform = window_transform(window, src.transform)
-            mask = geometry_mask(
-                [mapping(source_geom)],
-                out_shape=positive.shape,
-                transform=transform,
-                invert=True,
-                all_touched=True,
+            return raster_processing.index_range(
+                src, window, source_geom, (positive_band, negative_band),
+                self._calculate_index, self.settings.cache_dir,
             )
-            values, valid = self._calculate_index(positive, negative)
-            visible_values = values[valid & mask]
-            if visible_values.size == 0:
-                return None, None
-            return float(np.min(visible_values)), float(np.max(visible_values))
 
     def crop(self, geom: Any) -> dict[str, Any]:
         result = self.geometry_window(geom, list(self._rgb_bands()))

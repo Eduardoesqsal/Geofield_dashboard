@@ -6,6 +6,7 @@ import io
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import numpy as np
@@ -93,6 +94,34 @@ class RasterServiceIndexTileTests(unittest.TestCase):
         self.assertIs(first, second)
         self.assertEqual(first.shape, (256, 4))
         self.assertTrue(np.all(first[:, 3] == 255))
+
+    def test_crop_reuses_rgb_tile_and_geometry_cache(self) -> None:
+        base = self._rgba(self.service.tile("rgb", 0, 0, 0))
+        with patch.object(self.service, "_reproject_rgb_tile", side_effect=AssertionError("Repeated warp")):
+            cropped = self.service.crop_tile(self.crop_id, 0, 0, 0)
+        np.testing.assert_array_equal(self._rgba(cropped), base)
+        second_crop = self.service.begin_crop_tiles(box(0, 0, 4, 4))["crop_id"]
+        with patch.object(self.service, "tile", side_effect=AssertionError("Repeated tile")):
+            self.assertEqual(self.service.crop_tile(second_crop, 0, 0, 0), cropped)
+
+    def test_block_crop_export_preserves_native_pixels_masks_and_metadata(self) -> None:
+        from rasterio.mask import mask
+        from geofield.services import raster_processing
+        geometry = Polygon([(0.2, 0.3), (3.8, 0.6), (2.7, 3.9), (0.2, 0.3)])
+        crop_id = self.service.begin_crop_tiles(geometry)["crop_id"]
+        with rasterio.open(self.service._path()) as src:
+            expected, transform = mask(src, [geometry.__geo_interface__], crop=True, filled=False)
+            descriptions = src.descriptions
+            crs = src.crs
+        with patch.object(raster_processing, "BLOCK_SIZE", 2):
+            content = self.service.export_crop(crop_id)
+        with MemoryFile(content) as memory, memory.open() as result:
+            np.testing.assert_array_equal(result.read(), expected.filled(0))
+            np.testing.assert_array_equal(result.dataset_mask(),
+                                          np.any(~np.ma.getmaskarray(expected), axis=0).astype(np.uint8) * 255)
+            self.assertEqual(result.transform, transform)
+            self.assertEqual(result.descriptions, descriptions)
+            self.assertEqual(result.crs, crs)
 
     def test_ndre_uses_the_same_color_ramp_as_ndvi(self) -> None:
         self.assertEqual(
