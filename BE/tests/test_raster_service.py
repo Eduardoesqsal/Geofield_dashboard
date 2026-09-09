@@ -1143,6 +1143,24 @@ class RasterServiceIndexTileTests(unittest.TestCase):
 
         self.assertEqual(int(filled[2, 2]), 2)
 
+    def test_coarse_regularization_adds_intermediate_envelope_between_distant_classes(self) -> None:
+        zones = np.ones((7, 7), dtype=np.uint8)
+        zones[2:5, 2:5] = 4
+        values = np.where(zones == 4, 0.82, 0.12).astype(np.float32)
+        valid = np.ones_like(zones, dtype=bool)
+        breaks = np.array([0.0, 0.25, 0.50, 0.75, 1.0], dtype=np.float32)
+
+        simplified = self.service._regularize_zones(zones, valid, values, breaks, 0.0)
+
+        self.assertTrue(np.any(simplified == 2) or np.any(simplified == 3))
+        boundary = np.r_[
+            simplified[1, 2:5],
+            simplified[5, 2:5],
+            simplified[2:5, 1],
+            simplified[2:5, 5],
+        ]
+        self.assertFalse(np.any(boundary == 1))
+
     def test_connected_component_does_not_join_corner_touching_islands(self) -> None:
         zones = np.array(
             [

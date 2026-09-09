@@ -704,6 +704,9 @@ class RasterService:
             "strength": float(strength),
             "nominal_cell_area_m2": nominal_cell_area_m2,
             "minimum_region_area_m2": minimum_region_area_m2,
+            "envelope_iterations": (
+                0 if detail_level >= 0.999 else max(1, int(np.ceil(strength * 3)))
+            ),
             "spectral_iterations": (
                 0 if detail_level >= 0.999 else max(1, int(np.ceil(strength * 10)))
             ),
@@ -814,6 +817,85 @@ class RasterService:
         )
         result = zones.copy()
         result[change] = filtered_classes[change]
+        result[~class_valid] = 0
+        return result
+
+    @classmethod
+    def _ordinal_envelope_filter(
+        cls,
+        zones: np.ndarray,
+        class_valid: np.ndarray,
+        zone_count: int,
+        iterations: int,
+    ) -> np.ndarray:
+        """Insert intermediate classes where distant classes touch directly."""
+        if iterations <= 0 or zone_count <= 2:
+            return zones.copy()
+        result = zones.copy()
+        height, width = result.shape
+        for _iteration in range(iterations):
+            votes = np.zeros((zone_count + 1, height, width), dtype=np.uint8)
+            available = np.zeros((height, width), dtype=np.uint8)
+            same_class = np.zeros((height, width), dtype=np.uint8)
+            for row_delta, column_delta in cls._neighbor_offsets():
+                source_rows = slice(max(0, -row_delta), min(height, height - row_delta))
+                source_columns = slice(max(0, -column_delta), min(width, width - column_delta))
+                target_rows = slice(max(0, row_delta), min(height, height + row_delta))
+                target_columns = slice(max(0, column_delta), min(width, width + column_delta))
+                shifted_valid = class_valid[source_rows, source_columns]
+                shifted_zones = result[source_rows, source_columns]
+                target_zones = result[target_rows, target_columns]
+                available[target_rows, target_columns] += shifted_valid.astype(np.uint8)
+                same_class[target_rows, target_columns] += (
+                    shifted_valid & (shifted_zones == target_zones)
+                ).astype(np.uint8)
+                for class_id in range(1, zone_count + 1):
+                    votes[class_id, target_rows, target_columns] += (
+                        shifted_valid & (shifted_zones == class_id)
+                    ).astype(np.uint8)
+
+            next_result = result.copy()
+            for class_id in range(1, zone_count + 1):
+                current = class_valid & (result == class_id)
+                if not np.any(current):
+                    continue
+                lower_target = 0
+                upper_target = 0
+                lower_votes = np.zeros((height, width), dtype=np.uint8)
+                upper_votes = np.zeros((height, width), dtype=np.uint8)
+                for neighbor_class in range(1, zone_count + 1):
+                    distance = neighbor_class - class_id
+                    if abs(distance) <= 1:
+                        continue
+                    if distance > 0 and votes[neighbor_class].max() > 0:
+                        candidate_votes = votes[neighbor_class]
+                        replace = candidate_votes > upper_votes
+                        upper_votes[replace] = candidate_votes[replace]
+                        upper_target = max(upper_target, class_id + 1)
+                    elif distance < 0 and votes[neighbor_class].max() > 0:
+                        candidate_votes = votes[neighbor_class]
+                        replace = candidate_votes > lower_votes
+                        lower_votes[replace] = candidate_votes[replace]
+                        lower_target = min(lower_target or class_id - 1, class_id - 1)
+
+                promote = (
+                    current
+                    & (upper_target > 0)
+                    & (upper_votes >= 1)
+                    & (same_class <= 5)
+                )
+                demote = (
+                    current
+                    & (lower_target > 0)
+                    & (lower_votes >= 1)
+                    & (same_class <= 5)
+                    & ~promote
+                )
+                next_result[promote] = upper_target
+                next_result[demote] = lower_target
+            if np.array_equal(next_result, result):
+                break
+            result = next_result
         result[~class_valid] = 0
         return result
 
@@ -1272,6 +1354,12 @@ class RasterService:
             index_values,
             breaks,
             int(parameters["spectral_iterations"]),
+        )
+        result = self._ordinal_envelope_filter(
+            result,
+            class_valid,
+            len(breaks) - 1,
+            int(parameters["envelope_iterations"]),
         )
         result = self._categorical_majority_filter(
             result,
