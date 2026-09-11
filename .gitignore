@@ -44,6 +44,7 @@ BE/cache/
 BE/static/active_ortho.tif
 BE/static/recorte_overlay.png
 BE/static/bounds_overlay.txt
+BE/static/prescriptions/
 BE/*.tif
 BE/*.tif.aux.xml
 

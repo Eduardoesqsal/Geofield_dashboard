@@ -1,5 +1,5 @@
-/**
- * Contenedor principal de la aplicación.
+﻿/**
+ * Contenedor principal de la aplicaciÃ³n.
  * Ensambla el hook geoespacial, el mapa Leaflet y todos los paneles de UI
  * visibles para el usuario final.
  */
@@ -8,16 +8,11 @@ import {
   IconActivity,
   IconArrowsHorizontal,
   IconChartHistogram,
-  IconCalendarEvent,
   IconCheck,
-  IconDatabase,
   IconDroplet,
   IconEyeOff,
-  IconGripVertical,
   IconLeaf,
   IconMapPin,
-  IconPhoto,
-  IconTrash,
   IconX,
 } from "@tabler/icons-react";
 import { useDashboardMap } from "../hooks/useDashboardMap";
@@ -33,6 +28,10 @@ import {
   getActivePrescriptionDisplayRange,
   getDeleteDialogContent,
 } from "./MapView.logic";
+import {
+  MapViewOrthomosaicLibraryDialog,
+  MapViewRoiLibraryDialog,
+} from "./MapViewLibraries";
 import { ActionBar } from "./ActionBar";
 import { AgriculturalCycleDialog } from "./AgriculturalCycleDialog";
 import { ControlPanel } from "./ControlPanel";
@@ -71,8 +70,8 @@ function IndexIcon({ name }: { name: "NDVI" | "NDWI" | "NDRE" }) {
 }
 
 /**
- * Contenedor principal de la aplicación. Compone el mapa, los modales y el
- * panel, mientras `useDashboardMap` conserva la lógica imperativa de Leaflet.
+ * Contenedor principal de la aplicaciÃ³n. Compone el mapa, los modales y el
+ * panel, mientras `useDashboardMap` conserva la lÃ³gica imperativa de Leaflet.
  */
 export function MapView() {
   const mapElement = useRef<HTMLDivElement>(null);
@@ -119,8 +118,8 @@ export function MapView() {
     string | null
   >(null);
   const [reorderingOrthomosaics, setReorderingOrthomosaics] = useState(false);
-  // El ROI de comparación se fija al abrir el dashboard para evitar que un
-  // cambio posterior de selección afecte exportaciones o eliminaciones.
+  // El ROI de comparaciÃ³n se fija al abrir el dashboard para evitar que un
+  // cambio posterior de selecciÃ³n afecte exportaciones o eliminaciones.
   const [roiAnalysisHistory, setRoiAnalysisHistory] = useState<
     RoiAnalysisRecord[]
   >([]);
@@ -234,7 +233,7 @@ export function MapView() {
     await openLibraryForCycle(activeCycle);
   };
   const leaveActiveCycle = () => {
-    const cycleName = activeCycle?.name ?? "ciclo agrícola";
+    const cycleName = activeCycle?.name ?? "ciclo agrÃ­cola";
     map.resetWorkspace();
     setLibraryOpen(false);
     setImportDialogOpen(false);
@@ -254,7 +253,7 @@ export function MapView() {
     setCycleError(null);
     setActiveCycle(null);
     setCycleExitNotice(
-      `Saliste de ${cycleName}. El mapa volvió a la vista inicial.`,
+      `Saliste de ${cycleName}. El mapa volviÃ³ a la vista inicial.`,
     );
   };
   const handleCycleSelected = async (cycle: AgriculturalCycleRecord) => {
@@ -437,7 +436,7 @@ export function MapView() {
       );
     }
   };
-  /** Sustituye el historial local únicamente con la respuesta fresca del API. */
+  /** Sustituye el historial local Ãºnicamente con la respuesta fresca del API. */
   const requestRoiAnalysisHistory = async (
     roiId: string,
     index: ComparisonIndex,
@@ -485,7 +484,7 @@ export function MapView() {
     }
     if (!roiId) {
       window.alert(
-        "Activa un análisis global o selecciona y recorta un ROI guardado antes de comparar vuelos.",
+        "Activa un anÃ¡lisis global o selecciona y recorta un ROI guardado antes de comparar vuelos.",
       );
       return;
     }
@@ -500,7 +499,7 @@ export function MapView() {
       }
       if (!record)
         throw new Error(
-          "No se encontró el ortomosaico seleccionado dentro del ciclo activo.",
+          "No se encontrÃ³ el ortomosaico seleccionado dentro del ciclo activo.",
         );
       await map.activateStoredOrtho(record);
       setSelectedIndex(null);
@@ -527,7 +526,7 @@ export function MapView() {
     const orthomosaicId = map.state.orthomosaicId;
     if (!selectedIndex || !roiId || !orthomosaicId || !activeRoiIndexReady) {
       window.alert(
-        "Selecciona un ROI, recórtalo y activa su NDVI antes de guardar estadísticas.",
+        "Selecciona un ROI, recÃ³rtalo y activa su NDVI antes de guardar estadÃ­sticas.",
       );
       return;
     }
@@ -580,7 +579,7 @@ export function MapView() {
       window.alert(
         error instanceof Error
           ? error.message
-          : "No se pudieron guardar las estadísticas del ROI.",
+          : "No se pudieron guardar las estadÃ­sticas del ROI.",
       );
     } finally {
       setRoiAnalysisSaving(false);
@@ -588,13 +587,13 @@ export function MapView() {
   };
   /**
    * Vuelve a consultar el servidor antes de construir el CSV. Los valores
-   * numéricos se exportan con su precisión original, no con la de la interfaz.
+   * numÃ©ricos se exportan con su precisiÃ³n original, no con la de la interfaz.
    */
   const exportRoiAnalysisHistory = async () => {
     const roiId = comparisonRoiId;
     if (!roiId) {
       setRoiAnalysisError(
-        "No hay un ROI asociado a esta comparación. Cierra el modal y selecciona nuevamente la zona.",
+        "No hay un ROI asociado a esta comparaciÃ³n. Cierra el modal y selecciona nuevamente la zona.",
       );
       return;
     }
@@ -603,7 +602,7 @@ export function MapView() {
     try {
       const items = await requestRoiAnalysisHistory(roiId, comparisonIndex);
       if (!items.length)
-        throw new Error("No hay estadísticas vigentes para exportar.");
+        throw new Error("No hay estadÃ­sticas vigentes para exportar.");
       const contents = buildRoiComparisonCsv(items);
       const blobUrl = URL.createObjectURL(
         new Blob([contents], { type: "text/csv;charset=utf-8" }),
@@ -620,13 +619,13 @@ export function MapView() {
       setRoiAnalysisError(
         error instanceof Error
           ? error.message
-          : "No se pudieron exportar las estadísticas actualizadas.",
+          : "No se pudieron exportar las estadÃ­sticas actualizadas.",
       );
     } finally {
       setRoiAnalysisExporting(false);
     }
   };
-  /** Ejecuta la eliminación confirmada y sincroniza la colección afectada. */
+  /** Ejecuta la eliminaciÃ³n confirmada y sincroniza la colecciÃ³n afectada. */
   const confirmDeletion = async () => {
     if (!deleteTarget) return;
     const target = deleteTarget;
@@ -642,7 +641,7 @@ export function MapView() {
           leaveActiveCycle();
           setCycleDialogOpen(true);
           setCycleExitNotice(
-            `Se eliminó ${target.record.name} y todo su contenido asociado.`,
+            `Se eliminÃ³ ${target.record.name} y todo su contenido asociado.`,
           );
         }
       } else if (target.kind === "orthomosaic") {
@@ -664,7 +663,7 @@ export function MapView() {
         const roiId = comparisonRoiId;
         if (!roiId)
           throw new Error(
-            "El ROI ya no está seleccionado. Vuelve a abrir la comparación.",
+            "El ROI ya no estÃ¡ seleccionado. Vuelve a abrir la comparaciÃ³n.",
           );
         setRoiAnalysisDeletingId(target.record.id);
         setRoiAnalysisError(null);
@@ -677,8 +676,8 @@ export function MapView() {
         } catch (error) {
           setRoiAnalysisError(
             error instanceof Error
-              ? `La estadística fue eliminada, pero no se pudo verificar el historial: ${error.message}`
-              : "La estadística fue eliminada, pero no se pudo verificar el historial actualizado.",
+              ? `La estadÃ­stica fue eliminada, pero no se pudo verificar el historial: ${error.message}`
+              : "La estadÃ­stica fue eliminada, pero no se pudo verificar el historial actualizado.",
           );
         }
       }
@@ -687,7 +686,7 @@ export function MapView() {
       setDeleteError(
         error instanceof Error
           ? error.message
-          : "No se pudo completar la eliminación.",
+          : "No se pudo completar la eliminaciÃ³n.",
       );
     } finally {
       setRoiAnalysisDeletingId(null);
@@ -697,7 +696,7 @@ export function MapView() {
 
   const deleteDialogContent = getDeleteDialogContent(deleteTarget);
 
-  /** Convierte la posición horizontal del puntero al porcentaje del swipe. */
+  /** Convierte la posiciÃ³n horizontal del puntero al porcentaje del swipe. */
   const moveDivider = (event: React.PointerEvent) => {
     const rect = divider.current?.parentElement?.getBoundingClientRect();
 
@@ -715,7 +714,7 @@ export function MapView() {
     setPrescriptionError(
       map.state.orthomosaicId && ready
         ? null
-        : "Selecciona un ROI, recórtalo y abre su histograma NDVI antes de generar la prescripción.",
+        : "Selecciona un ROI, recÃ³rtalo y abre su histograma NDVI antes de generar la prescripciÃ³n.",
     );
     setPrescriptionOpen(true);
   };
@@ -744,7 +743,7 @@ export function MapView() {
       setPrescriptionError(
         error instanceof Error
           ? error.message
-          : "No se pudo generar el mapa de prescripción.",
+          : "No se pudo generar el mapa de prescripciÃ³n.",
         );
     }
   };
@@ -775,7 +774,7 @@ export function MapView() {
       setPrescriptionError(
         error instanceof Error
           ? error.message
-          : "No se pudo generar la zonificación NDVI.",
+          : "No se pudo generar la zonificaciÃ³n NDVI.",
       );
       throw error;
     }
@@ -843,7 +842,7 @@ export function MapView() {
       setPrescriptionError(
         error instanceof Error
           ? error.message
-          : "No se pudo generar el mapa de prescripción.",
+          : "No se pudo generar el mapa de prescripciÃ³n.",
       );
       throw error;
     }
@@ -937,19 +936,19 @@ export function MapView() {
         <div className="detection-edit-banner" role="status">
           <IconMapPin aria-hidden="true" />
           <span>
-            <strong>Edición de detecciones</strong>
+            <strong>EdiciÃ³n de detecciones</strong>
             <small>
               {map.state.detectionEditMode === "add"
-                ? "Haz clic en el mapa para colocar la detección."
+                ? "Haz clic en el mapa para colocar la detecciÃ³n."
                 : map.state.detectionEditMode === "delete-one"
-                  ? "Pulsa la detección que deseas eliminar."
-                  : "Dibuja un rectángulo sobre las detecciones que deseas eliminar."}
+                  ? "Pulsa la detecciÃ³n que deseas eliminar."
+                  : "Dibuja un rectÃ¡ngulo sobre las detecciones que deseas eliminar."}
             </small>
           </span>
           <button
             type="button"
             onClick={map.cancelDetectionEdit}
-            aria-label="Cancelar edición"
+            aria-label="Cancelar ediciÃ³n"
           >
             <IconX aria-hidden="true" />
           </button>
@@ -993,116 +992,17 @@ export function MapView() {
           void requireActiveCycle(openRoiLibrary, "entry")
         }
       />
-      {roiLibraryOpen && (
-        <div
-          className="import-dialog-backdrop"
-          role="presentation"
-          onMouseDown={() => setRoiLibraryOpen(false)}
-        >
-          <section
-            className="import-dialog roi-library"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="roi-library-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="import-dialog-heading">
-              <div className="modal-title-group">
-                <span className="modal-title-icon">
-                  <IconMapPin aria-hidden="true" />
-                </span>
-                <div>
-                  <span className="import-eyebrow">BIBLIOTECA ESPACIAL</span>
-                  <h2 id="roi-library-title">ROI guardados</h2>
-                </div>
-              </div>
-              <button
-                className="dialog-close"
-                type="button"
-                onClick={() => setRoiLibraryOpen(false)}
-                aria-label="Cerrar"
-              >
-                <IconX aria-hidden="true" />
-              </button>
-            </div>
-            <div className="modal-intro-row">
-              <p className="import-dialog-copy">
-                Agrega dos, tres o tantas regiones como necesites. La tijera
-                procesará todas juntas.
-              </p>
-              <span className="modal-record-count">
-                {map.state.selectedRoiIds.length} de {rois.length} seleccionadas
-              </span>
-            </div>
-            {rois.length > 0 && (
-              <div className="roi-table-wrap">
-                <table className="roi-table">
-                  <thead>
-                    <tr>
-                      <th>Nombre</th>
-                      <th>Fecha de creación</th>
-                      <th aria-label="Acciones" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rois.map((roi) => {
-                      const selected = map.state.selectedRoiIds.includes(
-                        roi.id,
-                      );
-                      return (
-                        <tr
-                          key={roi.id}
-                          className={selected ? "is-selected" : ""}
-                        >
-                          <td>
-                            <strong>{roi.name}</strong>
-                          </td>
-                          <td>
-                            {new Date(roi.created_at).toLocaleDateString()}
-                          </td>
-                          <td>
-                            <div className="table-actions">
-                              <button
-                                className={`select-roi-button ${selected ? "is-selected" : ""}`}
-                                type="button"
-                                onClick={() =>
-                                  map.selectRoi(roi.geojson, roi.id)
-                                }
-                              >
-                                {selected ? "Quitar" : "Agregar"}
-                              </button>
-                              <button
-                                className="delete-orthomosaic button-with-icon"
-                                type="button"
-                                onClick={() => {
-                                  setDeleteError(null);
-                                  setDeleteTarget({ kind: "roi", record: roi });
-                                }}
-                              >
-                                <IconTrash aria-hidden="true" />
-                                Eliminar
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {!rois.length && (
-              <div className="modal-empty-state">
-                <IconMapPin aria-hidden="true" />
-                <strong>No hay ROI guardados</strong>
-                <span>
-                  Dibuja o importa una región para verla en esta biblioteca.
-                </span>
-              </div>
-            )}
-          </section>
-        </div>
-      )}
+      <MapViewRoiLibraryDialog
+        open={roiLibraryOpen}
+        rois={rois}
+        selectedRoiIds={map.state.selectedRoiIds}
+        onClose={() => setRoiLibraryOpen(false)}
+        onSelectRoi={map.selectRoi}
+        onDeleteRoi={(roi) => {
+          setDeleteError(null);
+          setDeleteTarget({ kind: "roi", record: roi });
+        }}
+      />
       {indicesOpen && (
         <div
           className="import-dialog-backdrop"
@@ -1122,8 +1022,8 @@ export function MapView() {
                   <IconChartHistogram aria-hidden="true" />
                 </span>
                 <div>
-                  <span className="import-eyebrow">ANÁLISIS ESPECTRAL</span>
-                  <h2 id="indices-title">Índices de vegetación</h2>
+                  <span className="import-eyebrow">ANÃLISIS ESPECTRAL</span>
+                  <h2 id="indices-title">Ãndices de vegetaciÃ³n</h2>
                 </div>
               </div>
               <button
@@ -1137,7 +1037,7 @@ export function MapView() {
             </div>
             <p className="import-dialog-copy">
               Activa las capas que deseas analizar. Puedes mantener varios
-              índices visibles al mismo tiempo.
+              Ã­ndices visibles al mismo tiempo.
             </p>
             <div className="index-selector">
               {(["NDVI", "NDWI", "NDRE"] as const).map((name) => {
@@ -1159,7 +1059,7 @@ export function MapView() {
                     <span>
                       <strong>{name}</strong>
                       <small>
-                        {active ? "Índice visible" : "Índice oculto"}
+                        {active ? "Ãndice visible" : "Ãndice oculto"}
                       </small>
                     </span>
                     <i
@@ -1178,240 +1078,41 @@ export function MapView() {
               onClick={map.hideIndices}
             >
               <IconEyeOff aria-hidden="true" />
-              Ocultar todos los índices
+              Ocultar todos los Ã­ndices
             </button>
           </section>
         </div>
       )}
-      {libraryOpen && (
-        <div
-          className="import-dialog-backdrop"
-          role="presentation"
-          onMouseDown={() => setLibraryOpen(false)}
-        >
-          <section
-            className="import-dialog orthomosaic-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="orthomosaic-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="import-dialog-heading">
-              <div className="modal-title-group">
-                <span className="modal-title-icon">
-                  <IconDatabase aria-hidden="true" />
-                </span>
-                <div>
-                  <span className="import-eyebrow">BIBLIOTECA DE VUELOS</span>
-                  <h2 id="orthomosaic-title">Ortomosaicos guardados</h2>
-                </div>
-              </div>
-              <button
-                className="dialog-close"
-                type="button"
-                onClick={() => setLibraryOpen(false)}
-                aria-label="Cerrar"
-              >
-                <IconX aria-hidden="true" />
-              </button>
-            </div>
-            <div className="modal-intro-row">
-              <div className="library-cycle-summary">
-                <p className="import-dialog-copy">
-                  Consulta, activa o administra los ortomosaicos disponibles.
-                </p>
-                {activeCycle && (
-                  <span className="library-cycle-badge">
-                    <IconCalendarEvent aria-hidden="true" />
-                    {activeCycle.name}
-                  </span>
-                )}
-              </div>
-              <span className="modal-record-count">
-                {reorderingOrthomosaics
-                  ? "Guardando orden..."
-                  : `${orthomosaics.length} ${orthomosaics.length === 1 ? "archivo" : "archivos"}`}
-              </span>
-            </div>
-            <div className="library-cycle-actions">
-              <button
-                type="button"
-                className="orthomosaic-date-trigger"
-                onClick={leaveActiveCycle}
-              >
-                Salir del ciclo
-              </button>
-            </div>
-            {!!orthomosaics.length && (
-              <p className="orthomosaic-reorder-help">
-                Arrastra cada vuelo desde el control de la izquierda para cambiar su posición.
-              </p>
-            )}
-            {libraryError && <p className="library-error">{libraryError}</p>}
-            {(
-              <div className="orthomosaic-table-wrap">
-                <table className="orthomosaic-table">
-                  <thead>
-                    <tr>
-                      <th className="orthomosaic-drag-cell" aria-label="Reordenar" />
-                      <th>Ortomosaico</th>
-                      <th>Fecha</th>
-                      <th>Sensor</th>
-                      <th>Visible</th>
-                      <th aria-label="Acciones" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orthomosaics.map((record) => {
-                      const active =
-                        map.state.orthomosaicId === record.id && map.state.rgb;
-                      return (
-                        <tr
-                          key={record.id}
-                          className={`${draggedOrthomosaicId === record.id ? "is-dragging" : ""} ${dragOverOrthomosaicId === record.id ? "is-drag-over" : ""}`}
-                          onDragOver={(event) => {
-                            if (!draggedOrthomosaicId || draggedOrthomosaicId === record.id) return;
-                            event.preventDefault();
-                            event.dataTransfer.dropEffect = "move";
-                            setDragOverOrthomosaicId(record.id);
-                          }}
-                          onDrop={(event) => {
-                            event.preventDefault();
-                            if (draggedOrthomosaicId) {
-                              void moveOrthomosaic(draggedOrthomosaicId, record.id);
-                            }
-                          }}
-                        >
-                          <td className="orthomosaic-drag-cell">
-                            <button
-                              type="button"
-                              className="orthomosaic-drag-handle"
-                              draggable={!reorderingOrthomosaics}
-                              disabled={reorderingOrthomosaics}
-                              title="Arrastra para reordenar"
-                              aria-label={`Reordenar ${record.name}`}
-                              onDragStart={(event) => {
-                                event.dataTransfer.effectAllowed = "move";
-                                event.dataTransfer.setData("text/plain", record.id);
-                                setDraggedOrthomosaicId(record.id);
-                                setLibraryError(null);
-                              }}
-                              onDragEnd={() => {
-                                setDraggedOrthomosaicId(null);
-                                setDragOverOrthomosaicId(null);
-                              }}
-                            >
-                              <IconGripVertical aria-hidden="true" />
-                            </button>
-                          </td>
-                          <td>
-                            <strong>{record.name}</strong>
-                            <small>{record.original_filename}</small>
-                          </td>
-                          <td>
-                            {editingOrthomosaicId === record.id ? (
-                              <div className="orthomosaic-date-editor">
-                                <input
-                                  type="date"
-                                  value={editingCaptureDate}
-                                  onChange={(event) =>
-                                    setEditingCaptureDate(event.target.value)
-                                  }
-                                  max="2026-08-19"
-                                />
-                                <div className="orthomosaic-date-actions">
-                                  <button
-                                    type="button"
-                                    className="orthomosaic-date-save"
-                                    onClick={() => void saveOrthomosaicDate(record)}
-                                    disabled={updatingOrthomosaicId === record.id}
-                                  >
-                                    {updatingOrthomosaicId === record.id
-                                      ? "Guardando..."
-                                      : "Guardar"}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="orthomosaic-date-cancel"
-                                    onClick={cancelOrthomosaicDateEdit}
-                                    disabled={updatingOrthomosaicId === record.id}
-                                  >
-                                    Cancelar
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="orthomosaic-date-cell">
-                                <span>{record.capture_date}</span>
-                                <button
-                                  type="button"
-                                  className="orthomosaic-date-trigger"
-                                  onClick={() => beginOrthomosaicDateEdit(record)}
-                                >
-                                  Editar fecha
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                          <td>
-                            <span className="sensor-table-badge">
-                              {record.sensor_type}
-                            </span>
-                          </td>
-                          <td>
-                            <button
-                              type="button"
-                              className={`ortho-toggle ${active ? "is-on" : ""}`}
-                              onClick={() => {
-                                if (active) map.fitRgb();
-                                else void map.activateStoredOrtho(record);
-                              }}
-                              aria-label={
-                                active
-                                  ? "Desactivar ortomosaico"
-                                  : "Activar ortomosaico"
-                              }
-                            >
-                              <span />
-                            </button>
-                          </td>
-                          <td>
-                            <button
-                              type="button"
-                              className="delete-orthomosaic button-with-icon"
-                              onClick={() => {
-                                setDeleteError(null);
-                                setDeleteTarget({
-                                  kind: "orthomosaic",
-                                  record,
-                                });
-                              }}
-                            >
-                              <IconTrash aria-hidden="true" />
-                              Eliminar
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {!orthomosaics.length && (
-                  <div className="modal-empty-state">
-                    <IconPhoto aria-hidden="true" />
-                    <strong>Este ciclo aun no tiene ortomosaicos</strong>
-                    <span>
-                      {activeCycle
-                        ? `Importa un vuelo para comenzar la biblioteca de ${activeCycle.name}.`
-                        : "Importa un vuelo para comenzar tu biblioteca."}
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
-        </div>
-      )}
+      <MapViewOrthomosaicLibraryDialog
+        open={libraryOpen}
+        activeCycle={activeCycle}
+        orthomosaics={orthomosaics}
+        libraryError={libraryError}
+        reorderingOrthomosaics={reorderingOrthomosaics}
+        draggedOrthomosaicId={draggedOrthomosaicId}
+        dragOverOrthomosaicId={dragOverOrthomosaicId}
+        editingOrthomosaicId={editingOrthomosaicId}
+        editingCaptureDate={editingCaptureDate}
+        updatingOrthomosaicId={updatingOrthomosaicId}
+        activeOrthomosaicId={map.state.orthomosaicId}
+        rgbVisible={map.state.rgb}
+        onClose={() => setLibraryOpen(false)}
+        onLeaveActiveCycle={leaveActiveCycle}
+        onMoveOrthomosaic={moveOrthomosaic}
+        onDragOverOrthomosaicIdChange={setDragOverOrthomosaicId}
+        onDraggedOrthomosaicIdChange={setDraggedOrthomosaicId}
+        onClearLibraryError={() => setLibraryError(null)}
+        onEditingCaptureDateChange={setEditingCaptureDate}
+        onSaveOrthomosaicDate={saveOrthomosaicDate}
+        onCancelOrthomosaicDateEdit={cancelOrthomosaicDateEdit}
+        onBeginOrthomosaicDateEdit={beginOrthomosaicDateEdit}
+        onFitRgb={map.fitRgb}
+        onActivateStoredOrtho={map.activateStoredOrtho}
+        onDeleteOrthomosaic={(record) => {
+          setDeleteError(null);
+          setDeleteTarget({ kind: "orthomosaic", record });
+        }}
+      />
       <ControlPanel
         data={map.treeData}
         filteredData={map.filteredTreeData}
@@ -1561,5 +1262,6 @@ export function MapView() {
     </main>
   );
 }
+
 
 

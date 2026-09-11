@@ -1,624 +1,37 @@
-/**
- * Dashboard comparativo del ROI.
- * Presenta el historial persistido por índice, sus métricas de resumen
- * y la trazabilidad temporal usada para comparar vuelos guardados.
- */
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import {
-  IconArrowDownRight,
-  IconArrowUpRight,
   IconChartLine,
   IconDownload,
   IconGripVertical,
   IconLoader2,
-  IconMinus,
   IconPencil,
   IconRefresh,
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
-import type {
-  RoiAnalysisRecord,
-  RoiAnalysisStats,
-} from "../services/api";
-
-interface RoiComparisonDialogProps {
-  open: boolean;
-  activeIndex: "NDVI" | "NDWI" | "NDRE";
-  items: RoiAnalysisRecord[];
-  loading: boolean;
-  exporting: boolean;
-  deletingId: string | null;
-  error: string | null;
-  syncedAt: string | null;
-  activeOrthomosaicId: string | null;
-  onRefresh: () => Promise<void>;
-  onExport: () => void;
-  onEditFlight: (orthomosaicId: string) => Promise<void>;
-  onDelete: (analysis: RoiAnalysisRecord) => void;
-  onClose: () => void;
-}
-
-const metric = (value: number | null | undefined, digits = 3) =>
-  value == null || !Number.isFinite(value) ? "-" : value.toFixed(digits);
-const recordDate = (analysis: RoiAnalysisRecord) =>
-  analysis.orthomosaics?.capture_date ?? analysis.created_at;
-const chronologicalKey = (analysis: RoiAnalysisRecord) =>
-  `${recordDate(analysis)}|${analysis.orthomosaics?.name ?? ""}|${analysis.orthomosaic_id}`;
-const flightLabel = (analysis: RoiAnalysisRecord, index: number) =>
-  analysis.orthomosaics?.name?.trim() || `Vuelo ${index + 1}`;
-const shortDate = (value: string) => {
-  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value)
-    ? `${value}T00:00:00`
-    : value;
-  const date = new Date(normalized);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleDateString("es-MX", {
-        day: "2-digit",
-        month: "short",
-        year: "2-digit",
-      });
-};
-
-interface TrendChartProps {
-  title: string;
-  description: string;
-  items: RoiAnalysisRecord[];
-  value: (analysis: RoiAnalysisRecord) => number | null;
-  tone: "green" | "graphite";
-  nonNegative?: boolean;
-}
-
-interface HeatmapRow {
-  key: string;
-  label: string;
-  suffix?: string;
-  digits?: number;
-  values: Array<number | null>;
-}
-
-interface SummaryDetailRow {
-  label: string;
-  value: string;
-  tone?: "neutral" | "up" | "down";
-}
-
-interface MetricHistoryModalState {
-  key: string;
-  label: string;
-  digits: number;
-  suffix: string;
-  values: Array<number | null>;
-}
-
-const INDEX_SECTIONS = [
-  {
-    key: "ndvi",
-    label: "NDVI",
-    title: "Dashboard comparativo NDVI",
-    description: "Vigor vegetal",
-    tone: "green" as const,
-  },
-  {
-    key: "ndwi",
-    label: "NDWI",
-    title: "Dashboard comparativo NDWI",
-    description: "Humedad / agua",
-    tone: "graphite" as const,
-  },
-  {
-    key: "ndre",
-    label: "NDRE",
-    title: "Dashboard comparativo NDRE",
-    description: "Respuesta red-edge",
-    tone: "green" as const,
-  },
-] as const;
-
-type IndexKey = (typeof INDEX_SECTIONS)[number]["key"];
-type DashboardView =
-  | "overview"
-  | "trends"
-  | "traceability"
-  | "methodology";
-
-const DASHBOARD_VIEWS: Array<{
-  key: DashboardView;
-  label: string;
-  description: string;
-}> = [
-  {
-    key: "overview",
-    label: "Ciclo",
-    description: "Vuelos, KPIs y estado actual",
-  },
-  {
-    key: "trends",
-    label: "Temporal",
-    description: "Curvas y mapa de calor real",
-  },
-  {
-    key: "traceability",
-    label: "Trazabilidad",
-    description: "Tabla historica y registros guardados",
-  },
-  {
-    key: "methodology",
-    label: "GeoScore",
-    description: "Marco visual y metodologia",
-  },
-];
-
-const GEOSCORE_WEIGHTS = [
-  {
-    weight: "35%",
-    title: "Vigor relativo",
-    description: "Media de la tabla ÷ media de sus hermanas",
-  },
-  {
-    weight: "25%",
-    title: "Uniformidad",
-    description: "CV de la tabla contra el CV del grupo",
-  },
-  {
-    weight: "20%",
-    title: "Tendencia",
-    description: "Cambio propio contra el cambio esperado del grupo",
-  },
-  {
-    weight: "10%",
-    title: "Cobertura de dosel",
-    description: "Planta real presente, no solo verdor",
-  },
-  {
-    weight: "10%",
-    title: "Area bajo umbral",
-    description: "Porcentaje de superficie por debajo del piso del lote",
-  },
-] as const;
-
-const statsOf = (
-  analysis: RoiAnalysisRecord,
-  key: IndexKey,
-): RoiAnalysisStats | null =>
-  key === "ndvi" ? analysis.ndvi : analysis[key];
-
-const scoreColor = (value: number) => {
-  if (value >= 85) return "#12684A";
-  if (value >= 72) return "#2E9E5B";
-  if (value >= 58) return "#7FA95D";
-  if (value >= 44) return "#E0952C";
-  if (value >= 28) return "#D96A3A";
-  return "#D6473F";
-};
-
-const metricHeatColor = (
-  value: number | null,
-  minimum: number,
-  maximum: number,
-): string => {
-  if (value == null || !Number.isFinite(value)) return "#D7DFD9";
-  if (maximum - minimum <= Number.EPSILON) return scoreColor(76);
-  const normalized = (value - minimum) / (maximum - minimum);
-  return scoreColor(18 + normalized * 74);
-};
-
-/** Dibuja una serie temporal SVG como gráfica de barras con dominio adaptado. */
-function TrendChart({
-  title,
-  description,
-  items,
-  value,
-  tone,
-  nonNegative = false,
-}: TrendChartProps) {
-  const width = 720;
-  const height = 250;
-  const plot = { left: 48, right: 18, top: 20, bottom: 52 };
-  const points = items
-    .map((analysis, index) => ({ analysis, index, value: value(analysis) }))
-    .filter(
-      (
-        point,
-      ): point is {
-        analysis: RoiAnalysisRecord;
-        index: number;
-        value: number;
-      } => point.value != null && Number.isFinite(point.value),
-    );
-  if (!points.length)
-    return (
-      <div className="roi-trend-empty">
-        No existen valores suficientes para construir esta tendencia.
-      </div>
-    );
-
-  const values = points.map((point) => point.value);
-  const observedMin = Math.min(...values);
-  const observedMax = Math.max(...values);
-  const baseline = nonNegative || observedMin >= 0 ? 0 : observedMin;
-  const chartHeight = height - plot.top - plot.bottom;
-  const maximum =
-    baseline >= 0
-      ? observedMax + Math.max(observedMax * 0.18, 0.05)
-      : observedMax + Math.max((observedMax - baseline) * 0.12, 0.02);
-  const domain = Math.max(maximum - baseline, Number.EPSILON);
-  const y = (pointValue: number) =>
-    plot.top + ((maximum - pointValue) / domain) * chartHeight;
-  const slotWidth = (width - plot.left - plot.right) / items.length;
-  const baselineY = y(baseline);
-  const linePoints = points.map((point) => ({
-    ...point,
-    x: plot.left + (point.index + 0.5) * slotWidth,
-    y: y(point.value),
-  }));
-  const trendPath = linePoints
-    .map((point, index) =>
-      `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`,
-    )
-    .join(" ");
-  const areaPath =
-    linePoints.length > 0
-      ? [
-          `M ${linePoints[0].x.toFixed(2)} ${baselineY.toFixed(2)}`,
-          ...linePoints.map(
-            (point) => `L ${point.x.toFixed(2)} ${point.y.toFixed(2)}`,
-          ),
-          `L ${linePoints[linePoints.length - 1].x.toFixed(2)} ${baselineY.toFixed(2)}`,
-          "Z",
-        ].join(" ")
-      : "";
-  const labelIndexes =
-    items.length <= 6
-      ? items.map((_, index) => index)
-      : [0, Math.floor((items.length - 1) / 2), items.length - 1];
-  const focusPoint = linePoints[linePoints.length - 1] ?? null;
-
-  return (
-    <article className={`roi-trend-card is-${tone}`}>
-      <header>
-        <div>
-          <strong>{title}</strong>
-          <span>{description}</span>
-        </div>
-        <i>{points.length} mediciones</i>
-      </header>
-      <svg
-        className="roi-trend-svg"
-        viewBox={`0 0 ${width} ${height}`}
-        role="img"
-        aria-label={`${title}: ${description}`}
-      >
-        {[0, 1, 2, 3, 4].map((line) => {
-          const lineY = plot.top + (line / 4) * chartHeight;
-          const axisValue = maximum - (line / 4) * domain;
-          return (
-            <g key={line}>
-              <line
-                className="roi-trend-gridline"
-                x1={plot.left}
-                x2={width - plot.right}
-                y1={lineY}
-                y2={lineY}
-              />
-              <text
-                className="roi-trend-axis"
-                x={plot.left - 8}
-                y={lineY + 3}
-                textAnchor="end"
-              >
-                {axisValue.toFixed(2)}
-              </text>
-            </g>
-          );
-        })}
-        <line
-          className="roi-trend-baseline"
-          x1={plot.left}
-          x2={width - plot.right}
-          y1={baselineY}
-          y2={baselineY}
-        />
-        {focusPoint && (
-          <line
-            className="roi-trend-focus"
-            x1={focusPoint.x}
-            x2={focusPoint.x}
-            y1={plot.top}
-            y2={height - plot.bottom + 4}
-          />
-        )}
-        {areaPath && <path className="roi-trend-area" d={areaPath} />}
-        {trendPath && <path className="roi-trend-line" d={trendPath} />}
-        {linePoints.map((point) => {
-          return (
-            <g key={point.analysis.id}>
-              <circle
-                className="roi-trend-point-ring"
-                cx={point.x}
-                cy={point.y}
-                r={6.4}
-              >
-                <title>{`${point.analysis.orthomosaics?.name ?? "Ortomosaico"} · ${shortDate(recordDate(point.analysis))}: ${point.value}`}</title>
-              </circle>
-              <text
-                className="roi-trend-bar-label"
-                x={point.x}
-                y={point.y - 14}
-                textAnchor="middle"
-              >
-                {point.value.toFixed(2)}
-              </text>
-            </g>
-          );
-        })}
-        {labelIndexes.map((index) => (
-          <text
-            key={items[index].id}
-            className="roi-trend-date"
-            x={plot.left + (index + 0.5) * slotWidth}
-            y={height - 24}
-            textAnchor={
-              index === 0
-                ? "start"
-                : index === items.length - 1
-                  ? "end"
-                  : "middle"
-            }
-          >
-            {shortDate(recordDate(items[index]))}
-          </text>
-        ))}
-        {labelIndexes.map((index) => (
-          <text
-            key={`${items[index].id}-flight`}
-            className="roi-trend-flight"
-            x={plot.left + (index + 0.5) * slotWidth}
-            y={height - 8}
-            textAnchor={
-              index === 0
-                ? "start"
-                : index === items.length - 1
-                  ? "end"
-                  : "middle"
-            }
-          >
-            {flightLabel(items[index], index)}
-          </text>
-        ))}
-      </svg>
-    </article>
-  );
-}
-
-function MetricHistoryChart({
-  title,
-  description,
-  items,
-  values,
-  digits,
-  suffix,
-  relative = false,
-}: {
-  title: string;
-  description: string;
-  items: RoiAnalysisRecord[];
-  values: Array<number | null>;
-  digits: number;
-  suffix: string;
-  relative?: boolean;
-}) {
-  const width = 760;
-  const height = 280;
-  const plot = { left: 54, right: 22, top: 24, bottom: 58 };
-  const source =
-    relative && values.some((value) => value != null && Number.isFinite(value))
-      ? (() => {
-          const baseline =
-            values.find(
-              (value): value is number =>
-                value != null &&
-                Number.isFinite(value) &&
-                Math.abs(value) > Number.EPSILON,
-            ) ?? null;
-          return values.map((value) =>
-            baseline == null || value == null || !Number.isFinite(value)
-              ? null
-              : value / baseline,
-          );
-        })()
-      : values;
-  const points = source
-    .map((value, index) => ({ value, index, analysis: items[index] }))
-    .filter(
-      (
-        point,
-      ): point is {
-        value: number;
-        index: number;
-        analysis: RoiAnalysisRecord;
-      } => point.value != null && Number.isFinite(point.value),
-    );
-
-  if (!points.length) {
-    return (
-      <div className="roi-trend-empty">
-        No hay suficientes valores para construir este historial.
-      </div>
-    );
-  }
-
-  const observedMin = Math.min(...points.map((point) => point.value));
-  const observedMax = Math.max(...points.map((point) => point.value));
-  const baseline = relative ? 1 : observedMin >= 0 ? 0 : observedMin;
-  const chartHeight = height - plot.top - plot.bottom;
-  const maximum =
-    Math.max(observedMax, baseline) +
-    Math.max(Math.abs(observedMax - baseline) * 0.16, 0.04);
-  const minimum =
-    Math.min(observedMin, baseline) -
-    Math.max(Math.abs(observedMax - baseline) * 0.08, 0.02);
-  const domain = Math.max(maximum - minimum, Number.EPSILON);
-  const y = (pointValue: number) =>
-    plot.top + ((maximum - pointValue) / domain) * chartHeight;
-  const slotWidth = (width - plot.left - plot.right) / items.length;
-  const baselineY = y(baseline);
-  const linePoints = points.map((point) => ({
-    ...point,
-    x: plot.left + (point.index + 0.5) * slotWidth,
-    y: y(point.value),
-  }));
-  const trendPath = linePoints
-    .map((point, index) =>
-      `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`,
-    )
-    .join(" ");
-  const labelIndexes =
-    items.length <= 6
-      ? items.map((_, index) => index)
-      : [0, Math.floor((items.length - 1) / 2), items.length - 1];
-
-  return (
-    <article className="roi-metric-history-chart">
-      <header>
-        <div>
-          <strong>{title}</strong>
-          <span>{description}</span>
-        </div>
-      </header>
-      <svg
-        className="roi-trend-svg roi-metric-history-svg"
-        viewBox={`0 0 ${width} ${height}`}
-        role="img"
-        aria-label={title}
-      >
-        {[0, 1, 2, 3, 4].map((line) => {
-          const lineY = plot.top + (line / 4) * chartHeight;
-          const axisValue = maximum - (line / 4) * (maximum - minimum);
-          return (
-            <g key={line}>
-              <line
-                className="roi-trend-gridline"
-                x1={plot.left}
-                x2={width - plot.right}
-                y1={lineY}
-                y2={lineY}
-              />
-              <text
-                className="roi-trend-axis"
-                x={plot.left - 8}
-                y={lineY + 3}
-                textAnchor="end"
-              >
-                {axisValue.toFixed(relative ? 2 : digits)}
-                {suffix}
-              </text>
-            </g>
-          );
-        })}
-        <line
-          className="roi-trend-baseline"
-          x1={plot.left}
-          x2={width - plot.right}
-          y1={baselineY}
-          y2={baselineY}
-        />
-        {trendPath && (
-          <path className="roi-trend-line roi-metric-history-line" d={trendPath} />
-        )}
-        {linePoints.map((point) => (
-          <g key={`${title}-${point.analysis.id}`}>
-            <circle
-              className="roi-trend-point-ring"
-              cx={point.x}
-              cy={point.y}
-              r={6}
-            />
-            <text
-              className="roi-trend-bar-label"
-              x={point.x}
-              y={point.y - 14}
-              textAnchor="middle"
-            >
-              {point.value.toFixed(relative ? 2 : digits)}
-              {suffix}
-            </text>
-          </g>
-        ))}
-        {labelIndexes.map((index) => (
-          <text
-            key={`${title}-date-${items[index].id}`}
-            className="roi-trend-date"
-            x={plot.left + (index + 0.5) * slotWidth}
-            y={height - 24}
-            textAnchor={
-              index === 0
-                ? "start"
-                : index === items.length - 1
-                  ? "end"
-                  : "middle"
-            }
-          >
-            {shortDate(recordDate(items[index]))}
-          </text>
-        ))}
-        {labelIndexes.map((index) => (
-          <text
-            key={`${title}-flight-${items[index].id}`}
-            className="roi-trend-flight"
-            x={plot.left + (index + 0.5) * slotWidth}
-            y={height - 8}
-            textAnchor={
-              index === 0
-                ? "start"
-                : index === items.length - 1
-                  ? "end"
-                  : "middle"
-            }
-          >
-            {flightLabel(items[index], index)}
-          </text>
-        ))}
-      </svg>
-    </article>
-  );
-}
-
-/** Expresa el cambio contra la medición cronológica inmediatamente anterior. */
-function Delta({ value }: { value: number | null }) {
-  if (value == null)
-    return (
-      <span className="roi-metric-delta is-neutral">
-        <IconMinus aria-hidden="true" />
-        Sin vuelo anterior
-      </span>
-    );
-  if (value > 0)
-    return (
-      <span className="roi-metric-delta is-up">
-        <IconArrowUpRight aria-hidden="true" />+{value.toFixed(3)} vs. anterior
-      </span>
-    );
-  if (value < 0)
-    return (
-      <span className="roi-metric-delta is-down">
-        <IconArrowDownRight aria-hidden="true" />
-        {value.toFixed(3)} vs. anterior
-      </span>
-    );
-  return (
-    <span className="roi-metric-delta is-neutral">
-      <IconMinus aria-hidden="true" />
-      Sin cambio
-    </span>
-  );
-}
-
-/**
- * Dashboard temporal de un ROI. Resume el historial vigente y expone acciones
- * de actualización, exportación y eliminación controladas por `MapView`.
- */
+import type { RoiAnalysisRecord } from "../services/api";
+import {
+  DASHBOARD_VIEWS,
+  Delta,
+  GEOSCORE_WEIGHTS,
+  INDEX_SECTIONS,
+  MetricHistoryChart,
+  TrendChart,
+  chronologicalKey,
+  flightLabel,
+  metric,
+  metricHeatColor,
+  recordDate,
+  scoreColor,
+  shortDate,
+  statsOf,
+  type DashboardView,
+  type HeatmapRow,
+  type IndexKey,
+  type MetricHistoryModalState,
+  type RoiComparisonDialogProps,
+  type SummaryDetailRow,
+} from "./RoiComparisonDialog.parts";
 export function RoiComparisonDialog({
   open,
   activeIndex,
@@ -651,12 +64,10 @@ export function RoiComparisonDialog({
   const orderStorageKey = items[0]?.roi_id
     ? `geofield:roi-flight-order:${items[0].roi_id}`
     : null;
-
   useEffect(() => {
     setDashboardView("overview");
     setMetricHistory(null);
   }, [activeIndex, open]);
-
   useEffect(() => {
     if (!open || !items.length) return;
     const activeExists = items.some(
@@ -669,7 +80,6 @@ export function RoiComparisonDialog({
       return items[0].orthomosaic_id;
     });
   }, [activeOrthomosaicId, items, open]);
-
   useEffect(() => {
     const defaultOrder = [...items]
       .sort((left, right) =>
@@ -698,9 +108,7 @@ export function RoiComparisonDialog({
       setFlightOrder(defaultOrder);
     }
   }, [items, orderStorageKey]);
-
   if (!open) return null;
-
   const chronologicalFallback = [...items].sort((left, right) =>
     chronologicalKey(left).localeCompare(chronologicalKey(right)),
   );
@@ -766,7 +174,6 @@ export function RoiComparisonDialog({
         second: "2-digit",
       })
     : "Pendiente";
-
   return (
     <div
       className="import-dialog-backdrop"
@@ -788,7 +195,7 @@ export function RoiComparisonDialog({
             <div>
               <span className="import-eyebrow">INTELIGENCIA TEMPORAL</span>
               <h2 id="roi-comparison-title">
-                Dashboard comparativo de índices
+                Dashboard comparativo de Ã­ndices
               </h2>
             </div>
           </div>
@@ -804,7 +211,7 @@ export function RoiComparisonDialog({
               ) : (
                 <IconRefresh aria-hidden="true" />
               )}
-              <span>{loading ? "Actualizando…" : "Actualizar"}</span>
+              <span>{loading ? "Actualizandoâ€¦" : "Actualizar"}</span>
             </button>
             <button
               type="button"
@@ -817,7 +224,7 @@ export function RoiComparisonDialog({
               ) : (
                 <IconDownload aria-hidden="true" />
               )}
-              <span>{exporting ? "Consultando…" : "Exportar CSV real"}</span>
+              <span>{exporting ? "Consultandoâ€¦" : "Exportar CSV real"}</span>
             </button>
             <button
               className="dialog-close"
@@ -830,29 +237,27 @@ export function RoiComparisonDialog({
             </button>
           </div>
         </div>
-
         <div className="roi-dashboard-context">
           <div>
             <strong>Mismo ROI, distintos vuelos</strong>
             <span>
-              La exportación vuelve a consultar Supabase y utiliza exactamente
+              La exportaciÃ³n vuelve a consultar Supabase y utiliza exactamente
               los registros vigentes.
             </span>
           </div>
           <div className="roi-sync-status">
             <i className={loading ? "is-loading" : ""} />
-            <span>Última sincronización</span>
+            <span>Ãšltima sincronizaciÃ³n</span>
             <strong>{syncLabel}</strong>
           </div>
           <span className="modal-record-count">
             {items.length} {items.length === 1 ? "registro" : "registros"}
           </span>
         </div>
-
         {loading && !chronological.length && (
           <p className="roi-comparison-status">
             <IconLoader2 className="spin" aria-hidden="true" />
-            Cargando estadísticas actualizadas…
+            Cargando estadÃ­sticas actualizadasâ€¦
           </p>
         )}
         {error && (
@@ -860,7 +265,6 @@ export function RoiComparisonDialog({
             {error}
           </p>
         )}
-
         {chronological.length > 0 && (
           <div
             className={`roi-dashboard-body ${loading ? "is-refreshing" : ""}`}
@@ -1058,7 +462,6 @@ export function RoiComparisonDialog({
                   ? "La muestra de pixeles validos es reducida; conviene revisar el recorte o el umbral aplicado."
                   : `La muestra actual contiene ${latestStats?.count?.toLocaleString("es-MX") ?? "0"} pixeles validos persistidos.`,
               ];
-
               return (
                 <section
                   key={section.key}
@@ -1073,7 +476,6 @@ export function RoiComparisonDialog({
                       Serie temporal del mismo ROI para {section.description.toLowerCase()}.
                     </p>
                   </div>
-
                   <nav
                     className="roi-dashboard-view-switcher"
                     aria-label={`Vistas del dashboard ${section.label}`}
@@ -1090,7 +492,6 @@ export function RoiComparisonDialog({
                       </button>
                     ))}
                   </nav>
-
                   <section
                     className={`roi-flight-ribbon ${dashboardView !== "overview" ? "is-hidden-view" : ""}`}
                     aria-label={`Linea temporal de vuelos ${section.label}`}
@@ -1123,7 +524,6 @@ export function RoiComparisonDialog({
                           analysis.orthomosaic_id === latest?.orthomosaic_id;
                         const isActive =
                           analysis.orthomosaic_id === activeOrthomosaicId;
-
                         return (
                           <button
                             type="button"
@@ -1205,15 +605,14 @@ export function RoiComparisonDialog({
                           ) : (
                             <IconPencil aria-hidden="true" />
                           )}
-                          Editar estadísticas de este vuelo
+                          Editar estadÃ­sticas de este vuelo
                         </button>
                       </div>
                     )}
                   </section>
-
                   <section
                     className={`roi-kpi-grid ${dashboardView !== "overview" ? "is-hidden-view" : ""}`}
-                    aria-label={`Resumen de la comparación ${section.label}`}
+                    aria-label={`Resumen de la comparaciÃ³n ${section.label}`}
                   >
                     <article>
                       <small>Promedio seleccionado</small>
@@ -1221,19 +620,19 @@ export function RoiComparisonDialog({
                       <Delta value={meanDelta} />
                     </article>
                     <article>
-                      <small>Desviación seleccionada</small>
+                      <small>DesviaciÃ³n seleccionada</small>
                       <strong>{metric(latestStats?.standard_deviation)}</strong>
                       <Delta value={deviationDelta} />
                     </article>
                     <article>
-                      <small>Rango histórico</small>
+                      <small>Rango histÃ³rico</small>
                       <strong>
-                        {metric(globalMinimum)} <i>—</i> {metric(globalMaximum)}
+                        {metric(globalMinimum)} <i>â€”</i> {metric(globalMaximum)}
                       </strong>
                       <span>{chronological.length} vuelos comparados</span>
                     </article>
                     <article>
-                      <small>Píxeles del vuelo seleccionado</small>
+                      <small>PÃ­xeles del vuelo seleccionado</small>
                       <strong>
                         {latestStats?.count.toLocaleString("es-MX") ?? "-"}
                       </strong>
@@ -1242,7 +641,6 @@ export function RoiComparisonDialog({
                       </span>
                     </article>
                   </section>
-
                   <section
                     className={`roi-kpi-grid ${dashboardView !== "overview" ? "is-hidden-view" : ""}`}
                     aria-label={`Resumen ampliado de ${section.label}`}
@@ -1270,7 +668,6 @@ export function RoiComparisonDialog({
                       </strong>
                     </article>
                   </section>
-
                   <div
                     className={`roi-dashboard-note ${dashboardView !== "overview" ? "is-hidden-view" : ""}`}
                   >
@@ -1279,21 +676,20 @@ export function RoiComparisonDialog({
                       {latestAverageTone} {latestDispersionTone}
                     </span>
                   </div>
-
                   <section
                     className={`roi-trends-grid ${dashboardView !== "trends" ? "is-hidden-view" : ""}`}
                     aria-label={`Tendencias temporales ${section.label}`}
                   >
                     <TrendChart
                       title={`Promedio ${section.label}`}
-                      description={`Evolución media de ${section.description.toLowerCase()}`}
+                      description={`EvoluciÃ³n media de ${section.description.toLowerCase()}`}
                       items={chronological}
                       value={(analysis) => statsOf(analysis, section.key)?.mean ?? null}
                       tone={section.tone}
                     />
                     <TrendChart
-                      title="Desviación estándar"
-                      description="Dispersión y heterogeneidad dentro del ROI"
+                      title="DesviaciÃ³n estÃ¡ndar"
+                      description="DispersiÃ³n y heterogeneidad dentro del ROI"
                       items={chronological}
                       value={(analysis) =>
                         statsOf(analysis, section.key)?.standard_deviation ?? null
@@ -1302,7 +698,6 @@ export function RoiComparisonDialog({
                       nonNegative
                     />
                   </section>
-
                   <section
                     className={`roi-heatmap-card ${dashboardView !== "trends" ? "is-hidden-view" : ""}`}
                     aria-label={`Mapa de calor temporal ${section.label}`}
@@ -1311,7 +706,7 @@ export function RoiComparisonDialog({
                       <div>
                         <strong>Evolucion real del ROI por vuelo</strong>
                         <span>
-                          Una fila por métrica persistida. El recuadro oscuro marca
+                          Una fila por mÃ©trica persistida. El recuadro oscuro marca
                           el vuelo seleccionado.
                         </span>
                       </div>
@@ -1394,7 +789,6 @@ export function RoiComparisonDialog({
                       ROI entre vuelos guardados, no solo una variacion aislada.
                     </p>
                   </section>
-
                   <section
                     className={`roi-operational-grid ${dashboardView !== "trends" ? "is-hidden-view" : ""}`}
                   >
@@ -1420,7 +814,6 @@ export function RoiComparisonDialog({
                         ))}
                       </div>
                     </article>
-
                     <article className="roi-operational-card">
                       <h3>Detalle del vuelo</h3>
                       <p className="sub">
@@ -1453,7 +846,6 @@ export function RoiComparisonDialog({
                       </p>
                     </article>
                   </section>
-
                   <section
                     className={`roi-dashboard-insights roi-dashboard-insights--triple ${dashboardView !== "methodology" ? "is-hidden-view" : ""}`}
                   >
@@ -1507,7 +899,6 @@ export function RoiComparisonDialog({
                       </div>
                     </article>
                   </section>
-
                   <section
                     className={`roi-detail-section ${dashboardView !== "traceability" ? "is-hidden-view" : ""}`}
                   >
@@ -1517,8 +908,8 @@ export function RoiComparisonDialog({
                         <h3>Detalle de mediciones {section.label}</h3>
                       </div>
                       <p>
-                        La tabla está ordenada cronológicamente. El CSV conserva
-                        toda la precisión recibida, sin redondeo.
+                        La tabla estÃ¡ ordenada cronolÃ³gicamente. El CSV conserva
+                        toda la precisiÃ³n recibida, sin redondeo.
                       </p>
                     </div>
                     <div className="roi-comparison-table-wrap">
@@ -1527,13 +918,13 @@ export function RoiComparisonDialog({
                           <tr>
                             <th>Fecha</th>
                             <th>Ortomosaico</th>
-                            <th>Mín.</th>
-                            <th>Máx.</th>
+                            <th>MÃ­n.</th>
+                            <th>MÃ¡x.</th>
                             <th>Promedio</th>
-                            <th>Δ prom.</th>
+                            <th>Î” prom.</th>
                             <th>Desv.</th>
-                            <th>Δ desv.</th>
-                            <th>Píxeles</th>
+                            <th>Î” desv.</th>
+                            <th>PÃ­xeles</th>
                             <th aria-label="Acciones" />
                           </tr>
                         </thead>
@@ -1571,7 +962,7 @@ export function RoiComparisonDialog({
                                       "Ortomosaico eliminado"}
                                   </strong>
                                   <small title={analysis.orthomosaic_id}>
-                                    {analysis.orthomosaic_id.slice(0, 8)}…
+                                    {analysis.orthomosaic_id.slice(0, 8)}â€¦
                                   </small>
                                 </td>
                                 <td>{metric(currentStats?.min)}</td>
@@ -1624,8 +1015,8 @@ export function RoiComparisonDialog({
                                     className="roi-analysis-delete"
                                     onClick={() => onDelete(analysis)}
                                     disabled={busy}
-                                    aria-label={`Eliminar estadísticas de ${analysis.orthomosaics?.name ?? "este ortomosaico"}`}
-                                    title="Eliminar estadísticas"
+                                    aria-label={`Eliminar estadÃ­sticas de ${analysis.orthomosaics?.name ?? "este ortomosaico"}`}
+                                    title="Eliminar estadÃ­sticas"
                                   >
                                     {deletingId === analysis.id ? (
                                       <IconLoader2
@@ -1637,7 +1028,7 @@ export function RoiComparisonDialog({
                                     )}
                                     <span>
                                       {deletingId === analysis.id
-                                        ? "Eliminando…"
+                                        ? "Eliminandoâ€¦"
                                         : "Eliminar"}
                                     </span>
                                   </button>
@@ -1654,7 +1045,6 @@ export function RoiComparisonDialog({
                       anterior sin mezclar indices distintos.
                     </p>
                   </section>
-
                   <section
                     className={`roi-methodology-section ${dashboardView !== "methodology" ? "is-hidden-view" : ""}`}
                   >
@@ -1668,7 +1058,6 @@ export function RoiComparisonDialog({
                         ROI seleccionado para el indice activo.
                       </p>
                     </div>
-
                     <div className="roi-methodology-grid">
                       <article className="roi-methodology-card">
                         <small>Fuente actual</small>
@@ -1686,7 +1075,6 @@ export function RoiComparisonDialog({
                           ))}
                         </ul>
                       </article>
-
                       <article className="roi-methodology-card">
                         <small>Lo que ya se interpreta</small>
                         <strong>Temporalidad real del ROI</strong>
@@ -1702,7 +1090,6 @@ export function RoiComparisonDialog({
                           <li>CSV exportado desde registros vigentes.</li>
                         </ul>
                       </article>
-
                       <article className="roi-methodology-card">
                         <small>Lo que falta para el demo avanzado</small>
                         <strong>Datos que hoy no existen en esta API</strong>
@@ -1720,7 +1107,6 @@ export function RoiComparisonDialog({
                         </ul>
                       </article>
                     </div>
-
                     <article className="roi-methodology-note">
                       <strong>Conclusion operativa</strong>
                       <p>
@@ -1740,9 +1126,9 @@ export function RoiComparisonDialog({
         {!loading && chronological.length === 0 && (
           <div className="roi-dashboard-empty">
             <IconChartLine aria-hidden="true" />
-            <strong>No hay estadísticas vigentes</strong>
+            <strong>No hay estadÃ­sticas vigentes</strong>
             <span>
-              Guarda una medición multiespectral para comenzar la comparación temporal.
+              Guarda una mediciÃ³n multiespectral para comenzar la comparaciÃ³n temporal.
             </span>
           </div>
         )}
@@ -1766,7 +1152,7 @@ export function RoiComparisonDialog({
                     <em>{activeSection.label}</em>
                   </div>
                   <div className="roi-metric-modal-meta">
-                    ROI actual · {chronological.length} vuelos guardados · ultimo vuelo{" "}
+                    ROI actual Â· {chronological.length} vuelos guardados Â· ultimo vuelo{" "}
                     <b>{shortDate(recordDate(chronological[chronological.length - 1]))}</b>
                   </div>
                 </div>
@@ -1776,10 +1162,9 @@ export function RoiComparisonDialog({
                   onClick={() => setMetricHistory(null)}
                   aria-label="Cerrar historial"
                 >
-                  ×
+                  Ã—
                 </button>
               </div>
-
               <div className="roi-metric-modal-kpis">
                 <div>
                   <div className="l">Valor actual</div>
@@ -1855,7 +1240,6 @@ export function RoiComparisonDialog({
                   </div>
                 </div>
               </div>
-
               <div className="roi-metric-modal-body">
                 <MetricHistoryChart
                   title={`Historial de ${metricHistory.label}`}
@@ -1890,3 +1274,4 @@ export function RoiComparisonDialog({
     </div>
   );
 }
+

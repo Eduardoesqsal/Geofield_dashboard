@@ -16,6 +16,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from geofield.errors import OrthomosaicNotFoundError, RoiAnalysisNotFoundError, SupabaseNotConfiguredError
+from geofield.api.prescription_routes import register_prescription_routes
 from geofield.api.request_utils import (
     geojson_geometry,
     optional_string,
@@ -483,111 +484,7 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
-    @router.post("/ndvi_zoning")
-    async def create_ndvi_zoning(request: Request) -> dict[str, Any]:
-        payload = await request.json()
-        orthomosaic_id = require_string(
-            payload,
-            "orthomosaic_id",
-            "Selecciona un vuelo antes de generar la zonificacion.",
-        )
-        index_name = str(payload_object(payload).get("index_name", "NDVI"))
-        try:
-            zone_count = int(payload_object(payload).get("zone_count", 4))
-            cell_size_m = float(payload_object(payload).get("cell_size_m", 3))
-            grid_angle_deg = float(payload_object(payload).get("grid_angle_deg", 0))
-            detail_level = float(payload_object(payload).get("detail_level", 1))
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(422, "Zonas, tamano de celda, rotacion y detalle deben ser numericos.") from exc
-        classification_method = str(payload_object(payload).get("classification_method", "quantiles"))
-        cell_value_mode = str(payload_object(payload).get("cell_value_mode", "mean"))
-        manual_breaks = payload_object(payload).get("manual_breaks")
-        analysis_min = payload_object(payload).get("analysis_min")
-        analysis_max = payload_object(payload).get("analysis_max")
-        geometry = geojson_geometry(payload)
-        ensure_orthomosaic(orthomosaic_id)
-        try:
-            return raster.ndvi_zoning_map(
-                geometry,
-                index_name,
-                zone_count,
-                cell_size_m,
-                grid_angle_deg,
-                classification_method,
-                cell_value_mode,
-                manual_breaks,
-                detail_level,
-                float(analysis_min) if analysis_min is not None else None,
-                float(analysis_max) if analysis_max is not None else None,
-            )
-        except (ValueError, rasterio.errors.RasterioIOError) as exc:
-            raise HTTPException(422, str(exc)) from exc
-
-    @router.post("/prescriptions")
-    async def create_prescription(request: Request) -> dict[str, Any]:
-        payload = await request.json()
-        orthomosaic_id = require_string(
-            payload,
-            "orthomosaic_id",
-            "Selecciona un vuelo antes de generar la prescripción.",
-        )
-        index_name = str(payload_object(payload).get("index_name", "NDVI"))
-        try:
-            zone_count = int(payload_object(payload).get("zone_count", 4))
-            cell_size_m = float(payload_object(payload).get("cell_size_m", 3))
-            grid_angle_deg = float(payload_object(payload).get("grid_angle_deg", 0))
-            detail_level = float(payload_object(payload).get("detail_level", 1))
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(422, "Zonas, tamano de celda, rotacion y detalle deben ser numericos.") from exc
-        classification_method = str(payload_object(payload).get("classification_method", "quantiles"))
-        cell_value_mode = str(payload_object(payload).get("cell_value_mode", "mean"))
-        manual_breaks = payload_object(payload).get("manual_breaks")
-        analysis_min = payload_object(payload).get("analysis_min")
-        analysis_max = payload_object(payload).get("analysis_max")
-        doses = payload_object(payload).get("doses")
-        geometry = geojson_geometry(payload)
-        ensure_orthomosaic(orthomosaic_id)
-        try:
-            return raster.prescription_map_with_doses(
-                geometry,
-                index_name,
-                zone_count,
-                cell_size_m,
-                grid_angle_deg,
-                classification_method,
-                cell_value_mode,
-                manual_breaks,
-                detail_level,
-                float(analysis_min) if analysis_min is not None else None,
-                float(analysis_max) if analysis_max is not None else None,
-                doses,
-            )
-        except (ValueError, rasterio.errors.RasterioIOError) as exc:
-            raise HTTPException(422, str(exc)) from exc
-
-    @router.get("/tiles/prescription/{artifact_id}/{z}/{x}/{y}.png")
-    def prescription_tile(artifact_id: str, z: int, x: int, y: int) -> Response:
-        try:
-            return Response(
-                raster.prescription_tile(artifact_id, z, x, y),
-                media_type="image/png",
-                headers={"Cache-Control": "public, max-age=31536000, immutable"},
-            )
-        except ValueError as exc:
-            raise HTTPException(404, str(exc)) from exc
-
-    @router.get("/prescriptions/{artifact_id}/download.json")
-    def download_prescription_json(artifact_id: str) -> FileResponse:
-        if len(artifact_id) != 32 or any(character not in "0123456789abcdef" for character in artifact_id):
-            raise HTTPException(404, "La prescripcion solicitada no es valida.")
-        path = output_dir / "prescriptions" / f"{artifact_id}.json"
-        if not path.is_file():
-            raise HTTPException(404, "La prescripcion ya no esta disponible.")
-        return FileResponse(
-            path,
-            media_type="application/json",
-            filename=f"prescripcion_{artifact_id[:8]}.json",
-        )
+    register_prescription_routes(router, raster, output_dir, ensure_orthomosaic)
 
     @router.get("/crop_tiles/{crop_id}/download")
     def download_crop(

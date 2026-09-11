@@ -1,7 +1,7 @@
-/**
+﻿/**
  * Hook central del dashboard geoespacial.
- * Coordina mapa Leaflet, ortomosaicos, ROI, índices, histogramas, diálogos,
- * trazabilidad y sincronización con el backend.
+ * Coordina mapa Leaflet, ortomosaicos, ROI, Ã­ndices, histogramas, diÃ¡logos,
+ * trazabilidad y sincronizaciÃ³n con el backend.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import L from "leaflet";
@@ -61,6 +61,12 @@ import {
   replaceNdviTileLayer,
   replaceSpectralLayer,
 } from "./useDashboardMap.spectral";
+import { useDashboardMapPrescription } from "./useDashboardMap.prescription";
+import { useDashboardMapRoi } from "./useDashboardMap.roiActions";
+import { useDashboardMapTreeCore } from "./useDashboardMap.treeCore";
+import { useDashboardMapTreeActions } from "./useDashboardMap.treeActions";
+import { useDashboardMapWorkspace } from "./useDashboardMap.workspace";
+import { useDashboardMapSpectralActions } from "./useDashboardMap.spectralActions";
 
 export type TreeDisplayMode = "points" | "diameters";
 export type DetectionEditMode = "add" | "delete-one" | "delete-area" | null;
@@ -90,7 +96,7 @@ export interface MapState {
   error: string | null;
 }
 
-/** Datos, estadísticas y rango visible de la capa NDVI actual. */
+/** Datos, estadÃ­sticas y rango visible de la capa NDVI actual. */
 export interface NdviAnalysis {
   response: NdviResponse | null;
   stats: NdviStats;
@@ -102,7 +108,7 @@ export interface NdviAnalysis {
   fillMode: ClassificationFillMode;
 }
 
-/** Estado equivalente para índices adicionales que pueden coexistir. */
+/** Estado equivalente para Ã­ndices adicionales que pueden coexistir. */
 export interface IndexAnalysis {
   name: "NDWI" | "NDRE";
   response: NdviResponse;
@@ -122,7 +128,7 @@ export function useDashboardMap(
   mapElement: React.RefObject<HTMLDivElement>,
   activeCycleId: string | null,
 ) {
-  // Recursos Leaflet: cada referencia representa una capa única y reemplazable.
+  // Recursos Leaflet: cada referencia representa una capa Ãºnica y reemplazable.
   const mapRef = useRef<L.Map>();
   const orthoRef = useRef<L.TileLayer>();
   const cropTileRef = useRef<L.TileLayer>();
@@ -187,7 +193,7 @@ export function useDashboardMap(
     values: [],
   });
   const ndviResponseRef = useRef<NdviResponse | null>(null);
-  // Selección ROI, recorte activo y respuestas espectrales asociadas.
+  // SelecciÃ³n ROI, recorte activo y respuestas espectrales asociadas.
   const selectedRoiRef = useRef<unknown>(null);
   const activeCropGeometryRef = useRef<unknown>(null);
   const activeCropIdRef = useRef<string | null>(null);
@@ -239,781 +245,74 @@ export function useDashboardMap(
     activeCycleIdRef.current = activeCycleId;
   }, [activeCycleId]);
 
-  const clearClassificationGrid = useCallback(() => {
-    classificationGridRef.current?.remove();
-    classificationGridRef.current = undefined;
-  }, []);
-
-  const clearClassificationFill = useCallback(() => {
-    classificationFillRef.current?.remove();
-    classificationFillRef.current = undefined;
-  }, []);
-
-  const clearLivePrescriptionGrid = useCallback(() => {
-    livePrescriptionGridCleanupRef.current?.();
-    livePrescriptionGridCleanupRef.current = null;
-    livePrescriptionGridRef.current?.remove();
-    livePrescriptionGridRef.current = null;
-    const map = mapRef.current;
-    [
-      "classificationImagePane",
-      "classificationFillPane",
-      "classificationGridPane",
-    ].forEach((paneName) => {
-      const pane = map?.getPane(paneName);
-      pane?.style.removeProperty("display");
-      pane?.style.removeProperty("transform");
-      pane?.style.removeProperty("transform-origin");
-      pane?.style.removeProperty("will-change");
-    });
-  }, []);
-
-  const setLivePrescriptionRotation = useCallback(
-    (
-      cellSizeM: number,
-      gridAngleDeg: number,
-      visible = true,
-      baseAngleDeg = 0,
-      hasCurrentMap = false,
-    ) => {
-      void baseAngleDeg;
-      void hasCurrentMap;
-      const map = mapRef.current;
-      if (!map || !visible) {
-        clearLivePrescriptionGrid();
-        return;
-      }
-      [
-        "classificationImagePane",
-        "classificationFillPane",
-        "classificationGridPane",
-      ].forEach((paneName) => {
-        const pane = map.getPane(paneName);
-        pane?.style.removeProperty("transform");
-        pane?.style.removeProperty("transform-origin");
-        pane?.style.removeProperty("will-change");
-      });
-      const container = map.getContainer();
-      let overlay = livePrescriptionGridRef.current;
-      if (!overlay) {
-        overlay = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        overlay.setAttribute("class", "prescription-live-grid");
-        container.appendChild(overlay);
-        livePrescriptionGridRef.current = overlay;
-      }
-
-      const updateLiveGrid = () => {
-        if (!livePrescriptionGridRef.current) return;
-        const geometry = prescriptionGeometryRef.current ?? activeCropGeometryRef.current;
-        if (!geometry) {
-          clearLivePrescriptionGrid();
-          return;
-        }
-        const anchorBounds = geometry
-          ? L.geoJSON(geometry as GeoJsonObject).getBounds()
-          : boundsRef.current;
-        const anchor = anchorBounds?.isValid()
-          ? anchorBounds.getCenter()
-          : map.getCenter();
-        const anchorPoint = map.latLngToContainerPoint(anchor);
-        const gridExtent = Math.max(
-          map.getContainer().clientWidth,
-          map.getContainer().clientHeight,
-          1,
-        ) * 2;
-        const center = anchor;
-        const centerPoint = map.latLngToContainerPoint(center);
-        const referencePoint = L.point(centerPoint.x + 100, centerPoint.y);
-        const referenceLatLng = map.containerPointToLatLng(referencePoint);
-        const metersForReference = Math.max(
-          map.distance(center, referenceLatLng),
-          0.001,
-        );
-        const pixelsPerMeter = 100 / metersForReference;
-        const cellPixels = Math.max(8, Math.min(96, cellSizeM * pixelsPerMeter));
-
-        const pathFromRing = (ring: number[][]) =>
-          ring
-            .map((coordinate, index) => {
-              const [longitude, latitude] = coordinate;
-              const point = map.latLngToContainerPoint([latitude, longitude]);
-              return `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
-            })
-            .join(" ");
-        const polygonPaths: string[] = [];
-        const appendPolygon = (rings: number[][][]) => {
-          rings.forEach((ring) => {
-            if (ring.length >= 3) polygonPaths.push(`${pathFromRing(ring)} Z`);
-          });
-        };
-        const appendGeometry = (source: any) => {
-          if (!source) return;
-          if (source.type === "FeatureCollection") {
-            source.features?.forEach((feature: any) => appendGeometry(feature));
-            return;
-          }
-          if (source.type === "Feature") {
-            appendGeometry(source.geometry);
-            return;
-          }
-          if (source.type === "Polygon") {
-            appendPolygon(source.coordinates);
-            return;
-          }
-          if (source.type === "MultiPolygon") {
-            source.coordinates.forEach((polygon: number[][][]) =>
-              appendPolygon(polygon),
-            );
-          }
-        };
-        appendGeometry(geometry);
-        const clipPath = polygonPaths.join(" ");
-        if (!clipPath) {
-          clearLivePrescriptionGrid();
-          return;
-        }
-
-        const width = Math.max(container.clientWidth, 1);
-        const height = Math.max(container.clientHeight, 1);
-        livePrescriptionGridRef.current.setAttribute("width", `${width}`);
-        livePrescriptionGridRef.current.setAttribute("height", `${height}`);
-        livePrescriptionGridRef.current.setAttribute("viewBox", `0 0 ${width} ${height}`);
-        livePrescriptionGridRef.current.innerHTML = `
-          <defs>
-            <clipPath id="prescription-live-grid-clip">
-              <path d="${clipPath}" clip-rule="evenodd"></path>
-            </clipPath>
-            <pattern id="prescription-live-grid-pattern" patternUnits="userSpaceOnUse" x="${anchorPoint.x.toFixed(2)}" y="${anchorPoint.y.toFixed(2)}" width="${cellPixels.toFixed(2)}" height="${cellPixels.toFixed(2)}">
-              <path d="M 0 0 H ${cellPixels.toFixed(2)} M 0 0 V ${cellPixels.toFixed(2)}" fill="none" stroke="rgba(255,255,255,0.68)" stroke-width="1"></path>
-            </pattern>
-          </defs>
-          <g clip-path="url(#prescription-live-grid-clip)">
-            <g transform="rotate(${-gridAngleDeg} ${anchorPoint.x.toFixed(2)} ${anchorPoint.y.toFixed(2)})">
-              <rect x="${(anchorPoint.x - gridExtent).toFixed(2)}" y="${(anchorPoint.y - gridExtent).toFixed(2)}" width="${(gridExtent * 2).toFixed(2)}" height="${(gridExtent * 2).toFixed(2)}" fill="url(#prescription-live-grid-pattern)"></rect>
-            </g>
-          </g>
-        `;
-      };
-
-      updateLiveGrid();
-      livePrescriptionGridCleanupRef.current?.();
-      map.on("zoom move", updateLiveGrid);
-      livePrescriptionGridCleanupRef.current = () => {
-        map.off("zoom move", updateLiveGrid);
-      };
-    },
-    [clearLivePrescriptionGrid],
-  );
-
-  const mountClassificationFill = useCallback(
-    async (geojsonUrl?: string) => {
-      const map = mapRef.current;
-      clearClassificationFill();
-      if (!map || !geojsonUrl) return;
-
-      const response = await fetch(backendUrl(geojsonUrl), {
-        headers: { Accept: "application/geo+json, application/json" },
-        cache: "no-store",
-      });
-      if (!response.ok) {
-        throw new Error(
-          `No se pudo cargar la capa de prescripcion (error ${response.status}).`,
-        );
-      }
-
-      const geojson = (await response.json()) as FeatureCollection;
-      const featureCount = Array.isArray(geojson.features) ? geojson.features.length : 0;
-      console.info("[classification-fill]", {
-        url: geojsonUrl,
-        featureCount,
-      });
-      classificationFillRef.current = L.geoJSON(geojson, {
-        pane: "classificationFillPane",
-        interactive: false,
-        style: (feature) => {
-          const color =
-            typeof feature?.properties?.color === "string"
-              ? feature.properties.color
-              : "#ffffff";
-          return {
-            color: "#ffffff",
-            weight: 1,
-            opacity: 0.1,
-            fillColor: color,
-            fillOpacity: 0.72,
-          };
-        },
-      }).addTo(map);
-    },
-    [clearClassificationFill],
-  );
-
-  const mountClassificationGrid = useCallback(
-    async (gridUrl?: string) => {
-      const map = mapRef.current;
-      clearClassificationGrid();
-      if (!map || !gridUrl) return;
-
-      const response = await fetch(backendUrl(gridUrl), {
-        headers: { Accept: "application/geo+json, application/json" },
-        cache: "no-store",
-      });
-      if (!response.ok) {
-        throw new Error(
-          `No se pudo cargar el overlay de grilla (error ${response.status}).`,
-        );
-      }
-
-      const geojson = (await response.json()) as GeoJsonObject;
-      const gridOpacityForZoom = (zoom: number) => {
-        if (zoom <= 18) return 0.008;
-        if (zoom >= 22) return 0.05;
-        return 0.008 + ((zoom - 18) / 4) * 0.042;
-      };
-      const gridLayer = L.geoJSON(geojson, {
-        pane: "classificationGridPane",
-        interactive: false,
-        style: {
-          color: "#ffffff",
-          weight: 1,
-          opacity: gridOpacityForZoom(map.getZoom()),
-          lineCap: "square",
-          lineJoin: "miter",
-        },
-      }).addTo(map);
-      const updateGridOpacity = () => {
-        gridLayer.setStyle({ opacity: gridOpacityForZoom(map.getZoom()) });
-      };
-      map.on("zoomend", updateGridOpacity);
-      gridLayer.once("remove", () => map.off("zoomend", updateGridOpacity));
-      classificationGridRef.current = gridLayer;
-    },
-    [clearClassificationGrid],
-  );
-
-  const clearZoning = useCallback(() => {
-    zoningPreviewTokenRef.current += 1;
-    clearLivePrescriptionGrid();
-    zoningPreviewAbortRef.current?.abort();
-    zoningPreviewAbortRef.current = null;
-    zoningPreviewRef.current?.remove();
-    zoningPreviewRef.current = undefined;
-    zoningPreviewGridRef.current?.remove();
-    zoningPreviewGridRef.current = undefined;
-    zoningRef.current?.remove();
-    zoningRef.current = undefined;
-    clearClassificationFill();
-    clearClassificationGrid();
-    setZoning(null);
-  }, [clearClassificationFill, clearClassificationGrid, clearLivePrescriptionGrid]);
-
-  const clearZoningPreview = useCallback(() => {
-    zoningPreviewTokenRef.current += 1;
-    clearLivePrescriptionGrid();
-    zoningPreviewAbortRef.current?.abort();
-    zoningPreviewAbortRef.current = null;
-    zoningPreviewRef.current?.remove();
-    zoningPreviewRef.current = undefined;
-    zoningPreviewGridRef.current?.remove();
-    zoningPreviewGridRef.current = undefined;
-  }, [clearLivePrescriptionGrid]);
-
-  const previewZoning = useCallback(
-    async (
-      indexName: "NDVI" | "NDWI" | "NDRE",
-      zoneCount: number,
-      cellSizeM: number,
-      gridAngleDeg = 0,
-      classificationMethod: "quantiles" | "equal_intervals" | "manual" = "quantiles",
-      cellValueMode: "mean" | "min" | "max" = "mean",
-      detailLevel = 1,
-      manualBreaks?: number[],
-      allowExisting = false,
-    ) => {
-      const map = mapRef.current;
-      if (
-        !map ||
-        !state.orthomosaicId ||
-        (!allowExisting && (zoning || prescription))
-      ) return;
-      if (state.orthoMode !== "multispectral") return;
-      const indexReady =
-        indexName === "NDVI"
-          ? ndviAnalysis.roiResponse
-          : indexAnalyses.some((analysis) => analysis.name === indexName);
-      if (!activeCropGeometryRef.current || !indexReady) return;
-      const geometry =
-        prescriptionGeometryRef.current ?? activeCropGeometryRef.current;
-      const token = ++zoningPreviewTokenRef.current;
-      zoningPreviewAbortRef.current?.abort();
-      const abortController = new AbortController();
-      zoningPreviewAbortRef.current = abortController;
-      const releasePreviewAbortController = () => {
-        if (zoningPreviewAbortRef.current === abortController) {
-          zoningPreviewAbortRef.current = null;
-        }
-      };
-      let result: NdviZoningResponse;
-      try {
-        result = await dashboardApi.createNdviZoning(
-          state.orthomosaicId,
-          indexName,
-          geometry,
-          zoneCount,
-          cellSizeM,
-          gridAngleDeg,
-          {
-            classificationMethod,
-            cellValueMode,
-            detailLevel,
-            manualBreaks,
-            analysisMin: activeAnalysisRange(indexName)?.minimum,
-            analysisMax: activeAnalysisRange(indexName)?.maximum,
-            signal: abortController.signal,
-          },
-        );
-      } catch (error) {
-        if (abortController.signal.aborted) return;
-        releasePreviewAbortController();
-        throw error;
-      }
-      if (
-        token !== zoningPreviewTokenRef.current ||
-        (!allowExisting && (zoning || prescription))
-      ) {
-        releasePreviewAbortController();
-        return;
-      }
-      let previewGrid: GeoJsonObject | null = null;
-      try {
-        if (result.grid_url) {
-          const gridResponse = await fetch(backendUrl(result.grid_url), {
-            headers: { Accept: "application/geo+json, application/json" },
-            cache: "no-store",
-            signal: abortController.signal,
-          });
-          if (gridResponse.ok) {
-            previewGrid = (await gridResponse.json()) as GeoJsonObject;
-          }
-        }
-      } catch (error) {
-        if (abortController.signal.aborted) return;
-        releasePreviewAbortController();
-        throw error;
-      }
-      if (token !== zoningPreviewTokenRef.current) {
-        releasePreviewAbortController();
-        return;
-      }
-      zoningPreviewRef.current?.remove();
-      zoningPreviewGridRef.current?.remove();
-      if (allowExisting) {
-        zoningRef.current?.remove();
-        prescriptionRef.current?.remove();
-        clearClassificationFill();
-      }
-      clearClassificationGrid();
-      zoningPreviewRef.current = L.tileLayer(backendUrl(result.tile_url), {
-        pane: "classificationPreviewPane",
-        tileSize: 256,
-        maxNativeZoom: 24,
-        maxZoom: 24,
-        keepBuffer: 3,
-        updateWhenIdle: true,
-        updateWhenZooming: false,
-        opacity: 1,
-        className: "zoning-map-overlay is-preview",
-      }).addTo(map);
-      if (previewGrid) {
-        zoningPreviewGridRef.current = L.geoJSON(previewGrid, {
-          pane: "classificationPreviewGridPane",
-          interactive: false,
-          style: {
-            color: "#ffffff",
-            weight: 1,
-            opacity: 0.28,
-            lineCap: "square",
-            lineJoin: "miter",
-          },
-        }).addTo(map);
-      }
-      releasePreviewAbortController();
-    },
-    [
-      activeAnalysisRange,
-      clearClassificationFill,
-      clearClassificationGrid,
-      indexAnalyses,
-      ndviAnalysis.roiResponse,
-      prescription,
-      state.orthoMode,
-      state.orthomosaicId,
-      zoning,
-    ],
-  );
-
-  const clearPrescription = useCallback(() => {
-    clearZoning();
-    prescriptionRef.current?.remove();
-    prescriptionRef.current = undefined;
-    setPrescription(null);
-    setState((current) => ({ ...current, prescription: false }));
-  }, [clearZoning]);
-
-  const clearPrescriptionArea = useCallback(() => {
-    prescriptionDrawCompleteRef.current = null;
-    prescriptionGeometryRef.current = null;
-    prescriptionAreaLayerRef.current?.remove();
-    prescriptionAreaLayerRef.current = undefined;
-    setPrescriptionAreaReady(false);
-  }, []);
-
-  const generateZoning = useCallback(
-    async (
-      indexName: "NDVI" | "NDWI" | "NDRE",
-      zoneCount: number,
-      cellSizeM: number,
-      gridAngleDeg = 0,
-      classificationMethod: "quantiles" | "equal_intervals" | "manual" = "quantiles",
-      cellValueMode: "mean" | "min" | "max" = "mean",
-      detailLevel = 1,
-      manualBreaks?: number[],
-    ) => {
-      const map = mapRef.current;
-      if (!map || !state.orthomosaicId)
-        throw new Error("Selecciona un vuelo antes de generar la zonificacion.");
-      if (state.orthoMode !== "multispectral")
-        throw new Error(`La zonificacion ${indexName} requiere un ortomosaico multiespectral.`);
-      const indexReady =
-        indexName === "NDVI"
-          ? ndviAnalysis.roiResponse
-          : indexAnalyses.some((analysis) => analysis.name === indexName);
-      if (!activeCropGeometryRef.current || !indexReady)
-        throw new Error(
-          `Selecciona un ROI, recortalo y abre su histograma ${indexName} antes de generar la zonificacion.`,
-        );
-      setZoningLoading(true);
-      try {
-        const geometry =
-          prescriptionGeometryRef.current ?? activeCropGeometryRef.current;
-        const result = await dashboardApi.createNdviZoning(
-          state.orthomosaicId,
-          indexName,
-          geometry,
-          zoneCount,
-          cellSizeM,
-          gridAngleDeg,
-          {
-            classificationMethod,
-            cellValueMode,
-            detailLevel,
-            manualBreaks,
-            analysisMin: activeAnalysisRange(indexName)?.minimum,
-            analysisMax: activeAnalysisRange(indexName)?.maximum,
-          },
-        );
-        clearZoningPreview();
-        clearPrescription();
-        zoningRef.current?.remove();
-        zoningRef.current = L.tileLayer(backendUrl(result.tile_url), {
-          pane: "classificationImagePane",
-          tileSize: 256,
-          maxNativeZoom: 24,
-          maxZoom: 24,
-          keepBuffer: 3,
-          updateWhenIdle: true,
-          updateWhenZooming: false,
-          opacity: 1,
-          className: "zoning-map-overlay",
-        }).addTo(map);
-        await mountClassificationFill(result.geojson_url);
-        await mountClassificationGrid(result.grid_url);
-        console.info("[zoning-response-debug]", result.debug ?? null);
-        setZoning(result);
-        setState((current) => ({ ...current, prescription: true, error: null }));
-        map.fitBounds(result.bounds);
-        return result;
-      } finally {
-        setZoningLoading(false);
-      }
-    },
-    [
-      activeAnalysisRange,
-      clearZoningPreview,
-      clearPrescription,
-      indexAnalyses,
-      mountClassificationFill,
-      mountClassificationGrid,
-      ndviAnalysis.roiResponse,
-      state.orthoMode,
-      state.orthomosaicId,
-    ],
-  );
-
-  const generatePrescription = useCallback(
-    async (
-      indexName: "NDVI" | "NDWI" | "NDRE",
-      zoneCount: number,
-      cellSizeM: number,
-      gridAngleDeg = 0,
-      classificationMethod: "quantiles" | "equal_intervals" | "manual" = "quantiles",
-      cellValueMode: "mean" | "min" | "max" = "mean",
-      detailLevel = 1,
-      manualBreaks?: number[],
-      doses?: number[],
-    ) => {
-      const map = mapRef.current;
-      if (!map || !state.orthomosaicId)
-        throw new Error("Selecciona un vuelo antes de generar la prescripción.");
-      if (state.orthoMode !== "multispectral")
-        throw new Error("La prescripción NDVI requiere un ortomosaico multiespectral.");
-      const indexReady =
-        indexName === "NDVI"
-          ? ndviAnalysis.roiResponse
-          : indexAnalyses.some((analysis) => analysis.name === indexName);
-      if (!activeCropGeometryRef.current || !indexReady)
-        throw new Error(
-          "Selecciona un ROI, recórtalo y abre su histograma NDVI antes de generar la prescripción.",
-        );
-      setPrescriptionLoading(true);
-      try {
-        const geometry =
-          prescriptionGeometryRef.current ?? activeCropGeometryRef.current;
-        const result = await dashboardApi.createPrescription(
-          state.orthomosaicId,
-          indexName,
-          geometry,
-          zoneCount,
-          cellSizeM,
-          gridAngleDeg,
-          {
-            classificationMethod,
-            cellValueMode,
-            detailLevel,
-            manualBreaks,
-            analysisMin: activeAnalysisRange(indexName)?.minimum,
-            analysisMax: activeAnalysisRange(indexName)?.maximum,
-            doses,
-          },
-        );
-        clearZoningPreview();
-        zoningRef.current?.remove();
-        zoningRef.current = undefined;
-        setZoning(null);
-        prescriptionRef.current?.remove();
-        prescriptionRef.current = L.tileLayer(backendUrl(result.tile_url), {
-          pane: "classificationImagePane",
-          tileSize: 256,
-          maxNativeZoom: 24,
-          maxZoom: 24,
-          keepBuffer: 3,
-          updateWhenIdle: true,
-          updateWhenZooming: false,
-          opacity: 1,
-          className: "prescription-map-overlay",
-        }).addTo(map);
-        await mountClassificationFill(result.geojson_url);
-        await mountClassificationGrid(result.grid_url);
-        console.info("[prescription-response-debug]", result.debug ?? null);
-        setPrescription(result);
-        setState((current) => ({ ...current, prescription: true, error: null }));
-        map.fitBounds(result.bounds);
-        return result;
-      } finally {
-        setPrescriptionLoading(false);
-      }
-    },
-    [
-      activeAnalysisRange,
-      clearZoningPreview,
-      indexAnalyses,
-      mountClassificationFill,
-      mountClassificationGrid,
-      ndviAnalysis.roiResponse,
-      state.orthoMode,
-      state.orthomosaicId,
-    ],
-  );
-
-  /** Reconstruye etiquetas visibles respetando el filtro de diámetro vigente. */
-  const refreshLabels = useCallback(() => {
-    const map = mapRef.current;
-    if (!map || !labelsEnabledRef.current || !treeDataRef.current) return;
-    labelsRef.current?.clearLayers();
-    treeDataRef.current.features.forEach((feature) => {
-      const diameter = diameterOf(feature);
-      const { min, max } = diameterRangeRef.current;
-      const category = sizeOf(diameter);
-      if (
-        !Number.isFinite(diameter) ||
-        diameter < min ||
-        diameter > max ||
-        (category !== "unknown" && !visibleTreeSizesRef.current[category])
-      )
-        return;
-      L.marker(
-        [feature.geometry.coordinates[1], feature.geometry.coordinates[0]],
-        {
-          pane: "treeLabelsPane",
-          interactive: false,
-          icon: L.divIcon({
-            className: "tree-diameter-label-icon",
-            html: `<span>${diameter.toFixed(2)} m</span>`,
-            iconSize: [1, 1],
-          }),
-        },
-      ).addTo(labelsRef.current!);
-    });
-  }, []);
-
-  /** Crea la capa de detecciones en modo puntual o con diámetro proporcional. */
-  const renderTreeLayer = useCallback(
-    (collection: TreeCollection, visible = true) => {
-      const map = mapRef.current;
-      if (!map) return;
-      treeRef.current?.remove();
-      treeRef.current = L.geoJSON(collection, {
-        pointToLayer: (feature, latlng) => {
-          const treeFeature = feature as TreeFeature;
-          const diameter = diameterOf(treeFeature);
-          const category = sizeOf(diameter);
-          const options: L.PathOptions = {
-            color: treeSizeColors[category],
-            fillColor: treeSizeColors[category],
-            opacity: category === "unknown" ? 0.35 : 0.85,
-            fillOpacity: category === "unknown" ? 0.12 : 0.35,
-            weight: category === "unknown" ? 1 : 2,
-          };
-          return treeDisplayModeRef.current === "diameters"
-            ? L.circle(latlng, {
-                ...options,
-                radius: Number.isFinite(diameter)
-                  ? Math.max(0.2, diameter / 2)
-                  : 1,
-              })
-            : L.circleMarker(latlng, { ...options, radius: 5 });
-        },
-        onEachFeature: (feature: Feature, layer) => {
-          layer.bindPopup(buildTreePopupHtml(feature as TreeFeature));
-        },
-      });
-      if (visible) treeRef.current.addTo(map);
-    },
-    [],
-  );
-
-  /** Aplica en la capa los filtros de rango y categorías seleccionadas. */
-  const syncTreeLayerVisibility = useCallback(() => {
-    treeRef.current?.eachLayer((layer) => {
-      const feature = (layer as L.Layer & { feature?: TreeFeature }).feature;
-      if (!feature) return;
-      const diameter = diameterOf(feature);
-      const category = sizeOf(diameter);
-      const { min, max } = diameterRangeRef.current;
-      const withinRange =
-        Number.isFinite(diameter) && diameter >= min && diameter <= max;
-      const visibleBySize =
-        category === "unknown" || visibleTreeSizesRef.current[category];
-      (layer as L.Path).setStyle({
-        opacity: !visibleBySize
-          ? 0
-          : category === "unknown"
-            ? 0.2
-            : withinRange
-              ? 0.85
-              : 0.1,
-        fillOpacity: !visibleBySize
-          ? 0
-          : category === "unknown"
-            ? 0.08
-            : withinRange
-              ? 0.35
-              : 0.08,
-        weight: withinRange ? 2 : 1,
-      });
-    });
-  }, []);
-
-  /** Cancela cualquier herramienta manual y restaura la interacción del mapa. */
-  const cancelDetectionEdit = useCallback(() => {
-    const map = mapRef.current;
-    if (map && addDetectionClickRef.current)
-      map.off("click", addDetectionClickRef.current);
-    addDetectionClickRef.current = null;
-    deleteDetectionHandlersRef.current.forEach((handler, layer) =>
-      layer.off("click", handler),
-    );
-    deleteDetectionHandlersRef.current.clear();
-    map?.pm?.disableDraw("Rectangle");
-    if (map) map.getContainer().style.cursor = "";
-    detectionEditModeRef.current = null;
-    setState((current) => ({ ...current, detectionEditMode: null }));
-  }, []);
-
-  /** Sustituye el conjunto editado y sincroniza mapa, filtros y estadísticas. */
-  const commitTreeCollection = useCallback(
-    (collection: TreeCollection, makeVisible?: boolean) => {
-      const map = mapRef.current;
-      const wasVisible =
-        makeVisible ??
-        Boolean(map && treeRef.current && map.hasLayer(treeRef.current));
-      rawTreeDataRef.current = collection;
-      treeDataRef.current = collection;
-      setTreeData(collection);
-      setFilteredTreeData(
-        filterVisibleTrees(
-          collection,
-          diameterRangeRef.current,
-          visibleTreeSizesRef.current,
-        ),
-      );
-      labelsRef.current?.clearLayers();
-      if (collection.features.length) {
-        renderTreeLayer(collection, wasVisible);
-        syncTreeLayerVisibility();
-        refreshLabels();
-      } else {
-        treeRef.current?.remove();
-        treeRef.current = undefined;
-      }
-      setState((current) => ({
-        ...current,
-        trees: collection.features.length > 0 && wasVisible,
-        labels: collection.features.length ? current.labels : false,
-        error: null,
-      }));
-    },
-    [refreshLabels, renderTreeLayer, syncTreeLayerVisibility],
-  );
-
-  const renderClassificationPixel = useCallback(
-    (
-      name: "NDVI" | "NDWI" | "NDRE",
-      value: number,
-      minimum: number,
-      maximum: number,
-      fillMode: ClassificationFillMode,
-      equalization: HistogramEqualization | null,
-    ) => {
-      if (!Number.isFinite(value)) return null;
-      const inRange = value >= minimum && value <= maximum;
-      const normalizedPosition = Math.max(
-        0,
-        Math.min(1, (value - minimum) / Math.max(maximum - minimum, Number.EPSILON)),
-      );
-      const palettePosition =
-        equalization && inRange
-          ? (equalizedPosition(value, equalization) ?? normalizedPosition)
-          : normalizedPosition;
-      const color = indexColorFromPosition(name, palettePosition)
-        .match(/\d+/g)
-        ?.map(Number) ?? [0, 0, 0];
-      const alpha = inRange ? 255 : fillMode === "solid" ? 255 : 0;
-      return { color, alpha };
-    },
-    [],
-  );
-
+  const {
+    clearClassificationFill,
+    clearClassificationGrid,
+    clearLivePrescriptionGrid,
+    clearPrescription,
+    clearPrescriptionArea,
+    clearZoning,
+    clearZoningPreview,
+    generatePrescription,
+    generateZoning,
+    mountClassificationFill,
+    mountClassificationGrid,
+    previewZoning,
+    setLivePrescriptionRotation,
+  } = useDashboardMapPrescription({
+    activeAnalysisRange,
+    activeCropGeometryRef,
+    boundsRef,
+    classificationFillRef,
+    classificationGridRef,
+    indexAnalyses,
+    livePrescriptionGridCleanupRef,
+    livePrescriptionGridRef,
+    mapRef,
+    ndviAnalysis,
+    prescription,
+    prescriptionAreaLayerRef,
+    prescriptionDrawCompleteRef,
+    prescriptionGeometryRef,
+    prescriptionRef,
+    setPrescription,
+    setPrescriptionAreaReady,
+    setPrescriptionLoading,
+    setState,
+    setZoning,
+    setZoningLoading,
+    state,
+    zoning,
+    zoningPreviewAbortRef,
+    zoningPreviewGridRef,
+    zoningPreviewRef,
+    zoningPreviewTokenRef,
+    zoningRef,
+  });
+  const {
+    cancelDetectionEdit,
+    commitTreeCollection,
+    refreshLabels,
+    renderClassificationPixel,
+    renderTreeLayer,
+    syncTreeLayerVisibility,
+  } = useDashboardMapTreeCore({
+    addDetectionClickRef,
+    deleteDetectionHandlersRef,
+    detectionEditModeRef,
+    diameterRangeRef,
+    labelsEnabledRef,
+    labelsRef,
+    mapRef,
+    rawTreeDataRef,
+    setFilteredTreeData,
+    setState,
+    setTreeData,
+    treeDataRef,
+    treeDisplayModeRef,
+    treeRef,
+    visibleTreeSizesRef,
+  });
   const shouldRenderIndexAsTiles = useCallback(
     (_equalized: boolean, _fillMode: ClassificationFillMode) => true,
     [],
@@ -1088,7 +387,7 @@ export function useDashboardMap(
     });
   }, [currentSpectralClipPath]);
 
-  /** Rasteriza NDVI en canvas aplicando máscara, rampa y rango seleccionado. */
+  /** Rasteriza NDVI en canvas aplicando mÃ¡scara, rampa y rango seleccionado. */
   const renderNdvi = useCallback((response: NdviResponse) => {
     const matrix = response.matrix;
     if (!matrix?.length) return;
@@ -1130,7 +429,7 @@ export function useDashboardMap(
     matrix.forEach((row, y) =>
       row.forEach((value, x) => {
         // El backend devuelve NDVI como byte normalizado (0..255).
-        // Aceptar también el rango NDVI clásico (-1..1) para mantener el
+        // Aceptar tambiÃ©n el rango NDVI clÃ¡sico (-1..1) para mantener el
         // cliente compatible con implementaciones anteriores.
         const numericValue = Number(value);
         const canonicalValue =
@@ -1185,282 +484,43 @@ export function useDashboardMap(
     spectralTileUrl,
   ]);
 
-  /** Recalcula el recorte CSS cuando el mapa cambia de zoom o posición. */
-  const updateTileClip = useCallback(() => {
-    const map = mapRef.current;
-    const layer = orthoRef.current;
-    const container = layer?.getContainer();
-    const ring = activeCropRing();
-    if (!map || !container || !ring?.length) {
-      syncSpectralClip();
-      return;
-    }
-    const points = ring.map(([longitude, latitude]) =>
-      map.latLngToLayerPoint([latitude, longitude]),
-    );
-    container.style.clipPath = `polygon(${points.map((point) => `${point.x}px ${point.y}px`).join(", ")})`;
-    syncSpectralClip();
-  }, [activeCropRing, syncSpectralClip]);
-
-  /** Elimina tiles de recorte y cualquier clip aplicado a la capa base. */
-  const clearTileClip = useCallback(() => {
-    activeCropGeometryRef.current = null;
-    activeCropIdRef.current = null;
-    cropTileRef.current?.remove();
-    cropTileRef.current = undefined;
-    const container = orthoRef.current?.getContainer();
-    if (container) container.style.clipPath = "";
-    syncSpectralClip();
-    setCropAvailable(false);
-  }, [syncSpectralClip]);
-
-  /** Diferencia visualmente polígonos seleccionados y disponibles. */
-  const styleRoiLayer = useCallback((roiId: string, selected: boolean) => {
-    const layer = roiLayersRef.current.get(roiId);
-    if (!layer) return;
-    const style = selected
-      ? { color: "#ffffff", weight: 3, fillColor: "#6d9276", fillOpacity: 0.16 }
-      : {
-          color: "#ffffff",
-          weight: 2,
-          fillColor: "#ff3b30",
-          fillOpacity: 0.08,
-        };
-    if (layer instanceof L.GeoJSON) layer.setStyle(style);
-    else
-      (
-        layer as L.Path & { setStyle?: (options: L.PathOptions) => void }
-      ).setStyle?.(style);
-  }, []);
-
-  /**
-   * Restablece selección, recorte e índices ROI para que el mapa vuelva al
-   * comportamiento global sin conservar resultados de una geometría anterior.
-   */
-  const clearRoiSelection = useCallback(() => {
-    clearPrescriptionArea();
-    selectedRoisRef.current.forEach((_geojson, roiId) =>
-      styleRoiLayer(roiId, false),
-    );
-    clearRoiArtifacts({
-      clearTileClip,
-      cropControlRef,
-      indexRefs,
-      ndviRangeRef,
-      ndviRef,
-      ndviResponseRef,
-      ndviTileRef,
-      orthoRef,
-      roiIndexResponsesRef,
-      selectedRoiRef,
-      selectedRoisRef,
-    });
-    restoreBaseOrthoLayer({ mapRef, orthoRef });
-
-    setNdviAnalysis(createEmptyNdviAnalysis());
-    setIndexAnalyses([]);
-    setState((current) => ({
-      ...current,
-      rgb: Boolean(orthoRef.current),
-      ndvi: false,
-      vari: false,
-      exg: false,
-      roiSelected: false,
-      selectedRoiId: null,
-      selectedRoiIds: [],
-      error: null,
-    }));
-  }, [clearPrescriptionArea, clearTileClip, styleRoiLayer]);
-
-  /** Solicita el recorte ROI y deja NDWI/NDRE para cálculo explícito. */
-  const analyzeRoi = useCallback(async (geojson: unknown) => {
-    clearPrescriptionArea();
-    const [ndviResponse, crop] = await Promise.all([
-      dashboardApi.roi(geojson),
-      dashboardApi.cropTiles(geojson),
-    ]);
-    const ndviZoneStats = ndviStats(ndviResponse);
-    ndviResponseRef.current = ndviResponse;
-    roiIndexResponsesRef.current = { NDVI: ndviResponse };
-    activeCropGeometryRef.current = geojson;
-    ndviRangeRef.current = {
-      min: ndviZoneStats.min,
-      max: ndviZoneStats.max,
-      equalized: false,
-      fillMode: "transparent",
-      values: ndviZoneStats.values,
-    };
-    setNdviAnalysis((current) => ({
-      ...current,
-      response: null,
-      stats: current.stats,
-      roiResponse: null,
-      roiStats: current.roiStats,
-      minimum: ndviZoneStats.min,
-      maximum: ndviZoneStats.max,
-      equalized: false,
-      fillMode: "transparent",
-    }));
-    setIndexAnalyses([]);
-    ndviRef.current?.remove();
-    ndviTileRef.current?.remove();
-    ndviTileRef.current = undefined;
-    indexRefs.current.forEach((layer) => layer.remove());
-    indexRefs.current.clear();
-    applyRoiCropLayer({
-      activeCropIdRef,
-      backendUrl,
-      bounds: crop.bounds,
-      cropId: crop.crop_id,
-      tileVersion: crop.tile_version,
-      cropTileRef,
-      mapRef,
-      orthoRef,
-      uploadedRgbRef,
-    });
-    setCropAvailable(true);
-    setState((current) => ({
-      ...current,
-      rgb: false,
-      ndvi: false,
-      error: null,
-    }));
-  }, [clearPrescriptionArea]);
-
-  /** Ejecuta el análisis para la colección ROI construida actualmente. */
-  const cropSelectedRoi = useCallback(async () => {
-    if (!selectedRoiRef.current) {
-      setState((current) => ({
-        ...current,
-        error: "Selecciona una región de interés antes de recortar.",
-      }));
-      return;
-    }
-    try {
-      await analyzeRoi(selectedRoiRef.current);
-      cropControlRef.current?.remove();
-      cropControlRef.current = undefined;
-    } catch (error) {
-      setState((current) => ({
-        ...current,
-        error:
-          error instanceof Error
-            ? error.message
-            : "No se pudo recortar el ortomosaico.",
-      }));
-    }
-  }, [analyzeRoi]);
-
-  /**
-   * Combina todos los ROI seleccionados en un FeatureCollection y coloca una
-   * única tijera sobre los límites conjuntos.
-   */
-  const refreshRoiSelection = useCallback(() => {
-    clearPrescription();
-    const selections = Array.from(selectedRoisRef.current.entries());
-    const { collection, roiIds } = buildRoiSelection(selections);
-    const { features } = collection;
-    selectedRoiRef.current = features.length ? collection : null;
-    const map = mapRef.current;
-    cropControlRef.current?.remove();
-    cropControlRef.current = undefined;
-    if (map && features.length) {
-      const bounds = L.geoJSON(collection).getBounds();
-      if (bounds.isValid()) {
-        cropControlRef.current = L.marker(bounds.getCenter(), {
-          interactive: true,
-          keyboard: true,
-          title: `Recortar ${features.length} ${features.length === 1 ? "zona" : "zonas"}`,
-          icon: L.divIcon({
-            className: "roi-crop-control",
-            html: '<span aria-hidden="true">✂</span>',
-            iconSize: [38, 38],
-            iconAnchor: [19, 19],
-          }),
-        }).addTo(map);
-        cropControlRef.current.on("click", () => {
-          void cropSelectedRoi();
-        });
-      }
-    }
-    setState((current) => ({
-      ...current,
-      roiSelected: features.length > 0,
-      selectedRoiId: roiIds.length === 1 ? roiIds[0] : null,
-      selectedRoiIds: roiIds,
-      error: features.length
-        ? `${features.length} ${features.length === 1 ? "zona seleccionada" : "zonas seleccionadas"}. Haz clic en la tijera para recortar.`
-        : null,
-    }));
-  }, [clearPrescription, cropSelectedRoi]);
-
-  /** Restaura geometrías persistentes después de cambiar el vuelo activo. */
-  const restoreRoiSelection = useCallback(
-    (selections: Array<[string, unknown]>) => {
-      selections.forEach(([id, geojson]) => {
-        selectedRoisRef.current.set(id, geojson);
-        if (id !== "__temporary__") styleRoiLayer(id, true);
-      });
-      refreshRoiSelection();
-    },
-    [refreshRoiSelection, styleRoiLayer],
-  );
-
-  /** Alterna un ROI sin reemplazar los demás y descarta análisis obsoletos. */
-  const selectRoi = useCallback(
-    (geojson: unknown, roiId: string | null = null) => {
-      const selectionId = roiId ?? "__temporary__";
-      const alreadySelected = selectedRoisRef.current.has(selectionId);
-      if (alreadySelected) {
-        selectedRoisRef.current.delete(selectionId);
-        if (roiId) styleRoiLayer(roiId, false);
-      } else {
-        const map = mapRef.current;
-        if (map && roiId && !roiLayersRef.current.has(roiId)) {
-          const geometryLayer = L.geoJSON(geojson as Feature, {
-            style: {
-              color: "#ffffff",
-              weight: 3,
-              fillColor: "#6d9276",
-              fillOpacity: 0.16,
-            },
-          }).addTo(map);
-          roiLayersRef.current.set(roiId, geometryLayer);
-        }
-        selectedRoisRef.current.set(selectionId, geojson);
-        if (roiId) styleRoiLayer(roiId, true);
-      }
-      const nextSelections = Array.from(selectedRoisRef.current.entries());
-      if (activeCropIdRef.current || roiIndexResponsesRef.current) {
-        clearRoiSelection();
-        nextSelections.forEach(([id, selectedGeojson]) => {
-          selectedRoisRef.current.set(id, selectedGeojson);
-          if (id !== "__temporary__") styleRoiLayer(id, true);
-        });
-      }
-      refreshRoiSelection();
-    },
-    [clearRoiSelection, refreshRoiSelection, styleRoiLayer],
-  );
-
-  /** Elimina la capa exacta y conserva cualquier otra selección activa. */
-  const removeRoiPolygon = useCallback(
-    (roiId: string) => {
-      const wasSelected = selectedRoisRef.current.delete(roiId);
-      const remainingSelections = Array.from(selectedRoisRef.current.entries());
-      roiLayersRef.current.get(roiId)?.remove();
-      roiLayersRef.current.delete(roiId);
-      if (!wasSelected) return;
-      clearRoiSelection();
-      remainingSelections.forEach(([id, geojson]) => {
-        selectedRoisRef.current.set(id, geojson);
-        if (id !== "__temporary__") styleRoiLayer(id, true);
-      });
-      refreshRoiSelection();
-    },
-    [clearRoiSelection, refreshRoiSelection, styleRoiLayer],
-  );
-
+  const {
+    analyzeRoi,
+    clearRoiSelection,
+    clearTileClip,
+    cropSelectedRoi,
+    refreshRoiSelection,
+    removeRoiPolygon,
+    restoreRoiSelection,
+    selectRoi,
+    styleRoiLayer,
+    updateTileClip,
+  } = useDashboardMapRoi({
+    activeCropGeometryRef,
+    activeCropIdRef,
+    activeCropRing,
+    clearPrescription,
+    clearPrescriptionArea,
+    cropControlRef,
+    cropTileRef,
+    indexRefs,
+    mapRef,
+    ndviRangeRef,
+    ndviRef,
+    ndviResponseRef,
+    ndviTileRef,
+    orthoRef,
+    roiIndexResponsesRef,
+    roiLayersRef,
+    selectedRoiRef,
+    selectedRoisRef,
+    setCropAvailable,
+    setIndexAnalyses,
+    setNdviAnalysis,
+    setState,
+    syncSpectralClip,
+    uploadedRgbRef,
+  });
   useEffect(() => {
     cancelDetectionEditHandlerRef.current = cancelDetectionEdit;
   }, [cancelDetectionEdit]);
@@ -1565,7 +625,7 @@ export function useDashboardMap(
     ],
   );
 
-  // Inicialización única del mapa base, Geoman y listeners de creación de ROI.
+  // InicializaciÃ³n Ãºnica del mapa base, Geoman y listeners de creaciÃ³n de ROI.
   useEffect(() => {
     const element = mapElement.current;
     if (!element || mapRef.current) return;
@@ -1579,7 +639,7 @@ export function useDashboardMap(
     const satellite = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       {
-        attribution: "Tiles © Esri",
+        attribution: "Tiles Â© Esri",
         maxNativeZoom: 18,
         maxZoom: 24,
         updateWhenZooming: false,
@@ -1589,7 +649,7 @@ export function useDashboardMap(
     const labels = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
       {
-        attribution: "Labels © Esri",
+        attribution: "Labels Â© Esri",
         maxNativeZoom: 18,
         maxZoom: 24,
         updateWhenZooming: false,
@@ -1725,7 +785,7 @@ export function useDashboardMap(
         if (!cycleId) {
           event.layer.remove();
           throw new Error(
-            "Selecciona un ciclo agrícola antes de guardar una región de interés.",
+            "Selecciona un ciclo agrÃ­cola antes de guardar una regiÃ³n de interÃ©s.",
           );
         }
         const saved = await dashboardApi.saveRoi(
@@ -1768,1216 +828,150 @@ export function useDashboardMap(
     updateTileClip,
   ]);
 
-  /**
-   * Guarda y activa un ortomosaico nuevo; limpia capas dependientes para no
-   * mezclar resultados pertenecientes a vuelos diferentes.
-   */
-  const importOrtho = useCallback(
-    async (file: File, sensor: OrthoSensor, agriculturalCycleId: string) => {
-      setState((current) => ({ ...current, uploading: true, error: null }));
-      const persistentRoiSelections = Array.from(
-        selectedRoisRef.current.entries(),
-      );
-      try {
-        const type: OrthoMode = modeFromSensor(sensor);
-        const captureDate = new Date().toISOString().slice(0, 10);
-        const upload = await dashboardApi.uploadOrthomosaic(
-          file,
-          sensor,
-          captureDate,
-          agriculturalCycleId,
-        );
-        const result =
-          upload.analysis ?? (await dashboardApi.orthoAnalysis(file, sensor));
-        clearPrescription();
-        if (
-          !mountUploadedOrthomosaic({
-            backendUrl,
-            bounds: result.bounds,
-            mapRef,
-            orthoRef,
-            tileVersion: result.tile_version,
-          })
-        )
-          return;
-        boundsRef.current = L.latLngBounds(result.bounds);
-        clearTileClip();
-        setIndexAnalyses([]);
-        resetOrthomosaicArtifacts({
-          cropControlRef,
-          indexRefs,
-          labelsRef,
-          ndviRef,
-          ndviResponseRef,
-          ndviTileRef,
-          roiIndexResponsesRef,
-          selectedRoiRef,
-          selectedRoisRef,
-          treeDataRef,
-          treeRef,
-        });
-        setTreeData(null);
-        setFilteredTreeData(null);
-        setNdviAnalysis(createEmptyNdviAnalysis());
-        setState((current) => ({
-          ...current,
-          orthoMode: type,
-          sensor,
-          orthomosaicId: upload.orthomosaic.id,
-          rgb: true,
-          trees: false,
-          labels: false,
-          ndvi: false,
-          vari: false,
-          exg: false,
-          swipe: false,
-          roiSelected: false,
-          selectedRoiId: null,
-          selectedRoiIds: [],
-        }));
-        restoreRoiSelection(persistentRoiSelections);
-        if (type === "multispectral") {
-          if (!result.ndvi_matrix)
-            throw new Error(
-              "El backend no devolvió la matriz NDVI del ortomosaico.",
-            );
-          const response: NdviResponse = {
-            ...createNdviResponse(result.bounds, result.mask, result.ndvi_matrix),
-          };
-          const stats = ndviStats(response);
-          ndviResponseRef.current = response;
-          ndviRangeRef.current = {
-            min: response.range_min ?? stats.min,
-            max: response.range_max ?? stats.max,
-            equalized: false,
-            fillMode: "transparent",
-            values: stats.values,
-          };
-          setNdviAnalysis(createEmptyNdviAnalysis());
-          setState((current) => ({
-            ...current,
-            ndvi: false,
-            loaded: true,
-            error: null,
-          }));
-          return;
-        }
-        uploadedRgbRef.current?.remove();
-        uploadedRgbRef.current = undefined;
-        setState((current) => ({ ...current, loaded: true, error: null }));
-      } catch (error) {
-        setState((current) => ({
-          ...current,
-          error:
-            error instanceof Error
-              ? error.message
-              : "No se pudo procesar el ortomosaico",
-        }));
-      } finally {
-        setState((current) => ({ ...current, uploading: false }));
-      }
-    },
-    [clearPrescription, clearTileClip, restoreRoiSelection],
-  );
-
-  /** Actualiza contraste y re-renderiza localmente un índice adicional activo. */
-  const setIndexRange = useCallback(
-    (name: IndexAnalysis["name"], minimum: number, maximum: number) => {
-      const safeMinimum = Math.min(minimum, maximum);
-      const safeMaximum = Math.max(minimum, maximum);
-      setIndexAnalyses((current) =>
-        current.map((analysis) => {
-          if (analysis.name !== name) return analysis;
-          const next = {
-            ...analysis,
-            minimum: safeMinimum,
-            maximum: safeMaximum,
-          };
-          renderIndex(
-            name,
-            next.response,
-            next.minimum,
-            next.maximum,
-            next.equalized,
-            next.fillMode,
-            next.stats.values,
-          );
-          return next;
-        }),
-      );
-    },
-    [renderIndex],
-  );
-
-  const setNdviEqualization = useCallback(
-    (equalized: boolean) => {
-      ndviRangeRef.current = {
-        min: ndviAnalysis.minimum,
-        max: ndviAnalysis.maximum,
-        equalized,
-        fillMode: ndviAnalysis.fillMode,
-        values: (ndviAnalysis.roiResponse ? ndviAnalysis.roiStats : ndviAnalysis.stats)
-          .values,
-      };
-      setNdviAnalysis((current) => ({ ...current, equalized }));
-      if (ndviResponseRef.current) renderNdvi(ndviResponseRef.current);
-    },
-    [
-      ndviAnalysis.fillMode,
-      ndviAnalysis.maximum,
-      ndviAnalysis.minimum,
-      ndviAnalysis.roiResponse,
-      ndviAnalysis.roiStats,
-      ndviAnalysis.stats,
-      renderNdvi,
-    ],
-  );
-
-  const setNdviFillMode = useCallback(
-    (fillMode: ClassificationFillMode) => {
-      setNdviAnalysis((current) => {
-        ndviRangeRef.current = {
-          min: current.minimum,
-          max: current.maximum,
-          equalized: current.equalized,
-          fillMode,
-          values: (current.roiResponse ? current.roiStats : current.stats).values,
-        };
-        return { ...current, fillMode };
-      });
-      if (ndviResponseRef.current) renderNdvi(ndviResponseRef.current);
-    },
-    [renderNdvi],
-  );
-
-  const setIndexEqualization = useCallback(
-    (name: IndexAnalysis["name"], equalized: boolean) => {
-      const analysis = indexAnalyses.find((item) => item.name === name);
-      if (!analysis) return;
-      renderIndex(
-        name,
-        analysis.response,
-        analysis.minimum,
-        analysis.maximum,
-        equalized,
-        analysis.fillMode,
-        analysis.stats.values,
-      );
-      setIndexAnalyses((current) =>
-        current.map((item) =>
-          item.name === name ? { ...item, equalized } : item,
-        ),
-      );
-    },
-    [indexAnalyses, renderIndex],
-  );
-
-  const setIndexFillMode = useCallback(
-    (name: IndexAnalysis["name"], fillMode: ClassificationFillMode) => {
-      setIndexAnalyses((current) =>
-        current.map((analysis) => {
-          if (analysis.name !== name) return analysis;
-          const next = { ...analysis, fillMode };
-          renderIndex(
-            name,
-            next.response,
-            next.minimum,
-            next.maximum,
-            next.equalized,
-            next.fillMode,
-            next.stats.values,
-          );
-          return next;
-        }),
-      );
-    },
-    [renderIndex],
-  );
-
-  /**
-   * Activa NDVI, NDWI o NDRE eligiendo automáticamente datos globales o los
-   * resultados del recorte ROI vigente.
-   */
-  const selectIndex = useCallback(
-    async (name: "NDVI" | IndexAnalysis["name"]) => {
-      try {
-        if (state.orthoMode !== "multispectral")
-          throw new Error(
-            "Carga un ortomosaico multiespectral para calcular índices.",
-          );
-        const map = mapRef.current;
-        if (!map) return;
-        if (name === "NDVI") {
-          const roiResponse = roiIndexResponsesRef.current?.NDVI;
-          const cropId = activeCropIdRef.current;
-          const response =
-            roiResponse ??
-            ndviResponseRef.current ??
-            (await dashboardApi.ndvi());
-          ndviResponseRef.current = response;
-          const stats = ndviStats(response);
-          const defaultMinimum = response.range_min ?? stats.min;
-          const defaultMaximum = response.range_max ?? stats.max;
-          setNdviAnalysis((current) => {
-            ndviRangeRef.current = {
-              min: defaultMinimum,
-              max: defaultMaximum,
-              equalized: current.equalized,
-              fillMode: current.fillMode,
-              values: stats.values,
-            };
-            return {
-              ...current,
-              response,
-              stats,
-              roiResponse: roiResponse ?? null,
-              roiStats: roiResponse ? stats : current.roiStats,
-              minimum: defaultMinimum,
-              maximum: defaultMaximum,
-            };
-          });
-          ndviRef.current?.remove();
-          ndviTileRef.current?.remove();
-          ndviTileRef.current = undefined;
-          renderNdvi(response);
-          setState((current) => ({ ...current, ndvi: true, error: null }));
-          return;
-        }
-        const cropId = activeCropIdRef.current;
-        if (cropId) {
-          const cachedResponse = roiIndexResponsesRef.current?.[name];
-          const roiGeometry =
-            activeCropGeometryRef.current ?? selectedRoiRef.current;
-          const roiResponse =
-            cachedResponse ??
-            (roiGeometry
-              ? await dashboardApi.roiVegetationIndex(name, roiGeometry)
-              : null);
-          if (!roiResponse)
-            throw new Error(
-              `Selecciona y recorta un ROI antes de activar ${name}.`,
-            );
-          roiIndexResponsesRef.current = {
-            ...roiIndexResponsesRef.current,
-            [name]: roiResponse,
-          };
-          const stats = ndviStats(roiResponse);
-          const defaultMinimum = roiResponse.range_min ?? stats.min;
-          const defaultMaximum = roiResponse.range_max ?? stats.max;
-          setIndexAnalyses((current) => [
-            ...current.filter((item) => item.name !== name),
-            {
-              name,
-              response: roiResponse,
-              stats,
-              minimum: defaultMinimum,
-              maximum: defaultMaximum,
-              visible: true,
-              equalized: false,
-              fillMode: "transparent",
-            },
-          ]);
-          renderIndex(
-            name,
-            roiResponse,
-            defaultMinimum,
-            defaultMaximum,
-            false,
-            "transparent",
-            stats.values,
-          );
-          setState((current) => ({ ...current, error: null }));
-          return;
-        }
-        const response = await dashboardApi.vegetationIndex(name);
-        const stats = ndviStats(response);
-        const defaultMinimum = response.range_min ?? stats.min;
-        const defaultMaximum = response.range_max ?? stats.max;
-        setIndexAnalyses((current) => [
-          ...current.filter((item) => item.name !== name),
-          {
-            name,
-            response,
-            stats,
-            minimum: defaultMinimum,
-            maximum: defaultMaximum,
-            visible: true,
-            equalized: false,
-            fillMode: "transparent",
-          },
-        ]);
-        renderIndex(
-          name,
-          response,
-          defaultMinimum,
-          defaultMaximum,
-          false,
-          "transparent",
-          stats.values,
-        );
-        setState((current) => ({ ...current, error: null }));
-      } catch (error) {
-        setState((current) => ({
-          ...current,
-          error:
-            error instanceof Error
-              ? error.message
-              : "No se pudo calcular el índice.",
-        }));
-      }
-    },
-    [renderIndex, state.orthoMode],
-  );
-
-  /** Retira todas las capas espectrales sin modificar el ortomosaico RGB. */
-  const hideIndices = useCallback(() => {
-    clearSpectralLayers({ indexRefs, ndviRef, ndviTileRef });
-    setNdviAnalysis((current) => ({
-      ...current,
-      response: null,
-      roiResponse: null,
-    }));
-    setIndexAnalyses([]);
-    setState((current) => ({
-      ...current,
-      ndvi: false,
-      vari: false,
-      exg: false,
-    }));
-  }, []);
-
-  /** Oculta NDVI y restablece su indicador sin alterar otros índices. */
-  const hideNdvi = useCallback(() => {
-    ndviRef.current?.remove();
-    ndviTileRef.current?.remove();
-    ndviTileRef.current = undefined;
-    setNdviAnalysis((current) => ({
-      ...current,
-      response: null,
-      roiResponse: null,
-    }));
-    setState((current) => ({ ...current, ndvi: false }));
-  }, []);
-
-  /** Retira una única capa NDWI o NDRE y su tarjeta analítica. */
-  const hideIndex = useCallback((name: IndexAnalysis["name"]) => {
-    removeSingleSpectralLayer({ indexRefs, name });
-    setIndexAnalyses((current) => current.filter((item) => item.name !== name));
-  }, []);
-
-  /** Compatibilidad interna para alternar NDVI desde flujos existentes. */
-  const toggleNdvi = useCallback(async () => {
-    try {
-      if (state.orthoMode !== "multispectral") {
-        setState((current) => ({
-          ...current,
-          error: "El análisis NDVI requiere un ortomosaico multiespectral.",
-        }));
-        return;
-      }
-      if (!ndviResponseRef.current) {
-        setState((current) => ({
-          ...current,
-          error: "Importa un ortomosaico multiespectral antes de activar NDVI.",
-        }));
-        return;
-      }
-      const map = mapRef.current;
-      const layer = ndviRef.current ?? ndviTileRef.current;
-      if (!map || !layer) return;
-      if (map.hasLayer(layer)) {
-        map.removeLayer(layer);
-        setState((current) => ({ ...current, ndvi: false }));
-      } else {
-        layer.addTo(map);
-        setState((current) => ({ ...current, ndvi: true }));
-      }
-    } catch (error) {
-      setState((current) => ({
-        ...current,
-        error: error instanceof Error ? error.message : "Error cargando NDVI",
-      }));
-    }
-  }, [state.orthoMode]);
-
-  /** Enciende o apaga una capa NDWI/NDRE sin retirar su panel analítico. */
-  const toggleIndexLayer = useCallback((name: IndexAnalysis["name"]) => {
-    const map = mapRef.current;
-    const layer = indexRefs.current.get(name);
-    if (!map || !layer) return;
-    const visible = map.hasLayer(layer);
-    if (visible) map.removeLayer(layer);
-    else layer.addTo(map);
-    setIndexAnalyses((current) =>
-      current.map((analysis) =>
-        analysis.name === name ? { ...analysis, visible: !visible } : analysis,
-      ),
-    );
-  }, []);
-
-  /** Sincroniza el rango NDVI del panel con la capa global o recortada. */
-  const setNdviRange = useCallback(
-    (minimum: number, maximum: number) => {
-      const safeMinimum = Math.min(minimum, maximum);
-      const safeMaximum = Math.max(minimum, maximum);
-      setNdviAnalysis((current) => {
-        ndviRangeRef.current = {
-          min: safeMinimum,
-          max: safeMaximum,
-          equalized: current.equalized,
-          fillMode: current.fillMode,
-          values: (current.roiResponse ? current.roiStats : current.stats).values,
-        };
-        return {
-          ...current,
-          minimum: safeMinimum,
-          maximum: safeMaximum,
-        };
-      });
-      if (ndviResponseRef.current) renderNdvi(ndviResponseRef.current);
-    },
-    [renderNdvi],
-  );
-
-  /** Muestra u oculta detecciones conservando la capa para reutilizarla. */
-  const toggleTrees = useCallback(() => {
-    const map = mapRef.current;
-    if (!map || !treeRef.current) return;
-    if (map.hasLayer(treeRef.current)) {
-      map.removeLayer(treeRef.current);
-      labelsRef.current?.remove();
-      setState((current) => ({ ...current, trees: false, labels: false }));
-    } else {
-      treeRef.current.addTo(map);
-      setState((current) => ({ ...current, trees: true }));
-    }
-  }, []);
-
-  /** Habilita en Geoman una única operación de dibujo poligonal. */
-  const drawRoi = useCallback(() => {
-    if (state.orthoMode !== "multispectral") {
-      setState((current) => ({
-        ...current,
-        error:
-          "Carga un ortomosaico multiespectral antes de dibujar una región de interés.",
-      }));
-      return;
-    }
-    const map = mapRef.current;
-    if (!map) return;
-    map.pm?.enableDraw("Polygon");
-  }, [state.orthoMode]);
-
-  /** Dibuja un limite temporal usado solo por la zonificacion/prescripcion. */
-  const drawPrescriptionArea = useCallback(
-    (onComplete: () => void) => {
-      const map = mapRef.current;
-      if (!map || !activeCropGeometryRef.current || !ndviAnalysis.roiResponse) {
-        setState((current) => ({
-          ...current,
-          error: "Primero recorta un ROI y abre su histograma NDVI.",
-        }));
-        return;
-      }
-      clearPrescription();
-      prescriptionDrawCompleteRef.current = onComplete;
-      map.pm?.enableDraw("Polygon", {
-        pathOptions: {
-          color: "#244f32",
-          weight: 2,
-          dashArray: "6 4",
-          fillColor: "#65a36f",
-          fillOpacity: 0.12,
-        },
-      });
-      setState((current) => ({
-        ...current,
-        error: "Dibuja en el mapa el poligono que delimita la zona de cultivo.",
-      }));
-    },
-    [clearPrescription, ndviAnalysis.roiResponse],
-  );
-
-  /** Importa, guarda y selecciona de forma aditiva todas las geometrías válidas. */
-  const importRoi = useCallback(
-    async (files: File[]) => {
-      try {
-        if (!activeCycleId)
-          throw new Error(
-            "Selecciona un ciclo agrícola antes de importar una región de interés.",
-          );
-        if (state.orthoMode !== "multispectral")
-          throw new Error(
-            "Carga un ortomosaico multiespectral antes de analizar una región de interés.",
-          );
-        const collections = await Promise.all(
-          files.map((file) => parseImportFile(file)),
-        );
-        const features = collections
-          .flatMap((collection) => collection.features)
-          .filter(
-            (feature) =>
-              feature.geometry.type === "Polygon" ||
-              feature.geometry.type === "MultiPolygon",
-          );
-        if (!features.length)
-          throw new Error(
-            "La geometría importada debe contener al menos un polígono.",
-          );
-        const map = mapRef.current;
-        if (!map) return;
-        const roi = { type: "FeatureCollection" as const, features };
-        const layer = L.geoJSON(roi, {
-          style: {
-            color: "#ffffff",
-            weight: 2,
-            fillColor: "#ff3b30",
-            fillOpacity: 0.08,
-          },
-        }).addTo(map);
-        if (layer.getBounds().isValid()) map.fitBounds(layer.getBounds());
-        const savedRois = await Promise.all(
-          features.map((feature, index) => {
-            const featureName =
-              typeof feature.properties?.name === "string"
-                ? feature.properties.name
-                : `Zona ${index + 1}`;
-            // El ROI se guarda como geometría reutilizable para cualquier vuelo.
-            return dashboardApi.saveRoi(
-              feature,
-              null,
-              activeCycleId,
-              featureName,
-            );
-          }),
-        );
-        let polygonIndex = 0;
-        layer.eachLayer((polygon) => {
-          const roiId = savedRois[polygonIndex]?.roi.id ?? null;
-          polygonIndex += 1;
-          if (roiId) roiLayersRef.current.set(roiId, polygon);
-          polygon.on("click", () => {
-            selectRoi(
-              (polygon as L.Layer & { toGeoJSON: () => unknown }).toGeoJSON(),
-              roiId,
-            );
-          });
-        });
-        features.forEach((feature, index) =>
-          selectRoi(feature, savedRois[index]?.roi.id ?? null),
-        );
-      } catch (error) {
-        setState((current) => ({
-          ...current,
-          error:
-            error instanceof Error
-              ? error.message
-              : "No se pudo analizar la región importada.",
-        }));
-      }
-    },
-    [activeCycleId, selectRoi, state.orthoMode],
-  );
-
-  /** Alterna el grupo de etiquetas de diámetro sin volver a crear el mapa. */
-  const toggleLabels = useCallback(() => {
-    const map = mapRef.current;
-    if (
-      !map ||
-      !treeDataRef.current ||
-      !treeRef.current ||
-      !map.hasLayer(treeRef.current)
-    )
-      return;
-    const enabled = !state.labels;
-
-    if (enabled) {
-      labelsEnabledRef.current = true;
-      refreshLabels();
-      labelsRef.current?.addTo(map);
-    } else {
-      labelsEnabledRef.current = false;
-      labelsRef.current?.remove();
-    }
-
-    setState((current) => ({ ...current, labels: enabled }));
-  }, [state.labels]);
-
-  /** Cede un cuadro al navegador para que el modal pueda pintar el progreso. */
-  const waitForPaint = useCallback(
-    () =>
-      new Promise<void>((resolve) => {
-        window.requestAnimationFrame(() => resolve());
-      }),
-    [],
-  );
-
-  /**
-   * Importa detecciones desde GeoJSON o Shapefile y mantiene el modal informado
-   * de cada etapa costosa antes de representar los puntos en Leaflet.
-   */
-  const importDetections = useCallback(
-    async (
-      files: File[],
-      reportProgress?: (progress: number, message: string) => void,
-    ) => {
-      try {
-        reportProgress?.(8, "Leyendo archivos...");
-        await waitForPaint();
-        reportProgress?.(34, "Interpretando geometrías...");
-        const rawCollection = await parseDetectionFiles(files);
-        rawTreeDataRef.current = rawCollection;
-        const parsed = normalizeTreeCollection(rawCollection);
-        await waitForPaint();
-
-        reportProgress?.(54, "Normalizando diámetros en el servidor...");
-        let collection = parsed;
-        try {
-          const normalized = await dashboardApi.treePoints(parsed);
-          collection = normalizeTreeCollection(normalized.geojson);
-        } catch {
-          // El render local mantiene operativo el mapa si la API está apagada.
-          reportProgress?.(
-            62,
-            "Backend no disponible; usando datos locales...",
-          );
-        }
-        await waitForPaint();
-
-        reportProgress?.(70, "Clasificando tamaños...");
-        const allSizesVisible = { small: true, medium: true, large: true };
-        treeDataRef.current = collection;
-        diameterRangeRef.current = { min: -Infinity, max: Infinity };
-        visibleTreeSizesRef.current = allSizesVisible;
-        // El diámetro físico es la vista principal; el usuario puede volver a puntos.
-        treeDisplayModeRef.current = "diameters";
-        setTreeData(collection);
-        setFilteredTreeData(collection);
-
-        reportProgress?.(88, "Dibujando detecciones...");
-        await waitForPaint();
-        renderTreeLayer(collection, true);
-        labelsRef.current?.remove();
-        labelsRef.current = L.layerGroup();
-        labelsEnabledRef.current = false;
-
-        const map = mapRef.current;
-        const bounds = treeRef.current?.getBounds();
-        if (map && bounds?.isValid())
-          map.fitBounds(bounds, { padding: [32, 32] });
-        setState((current) => ({
-          ...current,
-          trees: true,
-          labels: false,
-          treeDisplayMode: "diameters",
-          visibleTreeSizes: allSizesVisible,
-          error: null,
-        }));
-        reportProgress?.(100, "Detecciones listas");
-        return collection;
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "No se pudieron importar las detecciones.";
-        setState((current) => ({ ...current, error: message }));
-        throw error;
-      }
-    },
-    [renderTreeLayer, waitForPaint],
-  );
-
-  /** Cambia entre símbolos puntuales y círculos con diámetro físico en metros. */
-  const setTreeDisplayMode = useCallback(
-    (mode: TreeDisplayMode) => {
-      treeDisplayModeRef.current = mode;
-      const map = mapRef.current;
-      const collection = treeDataRef.current;
-      const wasVisible = Boolean(
-        map && treeRef.current && map.hasLayer(treeRef.current),
-      );
-      if (collection) {
-        renderTreeLayer(collection, wasVisible);
-        syncTreeLayerVisibility();
-      }
-      refreshLabels();
-      setState((current) => ({ ...current, treeDisplayMode: mode }));
-    },
-    [refreshLabels, renderTreeLayer, syncTreeLayerVisibility],
-  );
-
-  /** Asigna un atributo numérico como diámetro y reconstruye todo el análisis. */
-  const setTreeDiameterField = useCallback(
-    (field: string | null) => {
-      const source = rawTreeDataRef.current ?? treeDataRef.current;
-      if (!source) return;
-      try {
-        const collection = normalizeTreeCollection(source, field);
-        const map = mapRef.current;
-        const wasVisible = Boolean(
-          map && treeRef.current && map.hasLayer(treeRef.current),
-        );
-        treeDataRef.current = collection;
-        diameterRangeRef.current = { min: -Infinity, max: Infinity };
-        setTreeData(collection);
-        setFilteredTreeData(
-          filterVisibleTrees(
-            collection,
-            diameterRangeRef.current,
-            visibleTreeSizesRef.current,
-          ),
-        );
-        renderTreeLayer(collection, wasVisible);
-        syncTreeLayerVisibility();
-        refreshLabels();
-        setState((current) => ({ ...current, error: null }));
-      } catch (error) {
-        setState((current) => ({
-          ...current,
-          error:
-            error instanceof Error
-              ? error.message
-              : "No se pudo asignar el campo de diámetro.",
-        }));
-      }
-    },
-    [refreshLabels, renderTreeLayer, syncTreeLayerVisibility],
-  );
-
-  /** Espera un clic sobre el mapa y agrega una detección con diámetro conocido. */
-  const startAddDetection = useCallback(
-    (diameter: number) => {
-      const map = mapRef.current;
-      if (!map || !Number.isFinite(diameter) || diameter <= 0) return;
-      cancelDetectionEdit();
-      detectionEditModeRef.current = "add";
-      map.getContainer().style.cursor = "crosshair";
-      const handler = (event: L.LeafletMouseEvent) => {
-        const source = treeDataRef.current ?? {
-          type: "FeatureCollection" as const,
-          features: [],
-        };
-        const next = normalizeTreeCollection({
-          ...source,
-          features: [
-            ...source.features,
-            {
-              type: "Feature",
-              geometry: {
-                type: "Point",
-                coordinates: [event.latlng.lng, event.latlng.lat],
-              },
-              properties: {
-                id: `manual-${Date.now()}`,
-                diameter_m: diameter,
-                diameter_source: "manual",
-              },
-            },
-          ],
-        });
-        cancelDetectionEdit();
-        // La primera detección manual inaugura y muestra la capa; las
-        // siguientes respetan la visibilidad que el usuario ya eligió.
-        commitTreeCollection(next, source.features.length === 0);
-      };
-      addDetectionClickRef.current = handler;
-      map.once("click", handler);
-      setState((current) => ({
-        ...current,
-        detectionEditMode: "add",
-        error: null,
-      }));
-    },
-    [cancelDetectionEdit, commitTreeCollection],
-  );
-
-  /** Permite eliminar la siguiente detección pulsada directamente en el mapa. */
-  const startDeleteDetection = useCallback(() => {
-    const map = mapRef.current;
-    const layerGroup = treeRef.current;
-    if (!map || !layerGroup || !treeDataRef.current) return;
-    cancelDetectionEdit();
-    detectionEditModeRef.current = "delete-one";
-    map.getContainer().style.cursor = "not-allowed";
-    layerGroup.eachLayer((layer) => {
-      const feature = (layer as L.Layer & { feature?: TreeFeature }).feature;
-      if (!feature) return;
-      const handler = (event: L.LeafletMouseEvent) => {
-        if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
-        const source = treeDataRef.current;
-        if (!source) return;
-        const next = {
-          ...source,
-          features: source.features.filter((candidate) => candidate !== feature),
-        };
-        cancelDetectionEdit();
-        commitTreeCollection(next);
-      };
-      deleteDetectionHandlersRef.current.set(layer, handler);
-      layer.on("click", handler);
-    });
-    setState((current) => ({
-      ...current,
-      detectionEditMode: "delete-one",
-      error: null,
-    }));
-  }, [cancelDetectionEdit, commitTreeCollection]);
-
-  /** Dibuja un rectángulo sombreado y elimina todas las detecciones interiores. */
-  const startDeleteDetectionsArea = useCallback(() => {
-    const map = mapRef.current;
-    if (!map || !treeDataRef.current?.features.length) return;
-    cancelDetectionEdit();
-    detectionEditModeRef.current = "delete-area";
-    map.getContainer().style.cursor = "crosshair";
-    map.pm?.enableDraw("Rectangle", {
-      pathOptions: {
-        color: "#9b3f36",
-        weight: 2,
-        fillColor: "#b95a4f",
-        fillOpacity: 0.18,
-      },
-    });
-    setState((current) => ({
-      ...current,
-      detectionEditMode: "delete-area",
-      error: null,
-    }));
-  }, [cancelDetectionEdit]);
-
-  /** Activa u oculta una talla y sincroniza mapa, etiquetas e histogramas. */
-  const toggleTreeSize = useCallback(
-    (size: VisibleTreeSize) => {
-      const next = {
-        ...visibleTreeSizesRef.current,
-        [size]: !visibleTreeSizesRef.current[size],
-      };
-      visibleTreeSizesRef.current = next;
-      setFilteredTreeData(
-        filterVisibleTrees(treeDataRef.current, diameterRangeRef.current, next),
-      );
-      setState((current) => ({ ...current, visibleTreeSizes: next }));
-      syncTreeLayerVisibility();
-      refreshLabels();
-    },
-    [refreshLabels, syncTreeLayerVisibility],
-  );
-
-  /** Importa árboles, crea popups seguros y ajusta el mapa a su extensión. */
-  const importFile = useCallback(
-    async (file: File) => {
-      try {
-        const parsed = await parseImportFile(file);
-        const map = mapRef.current;
-        if (!map) return;
-
-        const hasArea = parsed.features.some(
-          (feature) => feature.geometry.type !== "Point",
-        );
-        if (!hasArea && state.orthoMode !== "rgb")
-          throw new Error(
-            "Carga un ortomosaico RGB antes de importar detecciones.",
-          );
-        if (
-          hasArea &&
-          boundsRef.current &&
-          state.orthoMode === "multispectral"
-        ) {
-          const response = await dashboardApi.roi(parsed);
-          const stats = ndviStats(response);
-          const defaultMinimum = response.range_min ?? stats.min;
-          const defaultMaximum = response.range_max ?? stats.max;
-          ndviResponseRef.current = response;
-          setNdviAnalysis((current) => {
-            ndviRangeRef.current = {
-              min: defaultMinimum,
-              max: defaultMaximum,
-              equalized: current.equalized,
-              fillMode: current.fillMode,
-              values: stats.values,
-            };
-            return {
-              ...current,
-              response,
-              stats,
-              roiResponse: response,
-              roiStats: stats,
-              minimum: defaultMinimum,
-              maximum: defaultMaximum,
-            };
-          });
-          ndviTileRef.current?.remove();
-          ndviTileRef.current = undefined;
-          renderNdvi(response);
-        }
-
-        const points: TreeFeature[] = parsed.features
-          .filter(
-            (feature) =>
-              feature.geometry.type === "Point" &&
-              feature.geometry.coordinates.length >= 2,
-          )
-          .map((feature) => {
-            const coordinates =
-              feature.geometry.type === "Point"
-                ? feature.geometry.coordinates
-                : [0, 0];
-            return {
-              type: "Feature",
-              geometry: {
-                type: "Point",
-                coordinates: [
-                  Number(coordinates[0]),
-                  Number(coordinates[1]),
-                ] as [number, number],
-              },
-              properties: feature.properties,
-            };
-          });
-        const pointCollection: TreeCollection = {
-          type: "FeatureCollection",
-          features: points,
-        };
-        treeDataRef.current = pointCollection;
-        setTreeData(points.length ? pointCollection : null);
-        setFilteredTreeData(points.length ? pointCollection : null);
-        diameterRangeRef.current = { min: -Infinity, max: Infinity };
-        treeRef.current?.remove();
-        treeRef.current = L.geoJSON(parsed, {
-          pointToLayer: (feature, latlng) => {
-            const diameter = diameterOf(feature as never);
-            const size = sizeOf(diameter);
-            return L.circle(latlng, {
-              radius: Math.max(
-                0.2,
-                Number.isFinite(diameter) ? diameter / 2 : 1,
-              ),
-              color: treeSizeColors[size],
-              fillColor: treeSizeColors[size],
-              fillOpacity: 0.58,
-              weight: 1,
-            });
-          },
-          style: {
-            color: "#2563eb",
-            weight: 2,
-            fillColor: "#60a5fa",
-            fillOpacity: 0.18,
-          },
-          onEachFeature: (feature: Feature, layer) =>
-            layer.bindPopup(buildGeometryPopupHtml(feature)),
-        });
-        treeRef.current.addTo(map);
-        labelsRef.current = L.layerGroup();
-        setState((current) => ({
-          ...current,
-          trees: points.length > 0 && state.orthoMode === "rgb",
-          labels: false,
-          ndvi:
-            state.orthoMode === "multispectral" && hasArea
-              ? true
-              : current.ndvi,
-          error: null,
-        }));
-      } catch (error) {
-        setState((current) => ({
-          ...current,
-          error: error instanceof Error ? error.message : "GeoJSON inválido",
-        }));
-      }
-    },
-    [renderNdvi, state.orthoMode],
-  );
-
-  /** Aplica el filtro de diámetro tanto a símbolos como a etiquetas. */
-  const setDiameterRange = useCallback(
-    (min: number, max: number) => {
-      diameterRangeRef.current = { min, max };
-      setFilteredTreeData(
-        filterVisibleTrees(
-          treeDataRef.current,
-          { min, max },
-          visibleTreeSizesRef.current,
-        ),
-      );
-      syncTreeLayerVisibility();
-      refreshLabels();
-    },
-    [refreshLabels, syncTreeLayerVisibility],
-  );
-
-  /** Alterna la visibilidad del ortomosaico base y recupera su extensión. */
-  const fitRgb = useCallback(() => {
-    const map = mapRef.current;
-    if (!map || !orthoRef.current) return;
-    if (state.rgb) {
-      uploadedRgbRef.current?.remove();
-      orthoRef.current.remove();
-      setState((current) => ({ ...current, rgb: false }));
-      return;
-    }
-    clearTileClip();
-    roiIndexResponsesRef.current = null;
-    uploadedRgbRef.current?.addTo(map);
-    orthoRef.current.addTo(map);
-    setState((current) => ({ ...current, rgb: true }));
-    if (boundsRef.current) map.fitBounds(boundsRef.current);
-  }, [clearTileClip, state.rgb]);
-
-  /** Activa un vuelo persistido y elimina cualquier análisis del vuelo anterior. */
-  const activateStoredOrtho = useCallback(
-    async (record: OrthomosaicRecord) => {
-      const persistentRoiSelections = Array.from(
-        selectedRoisRef.current.entries(),
-      );
-      try {
-        await dashboardApi.activateOrthomosaic(record.id);
-        const result = await dashboardApi.bounds(record.id);
-        clearPrescription();
-        boundsRef.current = L.latLngBounds(result.bounds);
-        clearRoiSelection();
-        setIndexAnalyses([]);
-        setNdviAnalysis(createEmptyNdviAnalysis());
-        if (
-          !mountStoredOrthomosaic({
-            backendUrl,
-            bounds: result.bounds,
-            mapRef,
-            orthomosaicId: record.id,
-            orthoRef,
-            tileVersion: result.tile_version,
-          })
-        )
-          return;
-        setState((current) => ({
-          ...current,
-          orthomosaicId: record.id,
-          sensor: record.sensor_type as OrthoSensor,
-          orthoMode: modeFromSensor(record.sensor_type),
-          rgb: true,
-          ndvi: false,
-          vari: false,
-          exg: false,
-          roiSelected: false,
-          selectedRoiId: null,
-          selectedRoiIds: [],
-          error: null,
-        }));
-        restoreRoiSelection(persistentRoiSelections);
-      } catch (error) {
-        setState((current) => ({
-          ...current,
-          error:
-            error instanceof Error
-              ? error.message
-              : "No se pudo activar el ortomosaico.",
-        }));
-      }
-    },
-    [clearPrescription, clearRoiSelection, restoreRoiSelection],
-  );
-
-  /** Limita y aplica el divisor comparativo a todas las capas espectrales. */
-  const setSwipePosition = useCallback((position: number) => {
-    const next = Math.max(2, Math.min(98, position));
-    ratioRef.current = next / 100;
-    setState((current) => ({ ...current, swipePosition: next }));
-    syncSpectralClip();
-  }, [syncSpectralClip]);
-
-  /** Activa o elimina el recorte visual del divisor sin destruir las capas. */
-  const toggleSwipe = useCallback(() => {
-    setState((current) => {
-      const enabled = !current.swipe;
-      swipeEnabledRef.current = enabled;
-      swipeEnabledRef.current = enabled;
-      return { ...current, swipe: enabled };
-    });
-    syncSpectralClip();
-  }, [syncSpectralClip]);
-
-  const exportCrop = useCallback(async (variant: "visual" | "analytical") => {
-    const cropId = activeCropIdRef.current;
-    if (!cropId) {
-      setState((current) => ({
-        ...current,
-        error: "Primero genera un recorte del ortomosaico.",
-      }));
-      return;
-    }
-    setCropExporting(true);
-    try {
-      const { blob, filename } = await dashboardApi.downloadCrop(cropId, variant);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-      setState((current) => ({ ...current, error: null }));
-    } catch (error) {
-      setState((current) => ({
-        ...current,
-        error:
-          error instanceof Error
-            ? error.message
-            : "No se pudo descargar el recorte.",
-      }));
-    } finally {
-      setCropExporting(false);
-    }
-  }, []);
-
-  /** Limpia por completo el contexto visible del mapa al salir de un ciclo. */
-  const resetWorkspace = useCallback(() => {
-    cancelDetectionEdit();
-    mapRef.current?.pm?.disableDraw();
-    clearRoiSelection();
-    clearSpectralLayers({ indexRefs, ndviRef, ndviTileRef });
-    clearPrescription();
-    roiLayersRef.current.forEach((layer) => layer.remove());
-    roiLayersRef.current.clear();
-    cropTileRef.current?.remove();
-    cropTileRef.current = undefined;
-    uploadedRgbRef.current?.remove();
-    uploadedRgbRef.current = undefined;
-    orthoRef.current?.remove();
-    orthoRef.current = undefined;
-    clearClassificationFill();
-    clearClassificationGrid();
-    boundsRef.current = undefined;
-    labelsEnabledRef.current = false;
-    swipeEnabledRef.current = false;
-    ratioRef.current = 0.5;
-    resetOrthomosaicArtifacts({
-      cropControlRef,
-      indexRefs,
-      labelsRef,
-      ndviRef,
-      ndviResponseRef,
-      ndviTileRef,
-      roiIndexResponsesRef,
-      selectedRoiRef,
-      selectedRoisRef,
-      treeDataRef,
-      treeRef,
-    });
-    setTreeData(null);
-    setFilteredTreeData(null);
-    setNdviAnalysis(createEmptyNdviAnalysis());
-    setIndexAnalyses([]);
-    setState(createInitialMapState());
-    mapRef.current?.setView([23.6345, -102.5528], 5);
-  }, [
+  const {
+    hideIndex,
+    hideIndices,
+    hideNdvi,
+    importOrtho,
+    selectIndex,
+    setIndexEqualization,
+    setIndexFillMode,
+    setIndexRange,
+    setNdviEqualization,
+    setNdviFillMode,
+    setNdviRange,
+    toggleIndexLayer,
+    toggleNdvi,
+  } = useDashboardMapSpectralActions({
+    activeCropGeometryRef,
+    activeCropIdRef,
+    boundsRef,
+    clearPrescription,
+    clearTileClip,
+    cropControlRef,
+    indexAnalyses,
+    indexRefs,
+    labelsRef,
+    mapRef,
+    ndviAnalysis,
+    ndviRangeRef,
+    ndviRef,
+    ndviResponseRef,
+    ndviTileRef,
+    orthoRef,
+    renderIndex,
+    renderNdvi,
+    restoreRoiSelection,
+    roiIndexResponsesRef,
+    selectedRoiRef,
+    selectedRoisRef,
+    setFilteredTreeData,
+    setIndexAnalyses,
+    setNdviAnalysis,
+    setState,
+    setTreeData,
+    state,
+    treeDataRef,
+    treeRef,
+    uploadedRgbRef,
+  });
+  const {
+    drawPrescriptionArea,
+    drawRoi,
+    importDetections,
+    importFile,
+    importRoi,
+    setDiameterRange,
+    setTreeDiameterField,
+    setTreeDisplayMode,
+    startAddDetection,
+    startDeleteDetection,
+    startDeleteDetectionsArea,
+    toggleLabels,
+    toggleTrees,
+    toggleTreeSize,
+    waitForPaint,
+  } = useDashboardMapTreeActions({
+    activeCropGeometryRef,
+    activeCycleId,
+    addDetectionClickRef,
+    boundsRef,
+    cancelDetectionEdit,
+    clearPrescription,
+    commitTreeCollection,
+    deleteDetectionHandlersRef,
+    detectionEditModeRef,
+    diameterRangeRef,
+    labelsEnabledRef,
+    labelsRef,
+    mapRef,
+    ndviAnalysis,
+    ndviRangeRef,
+    ndviResponseRef,
+    ndviTileRef,
+    prescriptionDrawCompleteRef,
+    rawTreeDataRef,
+    refreshLabels,
+    renderNdvi,
+    renderTreeLayer,
+    roiLayersRef,
+    selectRoi,
+    setFilteredTreeData,
+    setNdviAnalysis,
+    setState,
+    setTreeData,
+    state,
+    syncTreeLayerVisibility,
+    treeDataRef,
+    treeDisplayModeRef,
+    treeRef,
+    visibleTreeSizesRef,
+  });
+  const {
+    activateStoredOrtho,
+    exportCrop,
+    fitRgb,
+    resetWorkspace,
+    setSwipePosition,
+    toggleSwipe,
+  } = useDashboardMapWorkspace({
+    activeCropIdRef,
+    boundsRef,
     cancelDetectionEdit,
     clearClassificationFill,
     clearClassificationGrid,
     clearPrescription,
     clearRoiSelection,
-  ]);
-
+    clearTileClip,
+    cropControlRef,
+    cropTileRef,
+    indexRefs,
+    labelsEnabledRef,
+    labelsRef,
+    mapRef,
+    ndviRef,
+    ndviResponseRef,
+    ndviTileRef,
+    orthoRef,
+    ratioRef,
+    restoreRoiSelection,
+    roiIndexResponsesRef,
+    roiLayersRef,
+    selectedRoiRef,
+    selectedRoisRef,
+    setCropExporting,
+    setFilteredTreeData,
+    setIndexAnalyses,
+    setNdviAnalysis,
+    setState,
+    setTreeData,
+    state,
+    swipeEnabledRef,
+    syncSpectralClip,
+    treeDataRef,
+    treeRef,
+    uploadedRgbRef,
+  });
   return {
     state,
     treeData,
@@ -3039,3 +1033,10 @@ export function useDashboardMap(
     setIndexFillMode,
   };
 }
+
+
+
+
+
+
+
