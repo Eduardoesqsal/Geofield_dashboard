@@ -51,18 +51,23 @@ logger = logging.getLogger(__name__)
 class RasterIndexMixin:
     """Seleccion de bandas, colorizacion de indices y cache de ecualizacion."""
 
-    def _ndvi_bands(self, path: Path | None = None, sensor: str | None = None) -> tuple[int, int]:
+    def _ndvi_bands(
+        self,
+        path: Path | None = None,
+        sensor: str | None = None,
+        context: Any | None = None,
+    ) -> tuple[int, int]:
         """Return the red and NIR band indexes configured in the raster."""
-        selected_sensor = sensor or self.sensor
+        selected_sensor = sensor or self._sensor_value(context)
         if selected_sensor == "mavic3m":
-            with rasterio.open(path or self._path()) as src:
+            with rasterio.open(path or self._path(context)) as src:
                 if src.count < 4:
                     raise ValueError("DJI Mavic 3M requiere al menos 4 bandas: Green, Red, Red Edge y NIR.")
                 # Exportación DJI/Pix4D habitual: Blue, Green, Red, RedEdge, NIR.
                 # Algunos mosaicos omiten Blue y conservan: Green, Red, RedEdge, NIR.
                 return 2, 4
         if selected_sensor == "micasense":
-            with rasterio.open(path or self._path()) as src:
+            with rasterio.open(path or self._path(context)) as src:
                 names = {name.strip().lower(): index for index, name in enumerate(src.descriptions, 1) if name}
                 red = next((names[name] for name in ("red", "red band", "b04", "band 4") if name in names), None)
                 nir = next((names[name] for name in ("nir", "near infrared", "near-infrared", "b08", "band 6") if name in names), None)
@@ -75,7 +80,7 @@ class RasterIndexMixin:
                     # RedEdge-MX: Blue, Green, Red, NIR, RedEdge.
                     return 3, 4
                 raise ValueError("MicaSense requiere bandas Red y NIR; el archivo tiene menos de 5 bandas.")
-        with rasterio.open(path or self._path()) as src:
+        with rasterio.open(path or self._path(context)) as src:
             names = {name.strip().lower(): index for index, name in enumerate(src.descriptions, 1) if name}
             red = next((names[name] for name in ("red", "b04", "band 4") if name in names), None)
             nir = next((names[name] for name in ("nir", "near infrared", "b08", "band 6") if name in names), None)
@@ -87,7 +92,7 @@ class RasterIndexMixin:
                 nir = 6
             if red is None or nir is None:
                 raise ValueError(
-                    f"El raster '{(path or self._path()).name}' no contiene bandas Red y NIR; "
+                    f"El raster '{(path or self._path(context)).name}' no contiene bandas Red y NIR; "
                     f"tiene {src.count} banda(s): {', '.join(src.descriptions)}. "
                     "Para NDVI se requiere un GeoTIFF multiespectral."
                 )
@@ -115,11 +120,12 @@ class RasterIndexMixin:
         *,
         path: Path | None = None,
         sensor: str | None = None,
+        context: Any | None = None,
     ) -> tuple[int, int, int]:
         """Resolve display bands from color interpretation and band metadata."""
         if src is None:
-            with rasterio.open(path or self._path()) as dataset:
-                return self._rgb_bands(dataset, sensor=sensor)
+            with rasterio.open(path or self._path(context)) as dataset:
+                return self._rgb_bands(dataset, sensor=sensor, context=context)
     
         roles: dict[str, int] = {}
         for index, interpretation in enumerate(src.colorinterp, 1):
@@ -150,7 +156,7 @@ class RasterIndexMixin:
             if role in {"red", "green", "blue"}:
                 roles.setdefault(role, index)
     
-        selected_sensor = sensor or self.sensor
+        selected_sensor = sensor or self._sensor_value(context)
         is_multispectral = selected_sensor in {"mavic3m", "micasense"} or src.count > 4
         if not is_multispectral and src.count in {3, 4}:
             # A plain three-channel RGB GeoTIFF is the only safe positional
@@ -194,21 +200,23 @@ class RasterIndexMixin:
         *,
         path: Path | None = None,
         sensor: str | None = None,
+        context: Any | None = None,
     ) -> dict[str, int]:
         """Resolve multispectral semantic roles for NDWI/NDRE style formulas."""
         if src is None:
-            with rasterio.open(path or self._path()) as dataset:
-                return self._multispectral_band_roles(dataset, sensor=sensor)
+            with rasterio.open(path or self._path(context)) as dataset:
+                return self._multispectral_band_roles(dataset, sensor=sensor, context=context)
         return raster_bands.multispectral_band_roles(src, sensor=sensor, fallback_path=path)
     
-    def _index_bands(self, name: str) -> tuple[int, int]:
+    def _index_bands(self, name: str, context: Any | None = None) -> tuple[int, int]:
         """Return bands as (positive, negative) for the normalized difference."""
         if name == "NDVI":
-            red, nir = self._ndvi_bands()
+            red, nir = self._ndvi_bands(context=context)
             return nir, red
-        if self.sensor == "mavic3m":
+        selected_sensor = self._sensor_value(context)
+        if selected_sensor == "mavic3m":
             bands = {"NDWI": (1, 4), "NDRE": (4, 3)}.get(name)
-        elif self.sensor == "micasense":
+        elif selected_sensor == "micasense":
             bands = {"NDWI": (2, 6), "NDRE": (6, 5)}.get(name)
         else:
             bands = None

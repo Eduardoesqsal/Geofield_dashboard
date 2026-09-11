@@ -25,7 +25,7 @@ from geofield.errors import (
     RoiAnalysisNotFoundError,
     SupabaseNotConfiguredError,
 )
-from geofield.services.raster_service import RasterService
+from geofield.services.raster_service import RasterContext, RasterService
 
 
 
@@ -57,8 +57,13 @@ class SupabaseActivationMixin:
                 ).download(record["file_path"])
                 local_path.write_bytes(content)
         raster_service.validate_path(local_path)
-        raster_service.active_path = local_path
-        raster_service.sensor = record.get("sensor_type")
+        raster_service.set_active_context(
+            RasterContext(
+                path=local_path,
+                sensor=record.get("sensor_type"),
+                orthomosaic_id=orthomosaic_id,
+            ),
+        )
         raster_service.rgb_stretch = None
         raster_service.overlay = None
         return record

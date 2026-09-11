@@ -14,7 +14,7 @@ import re
 import tempfile
 from collections import deque
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -45,6 +45,9 @@ from geofield.services import raster_processing
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from geofield.services.raster_service import RasterContext
 
 
 
@@ -319,8 +322,8 @@ class RasterClassificationArtifactMixin:
         )
         return output.getvalue()
     
-    def _path(self) -> Path:
-        path = self.active_path or self.settings.raster_path
+    def _path(self, context: RasterContext | None = None) -> Path:
+        path = context.path if context else self.active_path or self.settings.raster_path
         if not path:
             raise RasterNotConfiguredError("No se encontro un raster GeoTIFF")
         return path

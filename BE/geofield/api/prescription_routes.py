@@ -7,11 +7,14 @@ from typing import Any, Callable, TypeVar
 
 import rasterio
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel, ValidationError
 
 from geofield.api.request_utils import geojson_geometry, payload_object, require_string
 from geofield.api.schemas import ClassificationPayload, PrescriptionPayload
+from geofield.application.ports import ArtifactStorage, JobQueue
+from geofield.application.use_cases import GeneratePrescriptionUseCase, GenerateZoningUseCase
+from geofield.infrastructure.storage import LocalArtifactStorage
 from geofield.services.raster_service import RasterService
 
 
@@ -42,8 +45,13 @@ def register_prescription_routes(
     raster: RasterService,
     output_dir: Path,
     ensure_orthomosaic: Callable[[str | None], None],
+    artifact_storage: ArtifactStorage | None = None,
+    job_queue: JobQueue | None = None,
 ) -> None:
     """Registra rutas asociadas a clasificacion, tiles y descarga JSON."""
+    generate_zoning = GenerateZoningUseCase(raster, job_queue)
+    generate_prescription = GeneratePrescriptionUseCase(raster, job_queue)
+    artifacts = artifact_storage or LocalArtifactStorage(output_dir)
 
     @router.post("/ndvi_zoning")
     async def create_ndvi_zoning(request: Request) -> dict[str, Any]:
@@ -57,18 +65,18 @@ def register_prescription_routes(
         geometry = geojson_geometry(payload)
         ensure_orthomosaic(model.orthomosaic_id)
         try:
-            return raster.ndvi_zoning_map(
-                geometry,
-                model.index_name,
-                model.zone_count,
-                model.cell_size_m,
-                model.grid_angle_deg,
-                model.classification_method,
-                model.cell_value_mode,
-                model.manual_breaks,
-                model.detail_level,
-                model.analysis_min,
-                model.analysis_max,
+            return generate_zoning.execute(
+                geometry=geometry,
+                index_name=model.index_name,
+                zone_count=model.zone_count,
+                cell_size_m=model.cell_size_m,
+                grid_angle_deg=model.grid_angle_deg,
+                classification_method=model.classification_method,
+                cell_value_mode=model.cell_value_mode,
+                manual_breaks=model.manual_breaks,
+                detail_level=model.detail_level,
+                analysis_min=model.analysis_min,
+                analysis_max=model.analysis_max,
             )
         except (ValueError, rasterio.errors.RasterioIOError) as exc:
             raise HTTPException(422, str(exc)) from exc
@@ -85,19 +93,19 @@ def register_prescription_routes(
         geometry = geojson_geometry(payload)
         ensure_orthomosaic(model.orthomosaic_id)
         try:
-            return raster.prescription_map_with_doses(
-                geometry,
-                model.index_name,
-                model.zone_count,
-                model.cell_size_m,
-                model.grid_angle_deg,
-                model.classification_method,
-                model.cell_value_mode,
-                model.manual_breaks,
-                model.detail_level,
-                model.analysis_min,
-                model.analysis_max,
-                model.doses,
+            return generate_prescription.execute(
+                geometry=geometry,
+                index_name=model.index_name,
+                zone_count=model.zone_count,
+                cell_size_m=model.cell_size_m,
+                grid_angle_deg=model.grid_angle_deg,
+                classification_method=model.classification_method,
+                cell_value_mode=model.cell_value_mode,
+                manual_breaks=model.manual_breaks,
+                detail_level=model.detail_level,
+                analysis_min=model.analysis_min,
+                analysis_max=model.analysis_max,
+                doses=model.doses,
             )
         except (ValueError, rasterio.errors.RasterioIOError) as exc:
             raise HTTPException(422, str(exc)) from exc
@@ -114,14 +122,16 @@ def register_prescription_routes(
             raise HTTPException(404, str(exc)) from exc
 
     @router.get("/prescriptions/{artifact_id}/download.json")
-    def download_prescription_json(artifact_id: str) -> FileResponse:
+    def download_prescription_json(artifact_id: str) -> Response:
         if len(artifact_id) != 32 or any(character not in "0123456789abcdef" for character in artifact_id):
             raise HTTPException(404, "La prescripcion solicitada no es valida.")
-        path = output_dir / "prescriptions" / f"{artifact_id}.json"
-        if not path.is_file():
+        key = f"prescriptions/{artifact_id}.json"
+        if not artifacts.exists(key):
             raise HTTPException(404, "La prescripcion ya no esta disponible.")
-        return FileResponse(
-            path,
+        return Response(
+            artifacts.read_bytes(key),
             media_type="application/json",
-            filename=f"prescripcion_{artifact_id[:8]}.json",
+            headers={
+                "Content-Disposition": f'attachment; filename="prescripcion_{artifact_id[:8]}.json"',
+            },
         )

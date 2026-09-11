@@ -39,6 +39,8 @@ class Settings:
     supabase_service_role_key: str | None = None
     supabase_bucket: str = "orthomosaics"
     orthomosaic_storage_mode: str = "local"
+    artifact_storage_mode: str = "local"
+    artifact_storage_bucket: str = "artifacts"
 
     def __post_init__(self) -> None:
         if self.raster_path is None:
@@ -60,4 +62,6 @@ class Settings:
             supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
             supabase_bucket=os.getenv("SUPABASE_BUCKET", "orthomosaics"),
             orthomosaic_storage_mode=os.getenv("ORTHOMOSAIC_STORAGE_MODE", "local").strip().lower() or "local",
+            artifact_storage_mode=os.getenv("ARTIFACT_STORAGE_MODE", "local").strip().lower() or "local",
+            artifact_storage_bucket=os.getenv("ARTIFACT_STORAGE_BUCKET", "artifacts"),
         )

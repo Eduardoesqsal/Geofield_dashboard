@@ -7,6 +7,7 @@ cambiar el contrato usado por rutas y tests.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -14,9 +15,20 @@ import numpy as np
 from affine import Affine
 
 from geofield.config import Settings
+from geofield.application.ports import ArtifactStorage
+from geofield.infrastructure.storage import LocalArtifactStorage
 from geofield.services.raster_classification import RasterClassificationMixin
 from geofield.services.raster_indices import RasterIndexMixin
 from geofield.services.raster_tiles_export import RasterTileExportMixin
+
+
+@dataclass(frozen=True)
+class RasterContext:
+    """Contexto explicito del ortomosaico usado por una operacion raster."""
+
+    path: Path
+    sensor: str | None = None
+    orthomosaic_id: str | None = None
 
 
 class RasterService(RasterClassificationMixin, RasterIndexMixin, RasterTileExportMixin):
@@ -59,13 +71,66 @@ class RasterService(RasterClassificationMixin, RasterIndexMixin, RasterTileExpor
     _index_lut_cache: ClassVar[dict[str, np.ndarray]] = {}
     _equalization_cache_limit = 32
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        artifact_storage: ArtifactStorage | None = None,
+    ) -> None:
         self.settings = settings
+        self.artifact_storage = artifact_storage or LocalArtifactStorage(
+            settings.output_dir,
+        )
+        self._active_context: RasterContext | None = None
+        self._active_path: Path | None = None
+        self._sensor: str | None = None
         # Conservado como estado compatible; ahora contiene rangos globales por
         # canal y nunca percentiles calculados dentro de un tile.
         self.rgb_stretch: Any = None
         self.overlay: tuple[int, int, Affine] | None = None
-        self.active_path: Path | None = None
-        self.sensor: str | None = None
         self.crop_geometries: dict[str, Any] = {}
         self.equalization_cache: dict[tuple[Any, ...], np.ndarray | None] = {}
+
+    @property
+    def active_context(self) -> RasterContext | None:
+        return self._active_context
+
+    def set_active_context(self, context: RasterContext) -> None:
+        self._active_context = context
+        self._active_path = context.path
+        self._sensor = context.sensor
+
+    def clear_active_context(self) -> None:
+        self._active_context = None
+        self._active_path = None
+        self._sensor = None
+
+    @property
+    def active_path(self) -> Path | None:
+        return self._active_context.path if self._active_context else self._active_path
+
+    @active_path.setter
+    def active_path(self, value: Path | None) -> None:
+        if value is None:
+            self.clear_active_context()
+            return
+        resolved = Path(value)
+        if self._active_context and self._active_context.path != resolved:
+            self._active_context = None
+        self._active_path = resolved
+
+    @property
+    def sensor(self) -> str | None:
+        return self._active_context.sensor if self._active_context else self._sensor
+
+    @sensor.setter
+    def sensor(self, value: str | None) -> None:
+        if self._active_context and self._active_context.sensor != value:
+            self._active_context = RasterContext(
+                path=self._active_context.path,
+                sensor=value,
+                orthomosaic_id=self._active_context.orthomosaic_id,
+            )
+        self._sensor = value
+
+    def _sensor_value(self, context: RasterContext | None = None) -> str | None:
+        return context.sensor if context else self.sensor

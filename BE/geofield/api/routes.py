@@ -25,14 +25,24 @@ from geofield.api.request_utils import (
     require_list_of_strings,
     require_string,
 )
+from geofield.application.ports import ArtifactStorage, JobQueue
+from geofield.infrastructure.storage import LocalArtifactStorage
 from geofield.services.application_service import OrthomosaicApplicationService, RoiApplicationService
 from geofield.services.raster_service import RasterService
 from geofield.services.supabase_service import SupabaseService
 from geofield.services.tree_service import TreeService
 
 
-def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supabase: SupabaseService) -> APIRouter:
+def create_router(
+    raster: RasterService,
+    output_dir: Path,
+    base_dir: Path,
+    supabase: SupabaseService,
+    artifact_storage: ArtifactStorage | None = None,
+    job_queue: JobQueue | None = None,
+) -> APIRouter:
     router = APIRouter()
+    artifacts = artifact_storage or LocalArtifactStorage(output_dir)
     orthomosaics = OrthomosaicApplicationService(raster, supabase)
     rois = RoiApplicationService(raster, supabase)
 
@@ -60,6 +70,19 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
     @router.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @router.get("/storage/health")
+    def storage_health() -> dict[str, Any]:
+        try:
+            sample_url = artifacts.public_url("healthcheck/sample.txt")
+            return {
+                "status": "ok",
+                "mode": supabase.settings.artifact_storage_mode,
+                "bucket": supabase.settings.artifact_storage_bucket,
+                "sample_url": sample_url,
+            }
+        except Exception as exc:
+            raise HTTPException(503, f"Storage de artefactos no disponible: {exc}") from exc
 
     @router.get("/supabase/health")
     def supabase_health() -> dict[str, Any]:
@@ -484,7 +507,14 @@ def create_router(raster: RasterService, output_dir: Path, base_dir: Path, supab
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
-    register_prescription_routes(router, raster, output_dir, ensure_orthomosaic)
+    register_prescription_routes(
+        router,
+        raster,
+        output_dir,
+        ensure_orthomosaic,
+        artifacts,
+        job_queue,
+    )
 
     @router.get("/crop_tiles/{crop_id}/download")
     def download_crop(

@@ -1,23 +1,31 @@
-"""Servicios de aplicación para ortomosaicos y ROI.
+"""Servicios de aplicacion para ortomosaicos y ROI.
 
 Coordinan validaciones, flujos de persistencia y operaciones de alto nivel
-entre las rutas HTTP y la infraestructura concreta.
+entre las rutas HTTP y la infraestructura concreta. La logica de negocio nueva
+debe vivir en `geofield.application.use_cases`; estas clases quedan como
+fachadas compatibles para las rutas existentes.
 """
 
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 from typing import Any
 
-import numpy as np
-
+from geofield.application.use_cases import (
+    ActivateOrthomosaicUseCase,
+    DeleteAgriculturalCycleUseCase,
+    DeleteOrthomosaicUseCase,
+    ResetActiveOrthomosaicUseCase,
+    SaveRoiAnalysisUseCase,
+    normalize_roi_analysis_stats,
+    roi_stats_match,
+)
 from geofield.services.raster_service import RasterService
 from geofield.services.supabase_service import SupabaseService
 
 
 class OrthomosaicApplicationService:
-    """Coordina flujos de negocio sin conocer HTTP."""
+    """Coordina flujos de ortomosaicos sin conocer HTTP."""
 
     def __init__(self, raster: RasterService, supabase: SupabaseService) -> None:
         self.raster = raster
@@ -40,7 +48,7 @@ class OrthomosaicApplicationService:
         activate: bool,
     ) -> dict[str, Any]:
         # Validar los tiles internos antes de escribir el archivo o crear su
-        # registro. Un TIFF puede tener encabezado válido y datos truncados.
+        # registro. Un TIFF puede tener encabezado valido y datos truncados.
         self.raster.validate_uploaded(content)
         record = self.supabase.upload_orthomosaic(
             content=content,
@@ -52,9 +60,9 @@ class OrthomosaicApplicationService:
             content_type=content_type,
         )
         if activate:
-            # El registro recién insertado ya contiene todo lo necesario para
+            # El registro recien insertado ya contiene todo lo necesario para
             # activar el archivo. Evita una segunda lectura susceptible a una
-            # conexión HTTP persistente rota después de reiniciar el backend.
+            # conexion HTTP persistente rota despues de reiniciar el backend.
             self.supabase.activate_orthomosaic_record(record, self.raster)
         analysis = self.raster.analyze_uploaded(
             content,
@@ -65,18 +73,19 @@ class OrthomosaicApplicationService:
         return {"orthomosaic": record, "analysis": analysis}
 
     def activate_orthomosaic(self, orthomosaic_id: str) -> dict[str, Any]:
-        return self.supabase.activate_orthomosaic(orthomosaic_id, self.raster)
+        return ActivateOrthomosaicUseCase(self.raster, self.supabase).execute(
+            orthomosaic_id,
+        )
 
     def delete_orthomosaic(self, orthomosaic_id: str) -> dict[str, Any]:
-        record = self.supabase.get_orthomosaic(orthomosaic_id)
-        self.reset_active_orthomosaic(record)
-        self.supabase.delete_orthomosaic(orthomosaic_id)
-        return record
+        return DeleteOrthomosaicUseCase(self.raster, self.supabase).execute(
+            orthomosaic_id,
+        )
 
     def delete_agricultural_cycle(self, cycle_id: str) -> dict[str, Any]:
-        for record in self.supabase.list_orthomosaics(500, cycle_id):
-            self.reset_active_orthomosaic(record)
-        return self.supabase.delete_agricultural_cycle(cycle_id)
+        return DeleteAgriculturalCycleUseCase(self.raster, self.supabase).execute(
+            cycle_id,
+        )
 
     def update_orthomosaic_capture_date(
         self,
@@ -134,27 +143,11 @@ class OrthomosaicApplicationService:
         return self.supabase.set_roi_active(roi_id, active)
 
     def reset_active_orthomosaic(self, record: dict[str, Any]) -> None:
-        active_path = self.raster.active_path.resolve() if self.raster.active_path else None
-        if not active_path:
-            return
-        file_path = record.get("file_path")
-        if not file_path:
-            return
-        candidate_paths = {Path(str(file_path)).resolve()}
-        original_filename = record.get("original_filename") or file_path
-        suffix = Path(str(original_filename)).suffix or ".tif"
-        candidate_paths.add((self.supabase.settings.cache_dir / f'{record["id"]}{suffix}').resolve())
-        if active_path not in candidate_paths:
-            return
-        self.raster.active_path = None
-        self.raster.sensor = None
-        self.raster.rgb_stretch = None
-        self.raster.overlay = None
-        self.raster.crop_geometries.clear()
+        ResetActiveOrthomosaicUseCase(self.raster, self.supabase).execute(record)
 
 
 class RoiApplicationService:
-    """Encapsula cÃ¡lculos y persistencia de ROI."""
+    """Fachada de aplicacion para ROI y estadisticas."""
 
     def __init__(self, raster: RasterService, supabase: SupabaseService) -> None:
         self.raster = raster
@@ -184,22 +177,12 @@ class RoiApplicationService:
         selected_index: str | None = None,
         selected_stats: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if selected_index and selected_stats:
-            return self.supabase.save_roi_analysis(
-                roi_id,
-                orthomosaic_id,
-                selected_index,
-                self.normalize_roi_analysis_stats(selected_stats),
-            )
-
-        if not selected_index:
-            raise ValueError("Selecciona un indice antes de guardar estadisticas.")
-
-        return self.supabase.save_roi_analysis(
-            roi_id,
-            orthomosaic_id,
-            selected_index,
-            self._stats(selected_index, geometry),
+        return SaveRoiAnalysisUseCase(self.raster, self.supabase).execute(
+            roi_id=roi_id,
+            orthomosaic_id=orthomosaic_id,
+            geometry=geometry,
+            selected_index=selected_index,
+            selected_stats=selected_stats,
         )
 
     def save_roi_analysis_for_roi(
@@ -233,43 +216,7 @@ class RoiApplicationService:
 
     @staticmethod
     def normalize_roi_analysis_stats(stats: dict[str, Any]) -> dict[str, Any]:
-        if not isinstance(stats, dict):
-            raise ValueError("Las estadisticas del ROI deben enviarse como objeto.")
-
-        def numeric(name: str) -> float | None:
-            value = stats.get(name)
-            if value is None:
-                return None
-            try:
-                number = float(value)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"El campo {name} no contiene un numero valido.") from exc
-            if not np.isfinite(number):
-                raise ValueError(f"El campo {name} debe ser un numero finito.")
-            return number
-
-        count = stats.get("count")
-        try:
-            normalized_count = int(count)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("El campo count debe ser un entero valido.") from exc
-        if normalized_count < 0:
-            raise ValueError("El campo count no puede ser negativo.")
-
-        return {
-            "count": normalized_count,
-            "min": numeric("min"),
-            "max": numeric("max"),
-            "mean": numeric("mean"),
-            "median": numeric("median"),
-            "standard_deviation": numeric("standard_deviation"),
-            "p10": numeric("p10"),
-            "p25": numeric("p25"),
-            "p75": numeric("p75"),
-            "p90": numeric("p90"),
-            "range_min": numeric("range_min"),
-            "range_max": numeric("range_max"),
-        }
+        return normalize_roi_analysis_stats(stats)
 
     @classmethod
     def stats_match(
@@ -277,27 +224,10 @@ class RoiApplicationService:
         persisted: dict[str, Any] | None,
         expected: dict[str, Any] | None,
     ) -> bool:
-        if persisted is None or expected is None:
-            return persisted is expected
-
-        normalized_persisted = cls.normalize_roi_analysis_stats(persisted)
-        normalized_expected = cls.normalize_roi_analysis_stats(expected)
-        return normalized_persisted == normalized_expected
+        return roi_stats_match(persisted, expected)
 
     def _stats(self, name: str, geometry: Any) -> dict[str, Any]:
-        data = self.raster.roi_vegetation_index(geometry, name)
-        matrix = np.asarray(data.get("matrix") or data.get("ndvi_matrix"), dtype=float)
-        if name == "NDVI":
-            matrix = matrix / 255 * 2 - 1
-        mask_data = data.get("mask") or data.get("ndvi_mask")
-        if mask_data is None:
-            raise ValueError(f"{name} no devolviÃ³ una mÃ¡scara vÃ¡lida.")
-        mask = np.asarray(mask_data, dtype=bool)
-        values = matrix[mask & np.isfinite(matrix)]
-        return {
-            "count": int(values.size),
-            "min": float(values.min()) if values.size else None,
-            "max": float(values.max()) if values.size else None,
-            "mean": float(values.mean()) if values.size else None,
-            "standard_deviation": float(values.std()) if values.size else None,
-        }
+        return SaveRoiAnalysisUseCase(self.raster, self.supabase).analyze_roi.execute(
+            name,
+            geometry,
+        )

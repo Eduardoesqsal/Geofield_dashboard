@@ -138,15 +138,27 @@ class RasterTileExportMixin:
     def normalize(band: np.ndarray) -> np.ndarray:
         return raster_helpers.normalize_band(band)
     
-    def _rgb_profile_key(self, path: Path | None = None) -> tuple[str, int, int]:
-        return raster_cache.rgb_profile_key(path or self._path())
+    def _rgb_profile_key(
+        self,
+        path: Path | None = None,
+        context: Any | None = None,
+    ) -> tuple[str, int, int]:
+        return raster_cache.rgb_profile_key(path or self._path(context))
     
-    def tile_cache_version(self, path: Path | None = None) -> str:
+    def tile_cache_version(
+        self,
+        path: Path | None = None,
+        context: Any | None = None,
+    ) -> str:
         """Return a browser cache key tied to both the file and renderer."""
-        return raster_cache.tile_cache_version(path or self._path(), self.RGB_RENDER_VERSION)
+        return raster_cache.tile_cache_version(path or self._path(context), self.RGB_RENDER_VERSION)
     
-    def index_tile_cache_version(self, path: Path | None = None) -> str:
-        return raster_cache.index_tile_cache_version(path or self._path(), self.INDEX_RENDER_VERSION)
+    def index_tile_cache_version(
+        self,
+        path: Path | None = None,
+        context: Any | None = None,
+    ) -> str:
+        return raster_cache.index_tile_cache_version(path or self._path(context), self.INDEX_RENDER_VERSION)
     
     def _tile_cache_path(
         self,

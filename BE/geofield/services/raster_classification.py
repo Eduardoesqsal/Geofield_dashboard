@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -26,6 +26,9 @@ from geofield.services.raster_classification_filters import RasterClassification
 from geofield.services.raster_classification_helpers import RasterClassificationHelperMixin
 from geofield.services import raster_processing
 
+if TYPE_CHECKING:
+    from geofield.services.raster_service import RasterContext
+
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +44,20 @@ class RasterClassificationMixin(
         self,
         index_name: str,
         raster_path: Path,
+        context: RasterContext | None = None,
     ) -> tuple[int, int]:
         if index_name == "NDVI":
-            red_band, nir_band = self._ndvi_bands(raster_path, self.sensor)
+            red_band, nir_band = self._ndvi_bands(
+                raster_path,
+                self._sensor_value(context),
+            )
             return nir_band, red_band
-        if self.sensor in {"mavic3m", "micasense"}:
-            roles = self._multispectral_band_roles(path=raster_path, sensor=self.sensor)
+        sensor = self._sensor_value(context)
+        if sensor in {"mavic3m", "micasense"}:
+            roles = self._multispectral_band_roles(
+                path=raster_path,
+                sensor=sensor,
+            )
             formulas = {"NDWI": ("green", "nir"), "NDRE": ("nir", "rededge")}
             names = formulas.get(index_name)
             bands = (roles[names[0]], roles[names[1]]) if names else None
@@ -71,6 +82,7 @@ class RasterClassificationMixin(
         cell_value_mode: str = "mean",
         manual_breaks: list[float] | tuple[float, ...] | None = None,
         detail_level: float = 1.0,
+        context: RasterContext | None = None,
     ) -> dict[str, Any]:
         index_name = self._normalize_index_name(index_name)
         classification_method = self._normalize_classification_method(classification_method)
@@ -83,7 +95,7 @@ class RasterClassificationMixin(
         if not -90 <= grid_angle_deg <= 90:
             raise ValueError("La rotacion de la grilla debe estar entre -90 y 90 grados.")
     
-        raster_path = self._path()
+        raster_path = self._path(context)
         with rasterio.open(raster_path) as src:
             if not src.crs:
                 raise ValueError("El ortomosaico necesita un CRS para construir una grilla metrica.")
@@ -141,7 +153,11 @@ class RasterClassificationMixin(
                     f"Usa un tamano de al menos {minimum_size:.1f} metros.",
                 )
     
-            first_band, second_band = self._index_band_pair(index_name, raster_path)
+            first_band, second_band = self._index_band_pair(
+                index_name,
+                raster_path,
+                context,
+            )
             source_geometry = project_geometry(
                 pyproj.Transformer.from_crs("EPSG:4326", src.crs, always_xy=True).transform,
                 geom,
@@ -371,6 +387,7 @@ class RasterClassificationMixin(
         detail_level: float = 1.0,
         analysis_min: float | None = None,
         analysis_max: float | None = None,
+        context: RasterContext | None = None,
     ) -> dict[str, Any]:
         data = self._prepare_index_classification(
             index_name,
@@ -384,6 +401,7 @@ class RasterClassificationMixin(
             cell_value_mode,
             manual_breaks,
             detail_level,
+            context,
         )
         rgba = np.zeros((data["zones"].shape[0], data["zones"].shape[1], 4), dtype=np.uint8)
         for zone_index, color in enumerate(data["colors"], 1):
@@ -463,6 +481,7 @@ class RasterClassificationMixin(
         analysis_min: float | None = None,
         analysis_max: float | None = None,
         doses: list[float] | tuple[float, ...] | None = None,
+        context: RasterContext | None = None,
     ) -> dict[str, Any]:
         data = self._prepare_index_classification(
             index_name,
@@ -476,6 +495,7 @@ class RasterClassificationMixin(
             cell_value_mode,
             manual_breaks,
             detail_level,
+            context,
         )
         rgba = np.zeros((data["zones"].shape[0], data["zones"].shape[1], 4), dtype=np.uint8)
         for class_id, color in enumerate(data["colors"], 1):
@@ -628,10 +648,14 @@ class RasterClassificationMixin(
             "weightData": flattened_weights,
             "workType": 1,
         }
-        output_path = self.settings.output_dir / "prescriptions" / f"{prescription_id}.json"
-        output_path.write_text(
-            json.dumps(collection, ensure_ascii=False, separators=(",", ":")),
-            encoding="utf-8",
+        self.artifact_storage.write_bytes(
+            f"prescriptions/{prescription_id}.json",
+            json.dumps(
+                collection,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8"),
+            "application/json",
         )
         return f"/prescriptions/{prescription_id}/download.json"
     

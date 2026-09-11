@@ -16,7 +16,7 @@ const TILE_OPTIONS: L.TileLayerOptions = {
   opacity: 1,
 };
 
-const INDEX_TILE_VERSION = "index-matrix-webmercator-v6";
+const INDEX_TILE_VERSION = "index-matrix-webmercator-v7";
 
 function versionedSpectralUrl(url: string): string {
   const separator = url.includes("?") ? "&" : "?";
