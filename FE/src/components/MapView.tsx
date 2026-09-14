@@ -40,6 +40,7 @@ import { DetectionDialog } from "./DetectionDialog";
 import { ImportDialog } from "./ImportDialog";
 import { RoiDialog } from "./RoiDialog";
 import { RoiComparisonDialog } from "./RoiComparisonDialog";
+import { PublicationsDialog } from "./PublicationsDialog";
 import {
   PrescriptionDialog,
   PrescriptionLegend,
@@ -50,6 +51,7 @@ import {
   type OrthomosaicRecord,
   type OrthoSensor,
   type RoiAnalysisRecord,
+  type PublishedAnalysisRecord,
   type SaveRoiAnalysisPayload,
   type RoiRecord,
 } from "../services/api";
@@ -141,6 +143,15 @@ export function MapView() {
     string | null
   >(null);
   const [roiAnalysisError, setRoiAnalysisError] = useState<string | null>(null);
+  const [publicationLoading, setPublicationLoading] = useState(false);
+  const [publicationStatus, setPublicationStatus] = useState<string | null>(null);
+  const [publicationsOpen, setPublicationsOpen] = useState(false);
+  const [publicationsLoading, setPublicationsLoading] = useState(false);
+  const [publicationsError, setPublicationsError] = useState<string | null>(null);
+  const [publishedAnalyses, setPublishedAnalyses] = useState<
+    PublishedAnalysisRecord[]
+  >([]);
+  const [publicationDeletingKey, setPublicationDeletingKey] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -583,6 +594,79 @@ export function MapView() {
       );
     } finally {
       setRoiAnalysisSaving(false);
+    }
+  };
+
+  const publishResults = async () => {
+    setPublicationLoading(true);
+    setPublicationStatus(null);
+    try {
+      const orthomosaic =
+        orthomosaics.find((item) => item.id === map.state.orthomosaicId) ??
+        null;
+      const response = await map.publishCurrentResults({
+        cycle: activeCycle,
+        orthomosaic,
+      });
+      setPublicationStatus(
+        response.publication.status === "updated"
+          ? "Publicacion actualizada en Neon."
+          : "Resultados publicados en Neon.",
+      );
+      if (publicationsOpen) await loadPublications();
+    } catch (error) {
+      setPublicationStatus(
+        error instanceof Error
+          ? error.message
+          : "No se pudieron publicar los resultados.",
+      );
+    } finally {
+      setPublicationLoading(false);
+    }
+  };
+
+  const loadPublications = async () => {
+    setPublicationsLoading(true);
+    setPublicationsError(null);
+    try {
+      const response = await dashboardApi.publications(activeCycle?.id ?? null);
+      setPublishedAnalyses(response.items);
+    } catch (error) {
+      setPublicationsError(
+        error instanceof Error
+          ? error.message
+          : "No se pudieron consultar las publicaciones.",
+      );
+    } finally {
+      setPublicationsLoading(false);
+    }
+  };
+
+  const openPublications = async () => {
+    setPublicationsOpen(true);
+    await loadPublications();
+  };
+
+  const deletePublishedRecord = async (record: PublishedAnalysisRecord) => {
+    setPublicationDeletingKey(record.source_publication_key);
+    setPublicationsError(null);
+    try {
+      await dashboardApi.deletePublication(record.source_publication_key);
+      setPublishedAnalyses((items) =>
+        items.filter(
+          (item) =>
+            item.source_publication_key !== record.source_publication_key,
+        ),
+      );
+      setPublicationStatus("Publicacion eliminada de Neon.");
+    } catch (error) {
+      setPublicationsError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo eliminar la publicacion.",
+      );
+    } finally {
+      setPublicationDeletingKey(null);
     }
   };
   /**
@@ -1152,6 +1236,11 @@ export function MapView() {
         roiAnalysisSaving={roiAnalysisSaving}
         onSaveRoiAnalysis={(payload) => void saveRoiAnalysis(payload)}
         onOpenRoiComparison={(index) => void loadRoiAnalysisHistory(index)}
+        canPublishResults={Boolean(map.state.orthomosaicId)}
+        publicationLoading={publicationLoading}
+        publicationStatus={publicationStatus}
+        onPublishResults={() => void publishResults()}
+        onOpenPublications={() => void openPublications()}
         prescriptionMode={map.prescription ? "prescription" : map.zoning ? "zoning" : "idle"}
         prescriptionLoading={map.zoningLoading || map.prescriptionLoading}
         onOpenPrescription={openPrescription}
@@ -1185,6 +1274,16 @@ export function MapView() {
           setDeleteTarget({ kind: "analysis", record: analysis });
         }}
         onClose={() => setRoiComparisonOpen(false)}
+      />
+      <PublicationsDialog
+        open={publicationsOpen}
+        loading={publicationsLoading}
+        deletingKey={publicationDeletingKey}
+        error={publicationsError}
+        items={publishedAnalyses}
+        onClose={() => setPublicationsOpen(false)}
+        onRefresh={() => void loadPublications()}
+        onDelete={(record) => void deletePublishedRecord(record)}
       />
       <ConfirmDialog
         open={deleteTarget !== null}

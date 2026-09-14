@@ -201,6 +201,45 @@ export interface RoiAnalysisRecord {
   orthomosaics: { name: string; capture_date: string } | null;
 }
 
+export interface PublicationPayload {
+  project: Record<string, unknown>;
+  analysis: Record<string, unknown>;
+  roi: Record<string, unknown>;
+  indices: Array<Record<string, unknown>>;
+  zoning?: Record<string, unknown>;
+  prescription?: Record<string, unknown>;
+  artifacts?: Array<Record<string, unknown>>;
+}
+
+export interface PublicationResponse {
+  status: string;
+  publication: {
+    status: string;
+    publication_id: string;
+    source_publication_key: string;
+    payload_hash?: string;
+    deleted?: boolean;
+  };
+}
+
+export interface PublishedAnalysisRecord {
+  id: string;
+  source_publication_key: string;
+  source_orthomosaic_id: string | null;
+  source_roi_id: string | null;
+  analysis_type: string;
+  status: string;
+  published_at: string | null;
+  project_name: string | null;
+  field_name: string | null;
+  crop_name: string | null;
+  cycle_name: string | null;
+  index_count: number;
+  has_zoning: boolean;
+  has_prescription: boolean;
+  artifact_count: number;
+}
+
 /** Estadísticas calculadas por el normalizador canónico de detecciones. */
 export interface TreePointsStats {
   count: number;
@@ -503,6 +542,21 @@ export const dashboardApi = {
     request<{ status: string }>(`/rois/${roiId}/analyses/${analysisId}`, {
       method: "DELETE",
     }),
+  publishResults: (payload: PublicationPayload) =>
+    request<PublicationResponse>("/publications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  publications: (sourceProjectId?: string | null) =>
+    request<{ status: string; items: PublishedAnalysisRecord[] }>(
+      `/publications${sourceProjectId ? `?source_project_id=${encodeURIComponent(sourceProjectId)}` : ""}`,
+    ),
+  deletePublication: (sourcePublicationKey: string) =>
+    request<PublicationResponse>(
+      `/publications/${encodeURIComponent(sourcePublicationKey)}`,
+      { method: "DELETE" },
+    ),
   roi: (geojson: unknown) =>
     request<NdviResponse>("/roi_ndvi", {
       method: "POST",

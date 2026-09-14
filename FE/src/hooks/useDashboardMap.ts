@@ -10,6 +10,7 @@ import "@geoman-io/leaflet-geoman-free";
 import {
   backendUrl,
   dashboardApi,
+  type AgriculturalCycleRecord,
   type NdviResponse,
   type NdviZoningResponse,
   type OrthomosaicRecord,
@@ -118,6 +119,88 @@ export interface IndexAnalysis {
   visible: boolean;
   equalized: boolean;
   fillMode: ClassificationFillMode;
+}
+
+interface PublicationContext {
+  cycle: AgriculturalCycleRecord | null;
+  orthomosaic: OrthomosaicRecord | null;
+}
+
+function statsPayload(
+  stats: NdviStats,
+  rangeMinimum: number,
+  rangeMaximum: number,
+) {
+  return {
+    count: stats.count,
+    min: stats.min,
+    max: stats.max,
+    mean: stats.mean,
+    median: stats.median,
+    standard_deviation: stats.standardDeviation,
+    p10: stats.percentiles.p10,
+    p25: stats.percentiles.p25,
+    p75: stats.percentiles.p75,
+    p90: stats.percentiles.p90,
+    range_min: rangeMinimum,
+    range_max: rangeMaximum,
+  };
+}
+
+function artifactsForPublication(
+  zoning: NdviZoningResponse | null,
+  prescription: PrescriptionMapResponse | null,
+) {
+  const artifacts: Array<Record<string, unknown>> = [];
+  const response = prescription ?? zoning;
+  if (!response) return artifacts;
+  if (response.tile_url) {
+    artifacts.push({
+      artifact_type: response.stage === "prescription" ? "prescription_tiles" : "zoning_tiles",
+      name: response.title,
+      url: response.tile_url,
+      metadata: { stage: response.stage },
+    });
+  }
+  if (response.grid_url) {
+    artifacts.push({
+      artifact_type: "grid_geojson",
+      name: `${response.title} grid`,
+      url: response.grid_url,
+      metadata: { stage: response.stage },
+    });
+  }
+  if (response.geojson_url) {
+    artifacts.push({
+      artifact_type: response.stage === "prescription" ? "prescription_geojson" : "zoning_geojson",
+      name: `${response.title} geojson`,
+      url: response.geojson_url,
+      metadata: { stage: response.stage },
+    });
+  }
+  if (prescription?.json_url) {
+    artifacts.push({
+      artifact_type: "prescription_json",
+      name: "Prescripcion JSON",
+      url: prescription.json_url,
+      storage_key: `prescriptions/${prescription.prescription_id}.json`,
+      metadata: { stage: "prescription" },
+    });
+  }
+  return artifacts;
+}
+
+function currentPublicationKey(
+  orthomosaicId: string,
+  roiId: string,
+  zoning: NdviZoningResponse | null,
+  prescription: PrescriptionMapResponse | null,
+) {
+  return [
+    orthomosaicId,
+    roiId,
+    prescription?.prescription_id ?? zoning?.zoning_id ?? "indices",
+  ].join(":");
 }
 
 /**
@@ -972,6 +1055,139 @@ export function useDashboardMap(
     treeRef,
     uploadedRgbRef,
   });
+
+  const publishCurrentResults = useCallback(
+    async ({ cycle, orthomosaic }: PublicationContext) => {
+      const orthomosaicId = state.orthomosaicId;
+      const roiId = state.selectedRoiId;
+      const roiGeometry = activeCropGeometryRef.current ?? selectedRoiRef.current;
+      if (!orthomosaicId) {
+        throw new Error("Selecciona un ortomosaico antes de publicar resultados.");
+      }
+      if (!roiId || !roiGeometry || !ndviAnalysis.roiResponse) {
+        throw new Error("Selecciona y recorta un ROI antes de publicar resultados.");
+      }
+      if (!prescription) {
+        throw new Error("Genera la prescripcion antes de publicar resultados en Neon.");
+      }
+
+      const publicationKey = currentPublicationKey(
+        orthomosaicId,
+        roiId,
+        zoning,
+        prescription,
+      );
+      const indices = [
+        {
+          index_name: "NDVI",
+          stats: statsPayload(
+            ndviAnalysis.roiStats,
+            ndviAnalysis.minimum,
+            ndviAnalysis.maximum,
+          ),
+        },
+        ...indexAnalyses.map((analysis) => ({
+          index_name: analysis.name,
+          stats: statsPayload(analysis.stats, analysis.minimum, analysis.maximum),
+        })),
+      ];
+      const zoningPayload = zoning
+        ? {
+            source_zoning_id: zoning.zoning_id,
+            index_name: zoning.index_name ?? "NDVI",
+            classification_method: zoning.classification_method,
+            cell_value_mode: zoning.cell_value_mode,
+            zone_count: zoning.zone_count,
+            cell_size_m: zoning.cell_size_m,
+            grid_angle_deg: zoning.grid_angle_deg,
+            detail_level: zoning.detail_level,
+            field_mean: zoning.field_mean,
+            valid_cell_count: zoning.valid_cell_count,
+            area_hectares: zoning.area_hectares,
+            thresholds: zoning.thresholds ?? [],
+            histogram: zoning.histogram ?? {},
+            legend: zoning.legend,
+            response: zoning,
+          }
+        : undefined;
+      const prescriptionPayload = prescription
+        ? {
+            source_prescription_id: prescription.prescription_id,
+            index_name: prescription.index_name ?? "NDVI",
+            classification_method: prescription.classification_method,
+            cell_value_mode: prescription.cell_value_mode,
+            zone_count: prescription.zone_count,
+            cell_size_m: prescription.cell_size_m,
+            grid_angle_deg: prescription.grid_angle_deg,
+            detail_level: prescription.detail_level,
+            field_mean: prescription.field_mean,
+            valid_cell_count: prescription.valid_cell_count,
+            area_hectares: prescription.area_hectares,
+            thresholds: prescription.thresholds ?? [],
+            histogram: prescription.histogram ?? {},
+            legend: prescription.legend,
+            rates: prescription.legend.map((zone) => ({
+              class_id: zone.class_id,
+              dosage: zone.dosage ?? 0,
+            })),
+            response: prescription,
+          }
+        : undefined;
+
+      return dashboardApi.publishResults({
+        project: {
+          source_project_id: cycle?.id ?? null,
+          name: cycle?.name ?? orthomosaic?.name ?? "Geofield",
+          field_name: orthomosaic?.name ?? null,
+          crop_name: cycle?.crop_name ?? null,
+          cycle_name: cycle?.name ?? null,
+          source_metadata: {
+            orthomosaic_capture_date: orthomosaic?.capture_date ?? null,
+            orthomosaic_sensor_type: orthomosaic?.sensor_type ?? state.sensor,
+          },
+        },
+        analysis: {
+          source_publication_key: publicationKey,
+          source_orthomosaic_id: orthomosaicId,
+          source_roi_id: roiId,
+          analysis_type: "roi_prescription",
+          payload_version: 1,
+        },
+        roi: {
+          name: `ROI ${roiId.slice(0, 8)}`,
+          geometry_geojson: roiGeometry,
+          bounds: ndviAnalysis.roiResponse.bounds,
+        },
+        indices,
+        zoning: zoningPayload,
+        prescription: prescriptionPayload,
+        artifacts: artifactsForPublication(zoning, prescription),
+      });
+    },
+    [
+      indexAnalyses,
+      ndviAnalysis.maximum,
+      ndviAnalysis.minimum,
+      ndviAnalysis.roiResponse,
+      ndviAnalysis.roiStats,
+      prescription,
+      state.orthomosaicId,
+      state.selectedRoiId,
+      state.sensor,
+      zoning,
+    ],
+  );
+
+  const deleteCurrentPublication = useCallback(async () => {
+    const orthomosaicId = state.orthomosaicId;
+    const roiId = state.selectedRoiId;
+    if (!orthomosaicId || !roiId) {
+      throw new Error("Selecciona un ortomosaico y ROI antes de eliminar la publicacion.");
+    }
+    return dashboardApi.deletePublication(
+      currentPublicationKey(orthomosaicId, roiId, zoning, prescription),
+    );
+  }, [prescription, state.orthomosaicId, state.selectedRoiId, zoning]);
   return {
     state,
     treeData,
@@ -1031,6 +1247,8 @@ export function useDashboardMap(
     setIndexRange,
     setIndexEqualization,
     setIndexFillMode,
+    publishCurrentResults,
+    deleteCurrentPublication,
   };
 }
 

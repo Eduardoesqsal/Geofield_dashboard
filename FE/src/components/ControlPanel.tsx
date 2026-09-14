@@ -7,6 +7,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   IconChartLine,
   IconChevronDown,
+  IconCloudUpload,
   IconDeviceFloppy,
   IconEye,
   IconEyeOff,
@@ -70,6 +71,11 @@ interface ControlPanelProps {
   roiAnalysisSaving: boolean;
   onSaveRoiAnalysis: (payload: SaveRoiAnalysisPayload) => void;
   onOpenRoiComparison: (index: ComparisonIndex) => void;
+  canPublishResults: boolean;
+  publicationLoading: boolean;
+  publicationStatus: string | null;
+  onPublishResults: () => void;
+  onOpenPublications: () => void;
   prescriptionMode: "idle" | "zoning" | "prescription";
   prescriptionLoading: boolean;
   onOpenPrescription: () => void;
@@ -454,6 +460,11 @@ export function ControlPanel({
   roiAnalysisSaving,
   onSaveRoiAnalysis,
   onOpenRoiComparison,
+  canPublishResults,
+  publicationLoading,
+  publicationStatus,
+  onPublishResults,
+  onOpenPublications,
   prescriptionMode,
   prescriptionLoading,
   onOpenPrescription,
@@ -782,7 +793,24 @@ export function ControlPanel({
                 <IconChartLine aria-hidden="true" />
                 Comparar vuelos
               </button>
+              <button
+                type="button"
+                onClick={onPublishResults}
+                disabled={publicationLoading}
+              >
+                <IconCloudUpload aria-hidden="true" />
+                {publicationLoading ? "Publicando..." : "Publicar prescripcion"}
+              </button>
+              <button type="button" onClick={onOpenPublications}>
+                <IconCloudUpload aria-hidden="true" />
+                Ver publicados
+              </button>
             </div>
+            {publicationStatus && (
+              <small className="roi-sync-status" role="status">
+                {publicationStatus}
+              </small>
+            )}
           </div>
         </StatisticsDisclosure>
         </section>

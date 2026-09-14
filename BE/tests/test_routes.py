@@ -156,6 +156,29 @@ class FakeArtifactStorage:
         return f"https://storage.example/{key}"
 
 
+class FakePublicationRepository:
+    def __init__(self) -> None:
+        self.payloads: list[dict[str, Any]] = []
+
+    def healthcheck(self) -> dict[str, Any]:
+        return {"database": "fake-neon", "ok": True}
+
+    def publish(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.payloads.append(payload)
+        return {
+            "status": "published",
+            "publication_id": "publication-1",
+            "payload_hash": payload["analysis"]["payload_hash"],
+        }
+
+    def delete(self, source_publication_key: str) -> dict[str, Any]:
+        return {
+            "status": "deleted",
+            "source_publication_key": source_publication_key,
+            "deleted": True,
+        }
+
+
 class RoutesDeleteOrthomosaicTests(unittest.TestCase):
     def test_deleting_cycle_resets_its_active_orthomosaic(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -218,6 +241,87 @@ class RoutesRoiContractTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["status"], "ok")
             self.assertEqual(response.json()["mode"], "local")
+
+
+class RoutesPublicationTests(unittest.TestCase):
+    def test_publications_health_reports_not_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            app = FastAPI()
+            app.include_router(
+                create_router(
+                    FakeRasterService(root / "active.tif"),
+                    root,
+                    root,
+                    FakeSupabaseService({"id": "ortho-1", "file_path": str(root / "active.tif")}, root / "cache"),
+                ),  # type: ignore[arg-type]
+            )
+
+            response = TestClient(app).get("/publications/health")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "not_configured")
+
+    def test_publish_results_uses_publication_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository = FakePublicationRepository()
+            app = FastAPI()
+            app.include_router(
+                create_router(
+                    FakeRasterService(root / "active.tif"),
+                    root,
+                    root,
+                    FakeSupabaseService({"id": "ortho-1", "file_path": str(root / "active.tif")}, root / "cache"),
+                    publication_repository=repository,
+                ),  # type: ignore[arg-type]
+            )
+
+            response = TestClient(app).post(
+                "/publications",
+                json={
+                    "project": {"name": "Lote demo"},
+                    "analysis": {
+                        "source_publication_key": "ortho-1:roi-1:prescription-1",
+                        "analysis_type": "roi_prescription",
+                    },
+                    "roi": {
+                        "geometry_geojson": {"type": "Polygon", "coordinates": []},
+                    },
+                    "indices": [
+                        {
+                            "index_name": "NDVI",
+                            "stats": {"count": 1, "mean": 0.5},
+                        },
+                    ],
+                },
+            )
+
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            self.assertEqual(body["publication"]["status"], "published")
+            self.assertEqual(len(repository.payloads), 1)
+            self.assertRegex(repository.payloads[0]["analysis"]["payload_hash"], r"^[a-f0-9]{64}$")
+
+    def test_delete_publication_uses_publication_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository = FakePublicationRepository()
+            app = FastAPI()
+            app.include_router(
+                create_router(
+                    FakeRasterService(root / "active.tif"),
+                    root,
+                    root,
+                    FakeSupabaseService({"id": "ortho-1", "file_path": str(root / "active.tif")}, root / "cache"),
+                    publication_repository=repository,
+                ),  # type: ignore[arg-type]
+            )
+
+            response = TestClient(app).delete("/publications/ortho-1%3Aroi-1%3Aindices")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["publication"]["deleted"])
 
     def test_create_roi_accepts_feature_collection_and_forwards_cycle_id(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

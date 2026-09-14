@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from geofield.api.routes import create_router
 from geofield.config import Settings
 from geofield.infrastructure.jobs import ImmediateJobQueue
+from geofield.infrastructure.repositories import NeonPublicationRepository
 from geofield.infrastructure.storage import create_artifact_storage
 from geofield.services.raster_service import RasterService
 from geofield.services.supabase_service import SupabaseService
@@ -22,6 +23,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings or Settings.from_env()
     supabase = SupabaseService(config)
     artifact_storage = create_artifact_storage(config, supabase.client)
+    publication_repository = (
+        NeonPublicationRepository(config.publication_database_url)
+        if config.publication_database_url
+        else None
+    )
     job_queue = ImmediateJobQueue()
     raster = RasterService(config, artifact_storage)
     app = FastAPI(title="Geofield Dashboard API", version="1.0.0")
@@ -43,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             supabase,
             artifact_storage,
             job_queue,
+            publication_repository,
         ),
     )
     return app

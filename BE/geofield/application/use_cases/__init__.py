@@ -11,6 +11,10 @@ from geofield.application.use_cases.prescription import (
     GeneratePrescriptionUseCase,
     GenerateZoningUseCase,
 )
+from geofield.application.use_cases.publication import (
+    DeletePublicationUseCase,
+    PublishResultsUseCase,
+)
 from geofield.application.use_cases.roi import (
     AnalyzeRoiUseCase,
     SaveRoiAnalysisUseCase,
@@ -23,9 +27,11 @@ __all__ = [
     "AnalyzeRoiUseCase",
     "DeleteAgriculturalCycleUseCase",
     "DeleteOrthomosaicUseCase",
+    "DeletePublicationUseCase",
     "GeneratePrescriptionUseCase",
     "GenerateZoningUseCase",
     "PublishJsonArtifactUseCase",
+    "PublishResultsUseCase",
     "ResetActiveOrthomosaicUseCase",
     "SaveRoiAnalysisUseCase",
     "normalize_roi_analysis_stats",

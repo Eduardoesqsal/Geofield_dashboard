@@ -41,6 +41,7 @@ class Settings:
     orthomosaic_storage_mode: str = "local"
     artifact_storage_mode: str = "local"
     artifact_storage_bucket: str = "artifacts"
+    publication_database_url: str | None = None
 
     def __post_init__(self) -> None:
         if self.raster_path is None:
@@ -64,4 +65,5 @@ class Settings:
             orthomosaic_storage_mode=os.getenv("ORTHOMOSAIC_STORAGE_MODE", "local").strip().lower() or "local",
             artifact_storage_mode=os.getenv("ARTIFACT_STORAGE_MODE", "local").strip().lower() or "local",
             artifact_storage_bucket=os.getenv("ARTIFACT_STORAGE_BUCKET", "artifacts"),
+            publication_database_url=os.getenv("PUBLICATION_DATABASE_URL"),
         )

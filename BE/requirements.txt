@@ -10,3 +10,4 @@ matplotlib
 supabase
 python-multipart
 python-dotenv
+psycopg[binary]

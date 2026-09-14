@@ -25,7 +25,8 @@ from geofield.api.request_utils import (
     require_list_of_strings,
     require_string,
 )
-from geofield.application.ports import ArtifactStorage, JobQueue
+from geofield.application.ports import ArtifactStorage, JobQueue, PublicationRepository
+from geofield.application.use_cases import DeletePublicationUseCase, PublishResultsUseCase
 from geofield.infrastructure.storage import LocalArtifactStorage
 from geofield.services.application_service import OrthomosaicApplicationService, RoiApplicationService
 from geofield.services.raster_service import RasterService
@@ -40,6 +41,7 @@ def create_router(
     supabase: SupabaseService,
     artifact_storage: ArtifactStorage | None = None,
     job_queue: JobQueue | None = None,
+    publication_repository: PublicationRepository | None = None,
 ) -> APIRouter:
     router = APIRouter()
     artifacts = artifact_storage or LocalArtifactStorage(output_dir)
@@ -83,6 +85,54 @@ def create_router(
             }
         except Exception as exc:
             raise HTTPException(503, f"Storage de artefactos no disponible: {exc}") from exc
+
+    @router.get("/publications/health")
+    def publications_health() -> dict[str, Any]:
+        if publication_repository is None:
+            return {"status": "not_configured"}
+        try:
+            return {"status": "ok", **publication_repository.healthcheck()}
+        except Exception as exc:
+            raise HTTPException(503, f"Neon no responde correctamente: {exc}") from exc
+
+    @router.post("/publications")
+    async def publish_results(request: Request) -> dict[str, Any]:
+        if publication_repository is None:
+            raise HTTPException(503, "PUBLICATION_DATABASE_URL no esta configurada.")
+        try:
+            payload = payload_object(await request.json())
+            result = PublishResultsUseCase(publication_repository).execute(payload)
+            return {"status": "ok", "publication": result}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, f"No se pudo publicar en Neon: {exc}") from exc
+
+    @router.get("/publications")
+    def list_publications(source_project_id: str | None = Query(None)) -> dict[str, Any]:
+        if publication_repository is None:
+            raise HTTPException(503, "PUBLICATION_DATABASE_URL no esta configurada.")
+        try:
+            return {
+                "status": "ok",
+                "items": publication_repository.list(source_project_id),
+            }
+        except Exception as exc:
+            raise HTTPException(502, f"No se pudieron consultar publicaciones en Neon: {exc}") from exc
+
+    @router.delete("/publications/{source_publication_key}")
+    def delete_publication(source_publication_key: str) -> dict[str, Any]:
+        if publication_repository is None:
+            raise HTTPException(503, "PUBLICATION_DATABASE_URL no esta configurada.")
+        try:
+            result = DeletePublicationUseCase(publication_repository).execute(
+                source_publication_key,
+            )
+            return {"status": "ok", "publication": result}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, f"No se pudo eliminar en Neon: {exc}") from exc
 
     @router.get("/supabase/health")
     def supabase_health() -> dict[str, Any]:
