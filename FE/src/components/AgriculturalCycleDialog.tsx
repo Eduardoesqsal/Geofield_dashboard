@@ -17,6 +17,7 @@ import type {
   AgriculturalCycleRecord,
   CreateAgriculturalCyclePayload,
 } from "../services/api";
+import { MobileDialogToggle } from "./MobileDialogToggle";
 
 interface Props {
   open: boolean;
@@ -58,6 +59,7 @@ export function AgriculturalCycleDialog({
   const [notes, setNotes] = useState("");
   const [editingCycleId, setEditingCycleId] = useState<string | null>(null);
   const [editingCycleName, setEditingCycleName] = useState("");
+  const [mobileCollapsed, setMobileCollapsed] = useState(false);
 
   const actionLabel =
     mode === "import"
@@ -84,12 +86,16 @@ export function AgriculturalCycleDialog({
       onMouseDown={onClose}
     >
       <section
-        className="import-dialog cycle-dialog"
+        className={`import-dialog cycle-dialog mobile-collapsible-dialog ${mobileCollapsed ? "is-mobile-collapsed" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="cycle-dialog-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
+        <MobileDialogToggle
+          collapsed={mobileCollapsed}
+          onToggle={() => setMobileCollapsed((current) => !current)}
+        />
         <div className="import-dialog-heading">
           <div className="modal-title-group">
             <span className="modal-title-icon">

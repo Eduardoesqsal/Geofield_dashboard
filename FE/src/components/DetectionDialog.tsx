@@ -28,6 +28,7 @@ import type {
   TreeDisplayMode,
 } from "../hooks/useDashboardMap";
 import type { TreeCollection } from "../types/geo";
+import { MobileDialogToggle } from "./MobileDialogToggle";
 import {
   numericTreeFields,
   treeSizeColors,
@@ -91,6 +92,7 @@ export function DetectionDialog({
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [mobileCollapsed, setMobileCollapsed] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -223,12 +225,16 @@ export function DetectionDialog({
       onMouseDown={() => !loading && onClose()}
     >
       <section
-        className="import-dialog detection-dialog"
+        className={`import-dialog detection-dialog mobile-collapsible-dialog ${mobileCollapsed ? "is-mobile-collapsed" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="detection-dialog-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
+        <MobileDialogToggle
+          collapsed={mobileCollapsed}
+          onToggle={() => setMobileCollapsed((current) => !current)}
+        />
         <div className="import-dialog-heading">
           <div className="modal-title-group">
             <span className="modal-title-icon">

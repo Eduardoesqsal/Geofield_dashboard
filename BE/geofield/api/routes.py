@@ -64,7 +64,9 @@ def create_router(
 
     @router.get("/")
     def index() -> FileResponse:
-        index_path = base_dir / "index.html"
+        index_path = base_dir / "frontend_dist" / "index.html"
+        if not index_path.is_file():
+            index_path = base_dir / "index.html"
         if not index_path.is_file():
             raise HTTPException(status_code=404, detail="Frontend no encontrado en el backend.")
         return FileResponse(index_path)

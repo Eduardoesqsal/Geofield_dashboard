@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from "react";
 import {
   IconChartLine,
+  IconChevronDown,
   IconDownload,
   IconGripVertical,
   IconLoader2,
@@ -32,6 +33,7 @@ import {
   type RoiComparisonDialogProps,
   type SummaryDetailRow,
 } from "./RoiComparisonDialog.parts";
+import { MobileDialogToggle } from "./MobileDialogToggle";
 export function RoiComparisonDialog({
   open,
   activeIndex,
@@ -52,6 +54,8 @@ export function RoiComparisonDialog({
     useState<DashboardView>("overview");
   const [metricHistory, setMetricHistory] =
     useState<MetricHistoryModalState | null>(null);
+  const [mobileCollapsed, setMobileCollapsed] = useState(false);
+  const [metricMobileCollapsed, setMetricMobileCollapsed] = useState(false);
   const [selectedOrthomosaicId, setSelectedOrthomosaicId] = useState<
     string | null
   >(null);
@@ -181,12 +185,22 @@ export function RoiComparisonDialog({
       onMouseDown={onClose}
     >
       <section
-        className="import-dialog roi-comparison-dialog"
+        className={`import-dialog roi-comparison-dialog mobile-collapsible-dialog ${mobileCollapsed ? "is-mobile-collapsed" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="roi-comparison-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
+        <button
+          className="mobile-dialog-toggle"
+          type="button"
+          onClick={() => setMobileCollapsed((current) => !current)}
+          aria-expanded={!mobileCollapsed}
+          aria-label={mobileCollapsed ? "Mostrar modal" : "Ocultar modal"}
+          title={mobileCollapsed ? "Mostrar modal" : "Ocultar modal"}
+        >
+          <IconChevronDown aria-hidden="true" />
+        </button>
         <div className="import-dialog-heading roi-dashboard-heading">
           <div className="modal-title-group">
             <span className="modal-title-icon">
@@ -1139,12 +1153,16 @@ export function RoiComparisonDialog({
             onMouseDown={() => setMetricHistory(null)}
           >
             <section
-              className="roi-metric-modal"
+              className={`roi-metric-modal mobile-collapsible-dialog ${metricMobileCollapsed ? "is-mobile-collapsed" : ""}`}
               role="dialog"
               aria-modal="true"
               aria-labelledby="roi-metric-modal-title"
               onMouseDown={(event) => event.stopPropagation()}
             >
+              <MobileDialogToggle
+                collapsed={metricMobileCollapsed}
+                onToggle={() => setMetricMobileCollapsed((current) => !current)}
+              />
               <div className="roi-metric-modal-head">
                 <div>
                   <div className="roi-metric-modal-id" id="roi-metric-modal-title">

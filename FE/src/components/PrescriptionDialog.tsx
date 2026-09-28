@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from "react";
 import {
+  IconChevronDown,
   IconDownload,
   IconGridDots,
   IconLoader2,
@@ -57,6 +58,7 @@ const continuousGradient = (gradientStops: string) =>
 interface PrescriptionDialogProps {
   open: boolean;
   configurationRequestId: number;
+  analysisRequestId: number;
   indexName: VegetationIndexName;
   displayRange?: { minimum: number | null; maximum: number | null } | null;
   busy: boolean;
@@ -267,6 +269,7 @@ const formatDoseValue = (value: number | null | undefined) =>
 export function PrescriptionDialog({
   open,
   configurationRequestId,
+  analysisRequestId,
   indexName,
   displayRange = null,
   busy,
@@ -300,6 +303,7 @@ export function PrescriptionDialog({
   const [activeView, setActiveView] = useState<PrescriptionView>("configuration");
   const [rotationMode, setRotationMode] = useState(false);
   const [rotationConfirmed, setRotationConfirmed] = useState(false);
+  const [mobileCollapsed, setMobileCollapsed] = useState(false);
   const needsRotationDecision = !zoning && !prescription && !rotationConfirmed;
 
   const parseManualBreaks = (value: string): number[] | undefined => {
@@ -370,7 +374,20 @@ export function PrescriptionDialog({
   useEffect(() => {
     setActiveView("configuration");
     setRotationConfirmed(false);
+    setRotationMode(false);
+    setMobileCollapsed(false);
   }, [configurationRequestId]);
+
+  useEffect(() => {
+    if (open) setMobileCollapsed(false);
+  }, [open]);
+
+  useEffect(() => {
+    if (analysisRequestId === 0) return;
+    setRotationMode(false);
+    setMobileCollapsed(false);
+    setActiveView("analysis");
+  }, [analysisRequestId]);
 
   useEffect(() => {
     if (zoning || prescription) return;
@@ -523,6 +540,7 @@ export function PrescriptionDialog({
 
   const handleGenerateZoning = async () => {
     if (needsRotationDecision) {
+      setMobileCollapsed(false);
       setRotationMode(true);
       return;
     }
@@ -552,6 +570,11 @@ export function PrescriptionDialog({
 
   const handleReturnToModal = () => {
     setRotationMode(false);
+  };
+
+  const openRotationOnMap = () => {
+    setMobileCollapsed(false);
+    setRotationMode(true);
   };
 
   const handleConfirmRotation = async () => {
@@ -584,10 +607,19 @@ export function PrescriptionDialog({
   if (rotationMode) {
     return (
       <aside
-        className="prescription-map-rotation-control"
+        className={`prescription-map-rotation-control mobile-collapsible-dialog ${mobileCollapsed ? "is-mobile-collapsed" : ""}`}
         role="dialog"
         aria-label="Rotar reticula sobre el mapa"
       >
+        <button
+          className="mobile-dialog-toggle"
+          type="button"
+          onClick={() => setMobileCollapsed((current) => !current)}
+          aria-expanded={!mobileCollapsed}
+          aria-label={mobileCollapsed ? "Mostrar control de rotación" : "Ocultar control de rotación"}
+        >
+          <IconChevronDown aria-hidden="true" />
+        </button>
         <div className="prescription-map-rotation-head">
           <span>
             <small>ROTACION EN MAPA</small>
@@ -640,12 +672,22 @@ export function PrescriptionDialog({
       onMouseDown={onClose}
     >
       <section
-        className="import-dialog prescription-dialog"
+        className={`import-dialog prescription-dialog mobile-collapsible-dialog ${mobileCollapsed ? "is-mobile-collapsed" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="prescription-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
+        <button
+          className="mobile-dialog-toggle"
+          type="button"
+          onClick={() => setMobileCollapsed((current) => !current)}
+          aria-expanded={!mobileCollapsed}
+          aria-label={mobileCollapsed ? "Mostrar modal" : "Ocultar modal"}
+          title={mobileCollapsed ? "Mostrar modal" : "Ocultar modal"}
+        >
+          <IconChevronDown aria-hidden="true" />
+        </button>
         <div className="import-dialog-heading">
           <div className="modal-title-group">
             <span className="modal-title-icon">
@@ -703,6 +745,26 @@ export function PrescriptionDialog({
             <span>Aplicacion por zona y exportacion</span>
           </button>
         </nav>
+
+        {activeView === "configuration" && (
+          <button
+            className="prescription-mobile-rotation-shortcut"
+            type="button"
+            onClick={() => {
+              if (!prescriptionAreaReady && !zoning && !prescription) {
+                onDrawArea();
+                return;
+              }
+              openRotationOnMap();
+            }}
+            disabled={busy}
+          >
+            <IconGridDots aria-hidden="true" />
+            {prescriptionAreaReady || zoning || prescription
+              ? "Rotar retícula sobre el mapa"
+              : "Dibujar área para rotar"}
+          </button>
+        )}
 
         <div className="prescription-layout">
           <div
@@ -853,7 +915,7 @@ export function PrescriptionDialog({
                       type="button"
                       className="prescription-map-rotation-trigger"
                       onClick={() => {
-                        setRotationMode(true);
+                        openRotationOnMap();
                       }}
                       disabled={busy || !prescriptionAreaReady}
                     >
@@ -875,7 +937,7 @@ export function PrescriptionDialog({
                     type="button"
                     className="prescription-map-rotation-trigger"
                     onClick={() => {
-                      setRotationMode(true);
+                      openRotationOnMap();
                     }}
                     disabled={busy || (!prescriptionAreaReady && !zoning && !prescription)}
                   >

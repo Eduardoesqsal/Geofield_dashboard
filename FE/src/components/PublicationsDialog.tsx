@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   IconCloudUpload,
   IconLoader2,
@@ -6,6 +7,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import type { PublishedAnalysisRecord } from "../services/api";
+import { MobileDialogToggle } from "./MobileDialogToggle";
 
 interface PublicationsDialogProps {
   open: boolean;
@@ -34,6 +36,7 @@ export function PublicationsDialog({
   onRefresh,
   onDelete,
 }: PublicationsDialogProps) {
+  const [mobileCollapsed, setMobileCollapsed] = useState(false);
   if (!open) return null;
 
   return (
@@ -43,12 +46,16 @@ export function PublicationsDialog({
       onMouseDown={onClose}
     >
       <section
-        className="import-dialog roi-comparison-dialog"
+        className={`import-dialog roi-comparison-dialog mobile-collapsible-dialog ${mobileCollapsed ? "is-mobile-collapsed" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="publications-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
+        <MobileDialogToggle
+          collapsed={mobileCollapsed}
+          onToggle={() => setMobileCollapsed((current) => !current)}
+        />
         <div className="import-dialog-heading">
           <div className="modal-title-group">
             <span className="modal-title-icon">

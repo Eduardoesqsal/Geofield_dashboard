@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { IconDownload, IconGridDots, IconLoader2, IconX } from "@tabler/icons-react";
+import { IconChartHistogram, IconChevronDown, IconDownload, IconGridDots, IconLoader2, IconX } from "@tabler/icons-react";
 import type { NdviZoningResponse, PrescriptionMapResponse } from "../services/api";
 import { fetchPrescriptionJson } from "../services/api";
 import { indexGradient } from "../utils/ndvi";
@@ -29,10 +29,12 @@ export function PrescriptionLegend({
   response,
   onClose,
   onConfigure,
+  onOpenHistogram,
 }: {
   response: ZoningResponse;
   onClose: () => void;
   onConfigure: () => void;
+  onOpenHistogram: () => void;
 }) {
   const isPrescription = response.stage === "prescription";
   const activeIndexName = response.index_name ?? "NDVI";
@@ -43,6 +45,7 @@ export function PrescriptionLegend({
     response.legend[response.legend.length - 1]?.ndvi_max ??
     1;
   const [downloading, setDownloading] = useState(false);
+  const [mobileCollapsed, setMobileCollapsed] = useState(true);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const handleDownload = async (prescription: PrescriptionMapResponse) => {
@@ -63,7 +66,7 @@ export function PrescriptionLegend({
 
   return (
     <aside
-      className="prescription-legend"
+      className={`prescription-legend ${mobileCollapsed ? "is-mobile-collapsed" : ""}`}
       aria-label={
         isPrescription
           ? "Leyenda del mapa de prescripcion"
@@ -71,6 +74,15 @@ export function PrescriptionLegend({
       }
     >
       <header>
+        <button
+          className="prescription-legend-mobile-toggle"
+          type="button"
+          onClick={() => setMobileCollapsed((current) => !current)}
+          aria-expanded={!mobileCollapsed}
+          aria-label={mobileCollapsed ? "Mostrar leyenda" : "Ocultar leyenda"}
+        >
+          <IconChevronDown aria-hidden="true" />
+        </button>
         <div>
           <span>
             {isPrescription
@@ -79,6 +91,14 @@ export function PrescriptionLegend({
           </span>
           <strong>{response.title}</strong>
         </div>
+        <button
+          className="prescription-legend-histogram-button"
+          type="button"
+          onClick={onOpenHistogram}
+        >
+          <IconChartHistogram aria-hidden="true" />
+          Volver al histograma
+        </button>
         <button
           type="button"
           onClick={onClose}

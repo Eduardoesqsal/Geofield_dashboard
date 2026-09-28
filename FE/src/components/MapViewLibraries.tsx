@@ -1,5 +1,6 @@
 ﻿import {
   IconCalendarEvent,
+  IconChevronDown,
   IconDatabase,
   IconGripVertical,
   IconMapPin,
@@ -7,6 +8,7 @@
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
+import { useState } from "react";
 import type {
   AgriculturalCycleRecord,
   OrthomosaicRecord,
@@ -30,6 +32,7 @@ export function MapViewRoiLibraryDialog({
   onSelectRoi,
   onDeleteRoi,
 }: MapViewRoiLibraryDialogProps) {
+  const [mobileCollapsed, setMobileCollapsed] = useState(false);
   if (!open) return null;
 
   return (
@@ -39,12 +42,22 @@ export function MapViewRoiLibraryDialog({
           onMouseDown={() => onClose()}
         >
           <section
-            className="import-dialog roi-library"
+            className={`import-dialog roi-library mobile-collapsible-dialog ${mobileCollapsed ? "is-mobile-collapsed" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="roi-library-title"
             onMouseDown={(event) => event.stopPropagation()}
           >
+            <button
+              className="mobile-dialog-toggle"
+              type="button"
+              onClick={() => setMobileCollapsed((current) => !current)}
+              aria-expanded={!mobileCollapsed}
+              aria-label={mobileCollapsed ? "Mostrar modal" : "Ocultar modal"}
+              title={mobileCollapsed ? "Mostrar modal" : "Ocultar modal"}
+            >
+              <IconChevronDown aria-hidden="true" />
+            </button>
             <div className="import-dialog-heading">
               <div className="modal-title-group">
                 <span className="modal-title-icon">
@@ -198,6 +211,7 @@ export function MapViewOrthomosaicLibraryDialog({
   onActivateStoredOrtho,
   onDeleteOrthomosaic,
 }: MapViewOrthomosaicLibraryDialogProps) {
+  const [mobileCollapsed, setMobileCollapsed] = useState(false);
   if (!open) return null;
 
   return (
@@ -207,12 +221,22 @@ export function MapViewOrthomosaicLibraryDialog({
           onMouseDown={() => onClose()}
         >
           <section
-            className="import-dialog orthomosaic-dialog"
+            className={`import-dialog orthomosaic-dialog mobile-collapsible-dialog ${mobileCollapsed ? "is-mobile-collapsed" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="orthomosaic-title"
             onMouseDown={(event) => event.stopPropagation()}
           >
+            <button
+              className="mobile-dialog-toggle"
+              type="button"
+              onClick={() => setMobileCollapsed((current) => !current)}
+              aria-expanded={!mobileCollapsed}
+              aria-label={mobileCollapsed ? "Mostrar modal" : "Ocultar modal"}
+              title={mobileCollapsed ? "Mostrar modal" : "Ocultar modal"}
+            >
+              <IconChevronDown aria-hidden="true" />
+            </button>
             <div className="import-dialog-heading">
               <div className="modal-title-group">
                 <span className="modal-title-icon">

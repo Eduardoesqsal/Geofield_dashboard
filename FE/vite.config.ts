@@ -8,14 +8,15 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
-  const backendUrl = env.VITE_BACKEND_URL || 'http://127.0.0.1:8005';
+  const backendUrl = env.VITE_API_URL || env.VITE_BACKEND_URL || 'http://127.0.0.1:8000';
 
   return {
     plugins: [react()],
     server: {
       host: '0.0.0.0',
-      port: 3000,
+      port: 5173,
       strictPort: true,
+      allowedHosts: ['.trycloudflare.com'],
       proxy: {
         '/bounds': backendUrl,
         '/ndvi_data': backendUrl,
@@ -29,6 +30,7 @@ export default defineConfig(({ mode }) => {
         '/orthomosaics': backendUrl,
         '/agricultural_cycles': backendUrl,
         '/rois': backendUrl,
+        '/publications': backendUrl,
         '/vegetation_indices': backendUrl,
         '/ndvi_zoning': backendUrl,
         '/prescriptions': backendUrl,

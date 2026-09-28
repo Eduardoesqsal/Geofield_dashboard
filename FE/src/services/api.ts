@@ -251,13 +251,13 @@ export interface TreePointsStats {
 }
 
 const API_BASE_URL = (() => {
-  const configured = String(import.meta.env.VITE_BACKEND_URL ?? "").trim();
+  const configured = String(
+    import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "",
+  ).trim();
   if (configured) return configured.replace(/\/$/, "");
-  // En desarrollo, si Vite vive en :3000 y no hay variable configurada,
-  // hablamos directo con FastAPI en :8005 para no depender del proxy.
-  if (typeof window !== "undefined" && window.location.port === "3000") {
-    return `${window.location.protocol}//${window.location.hostname}:8005`;
-  }
+  // Usa rutas relativas por defecto: Vite proxifica en desarrollo y FastAPI
+  // sirve el frontend en produccion. Esto evita que clientes remotos intenten
+  // llamar a un puerto local que no existe en su dispositivo.
   return "";
 })();
 

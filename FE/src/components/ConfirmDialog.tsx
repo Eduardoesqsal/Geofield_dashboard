@@ -3,12 +3,14 @@
  * Se usa como capa de seguridad antes de eliminar registros o ejecutar
  * acciones que alteran el estado persistido de la app.
  */
+import { useState } from "react";
 import {
   IconAlertTriangle,
   IconLoader2,
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
+import { MobileDialogToggle } from "./MobileDialogToggle";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -35,6 +37,7 @@ export function ConfirmDialog({
   onCancel,
   onConfirm,
 }: ConfirmDialogProps) {
+  const [mobileCollapsed, setMobileCollapsed] = useState(false);
   if (!open) return null;
 
   return (
@@ -46,13 +49,17 @@ export function ConfirmDialog({
       }}
     >
       <section
-        className="import-dialog confirm-dialog"
+        className={`import-dialog confirm-dialog mobile-collapsible-dialog ${mobileCollapsed ? "is-mobile-collapsed" : ""}`}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
         aria-describedby="confirm-dialog-description"
         onMouseDown={(event) => event.stopPropagation()}
       >
+        <MobileDialogToggle
+          collapsed={mobileCollapsed}
+          onToggle={() => setMobileCollapsed((current) => !current)}
+        />
         <div className="confirm-dialog-heading">
           <span className="confirm-dialog-icon">
             <IconAlertTriangle aria-hidden="true" />

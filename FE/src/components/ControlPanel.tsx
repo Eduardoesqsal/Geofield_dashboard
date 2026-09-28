@@ -475,6 +475,7 @@ export function ControlPanel({
   const [minimum, setMinimum] = useState(stats.min);
   const [maximum, setMaximum] = useState(stats.max);
   const [detectionPanelVisible, setDetectionPanelVisible] = useState(true);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [expandedStatistics, setExpandedStatistics] = useState<
     Record<string, boolean>
   >({});
@@ -580,12 +581,53 @@ export function ControlPanel({
   const hasVisiblePanel =
     hasSelectedSpectralPanel || Boolean(data && detectionPanelVisible);
 
+  const closeHistogram = (hideIndex: () => void) => {
+    if (window.matchMedia("(max-width: 768px)").matches) {
+      setPanelCollapsed(true);
+    } else {
+      hideIndex();
+    }
+  };
+
   if (!hasVisiblePanel) return null;
 
   return (
-    <aside className="controls visible">
-      {selectedIndex === "NDVI" && ndvi.response && (
-        <section className="panel-section ndvi-section">
+    <aside
+      className={`controls visible ${panelCollapsed ? "is-collapsed" : ""}`}
+    >
+      <button
+        className="controls-collapse-toggle"
+        type="button"
+        onClick={() => setPanelCollapsed((current) => !current)}
+        aria-expanded={!panelCollapsed}
+        aria-label={
+          panelCollapsed && hasSelectedSpectralPanel
+            ? "Volver al histograma"
+            : panelCollapsed
+              ? "Mostrar panel"
+              : "Ocultar panel"
+        }
+        title={
+          panelCollapsed && hasSelectedSpectralPanel
+            ? "Volver al histograma"
+            : panelCollapsed
+              ? "Mostrar panel"
+              : "Ocultar panel"
+        }
+      >
+        <IconChevronDown aria-hidden="true" />
+        <span className="mobile-panel-toggle-label">
+          {panelCollapsed
+            ? hasSelectedSpectralPanel
+              ? "Volver al histograma"
+              : "Abrir panel"
+            : "Ver mapa"}
+        </span>
+      </button>
+      {!panelCollapsed && (
+        <>
+          {selectedIndex === "NDVI" && ndvi.response && (
+            <section className="panel-section ndvi-section">
         <div className="panel-heading">
           <strong>Analisis NDVI</strong>
           <span className="ndvi-range-readout">
@@ -621,7 +663,7 @@ export function ControlPanel({
           onEqualizationChange={onNdviEqualizationChange}
           onFillModeChange={onNdviFillModeChange}
           onToggleVisibility={onToggleNdvi}
-          onClose={onHideNdvi}
+          onClose={() => closeHistogram(onHideNdvi)}
         />
         <div
           className="ndvi-scale"
@@ -814,9 +856,9 @@ export function ControlPanel({
           </div>
         </StatisticsDisclosure>
         </section>
-      )}
+          )}
 
-      {indices
+          {indices
         .filter((analysis) => analysis.name === selectedIndex)
         .map((analysis) => {
         const histogramMinimum = analysis.response.range_min ?? analysis.stats.min;
@@ -878,7 +920,7 @@ export function ControlPanel({
                 onIndexFillModeChange(analysis.name, mode)
               }
               onToggleVisibility={() => onToggleIndex(analysis.name)}
-              onClose={() => onHideIndex(analysis.name)}
+              onClose={() => closeHistogram(() => onHideIndex(analysis.name))}
             />
             <div
               className="ndvi-scale"
@@ -1049,10 +1091,10 @@ export function ControlPanel({
             </StatisticsDisclosure>
           </section>
         );
-      })}
+          })}
 
-      {data && detectionPanelVisible && (
-        <section className="panel-section detection-section">
+          {data && detectionPanelVisible && (
+            <section className="panel-section detection-section">
           <div className="panel-heading">
             <strong>Detecciones por diametro</strong>
             <div
@@ -1199,6 +1241,8 @@ export function ControlPanel({
             </div>
           </StatisticsDisclosure>
         </section>
+          )}
+        </>
       )}
     </aside>
   );

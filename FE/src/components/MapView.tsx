@@ -38,6 +38,7 @@ import { ControlPanel } from "./ControlPanel";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DetectionDialog } from "./DetectionDialog";
 import { ImportDialog } from "./ImportDialog";
+import { MobileDialogToggle } from "./MobileDialogToggle";
 import { RoiDialog } from "./RoiDialog";
 import { RoiComparisonDialog } from "./RoiComparisonDialog";
 import { PublicationsDialog } from "./PublicationsDialog";
@@ -97,11 +98,13 @@ export function MapView() {
   const [detectionsOpen, setDetectionsOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [indicesOpen, setIndicesOpen] = useState(false);
+  const [indicesMobileCollapsed, setIndicesMobileCollapsed] = useState(false);
   const [roiOpen, setRoiOpen] = useState(false);
   const [roiLibraryOpen, setRoiLibraryOpen] = useState(false);
   const [prescriptionOpen, setPrescriptionOpen] = useState(false);
   const [prescriptionConfigurationRequest, setPrescriptionConfigurationRequest] =
     useState(0);
+  const [prescriptionAnalysisRequest, setPrescriptionAnalysisRequest] = useState(0);
   const [prescriptionError, setPrescriptionError] = useState<string | null>(null);
   const [rois, setRois] = useState<RoiRecord[]>([]);
   const [orthomosaics, setOrthomosaics] = useState<OrthomosaicRecord[]>([]);
@@ -990,6 +993,7 @@ export function MapView() {
       <PrescriptionDialog
         open={prescriptionOpen}
         configurationRequestId={prescriptionConfigurationRequest}
+        analysisRequestId={prescriptionAnalysisRequest}
         indexName={selectedIndex ?? "NDVI"}
         displayRange={activePrescriptionDisplayRange}
         busy={map.zoningLoading || map.prescriptionLoading}
@@ -1094,20 +1098,24 @@ export function MapView() {
           onMouseDown={() => setIndicesOpen(false)}
         >
           <section
-            className="import-dialog indices-dialog"
+            className={`import-dialog indices-dialog mobile-collapsible-dialog ${indicesMobileCollapsed ? "is-mobile-collapsed" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="indices-title"
             onMouseDown={(event) => event.stopPropagation()}
           >
+            <MobileDialogToggle
+              collapsed={indicesMobileCollapsed}
+              onToggle={() => setIndicesMobileCollapsed((current) => !current)}
+            />
             <div className="import-dialog-heading">
               <div className="modal-title-group">
                 <span className="modal-title-icon">
                   <IconChartHistogram aria-hidden="true" />
                 </span>
                 <div>
-                  <span className="import-eyebrow">ANÃLISIS ESPECTRAL</span>
-                  <h2 id="indices-title">Ãndices de vegetaciÃ³n</h2>
+                  <span className="import-eyebrow">ANÁLISIS ESPECTRAL</span>
+                  <h2 id="indices-title">Índices de vegetación</h2>
                 </div>
               </div>
               <button
@@ -1121,7 +1129,7 @@ export function MapView() {
             </div>
             <p className="import-dialog-copy">
               Activa las capas que deseas analizar. Puedes mantener varios
-              Ã­ndices visibles al mismo tiempo.
+              índices visibles al mismo tiempo.
             </p>
             <div className="index-selector">
               {(["NDVI", "NDWI", "NDRE"] as const).map((name) => {
@@ -1143,7 +1151,7 @@ export function MapView() {
                     <span>
                       <strong>{name}</strong>
                       <small>
-                        {active ? "Ãndice visible" : "Ãndice oculto"}
+                        {active ? "Índice visible" : "Índice oculto"}
                       </small>
                     </span>
                     <i
@@ -1162,7 +1170,7 @@ export function MapView() {
               onClick={map.hideIndices}
             >
               <IconEyeOff aria-hidden="true" />
-              Ocultar todos los Ã­ndices
+              Ocultar todos los índices
             </button>
           </section>
         </div>
@@ -1340,6 +1348,10 @@ export function MapView() {
         <PrescriptionLegend
           response={map.prescription ?? map.zoning!}
           onClose={map.clearPrescription}
+          onOpenHistogram={() => {
+            setPrescriptionAnalysisRequest((current) => current + 1);
+            setPrescriptionOpen(true);
+          }}
           onConfigure={() => {
             setPrescriptionConfigurationRequest((current) => current + 1);
             setPrescriptionOpen(true);

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from geofield.application.ports import OrthomosaicRepository, RasterState
+from geofield.services.local_paths import resolve_upload_path
 
 
 class ActivateOrthomosaicUseCase:
@@ -40,6 +41,9 @@ class ResetActiveOrthomosaicUseCase:
             return
 
         candidate_paths = {Path(str(file_path)).resolve()}
+        uploads_dir = getattr(self.orthomosaics.settings, "uploads_dir", None)
+        if uploads_dir is not None:
+            candidate_paths.add(resolve_upload_path(str(file_path), uploads_dir))
         original_filename = record.get("original_filename") or file_path
         suffix = Path(str(original_filename)).suffix or ".tif"
         candidate_paths.add(

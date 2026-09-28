@@ -4280,7 +4280,7 @@ body {
 .prescription-dialog {
   width: min(1360px, calc(100vw - 40px));
   height: auto;
-  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
   padding: 28px;
   border: 1px solid rgba(189, 204, 191, 0.9);
   border-radius: 24px;
@@ -6442,6 +6442,19 @@ body {
     left: 12px;
     transform: translateY(-50%);
     gap: 8px;
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .action-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .crop-download-menu {
+    width: min(230px, calc(100vw - 82px));
+  }
+  .leaflet-control-zoom,
+  .leaflet-top.leaflet-right {
+    right: 12px !important;
   }
   .swipe-toggle {
     top: 12px;
@@ -6491,9 +6504,19 @@ body {
     padding: 10px;
   }
   .action-bar {
-    top: 10px;
+    top: 50%;
     left: 10px;
-    gap: 5px;
+    transform: translateY(-50%);
+    gap: 6px;
+    max-height: calc(100dvh - 20px);
+  }
+  .crop-download-menu {
+    left: 52px;
+    width: min(220px, calc(100vw - 72px));
+  }
+  .leaflet-control-zoom,
+  .leaflet-top.leaflet-right {
+    right: 10px !important;
   }
   .action-pill {
     width: 44px;
@@ -6642,8 +6665,8 @@ body {
   }
   .prescription-dialog {
     width: calc(100vw - 16px);
-    max-height: calc(100vh - 16px);
-    padding: 16px;
+    max-height: calc(100dvh - 16px);
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
     border-radius: 18px;
   }
   .prescription-layout {
@@ -6662,6 +6685,20 @@ body {
   .prescription-dialog-actions {
     align-items: stretch;
     flex-direction: column-reverse;
+    position: sticky;
+    z-index: 3;
+    bottom: calc(-16px - env(safe-area-inset-bottom, 0px));
+    margin-right: -16px;
+    margin-bottom: calc(-16px - env(safe-area-inset-bottom, 0px));
+    margin-left: -16px;
+    padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid rgba(210, 220, 210, 0.92);
+    background: rgba(249, 251, 247, 0.98);
+    box-shadow: 0 -12px 26px rgba(29, 42, 32, 0.08);
+  }
+  .prescription-dialog-actions button {
+    width: 100%;
+    min-height: 48px;
   }
   .prescription-legend {
     right: 12px;
@@ -6759,8 +6796,12 @@ body {
     padding: 10px;
   }
   .import-dialog {
-    height: calc(100vh - 20px);
-    max-height: calc(100vh - 20px);
+    height: calc(100dvh - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+  .prescription-dialog {
+    height: calc(100dvh - 20px);
+    max-height: calc(100dvh - 20px);
   }
   .roi-comparison-dialog {
     height: calc(100vh - 20px);
@@ -6800,5 +6841,1828 @@ body {
   .import-dialog-backdrop,
   .import-dialog {
     animation: none;
+  }
+}
+
+/* Refinamiento general de UI: superficies compactas, jerarquia consistente y mapa despejado. */
+:root {
+  --ui-surface: rgba(255, 255, 255, 0.96);
+  --ui-surface-soft: rgba(248, 250, 247, 0.94);
+  --ui-border: #d8dfd6;
+  --ui-border-strong: #b9c6b9;
+  --ui-text: #1f2a22;
+  --ui-muted: #657166;
+  --ui-green: #416a4d;
+  --ui-green-strong: #31543b;
+  --ui-shadow: 0 14px 34px rgba(20, 29, 23, 0.16);
+  --ui-shadow-soft: 0 8px 20px rgba(20, 29, 23, 0.08);
+  font-size: 15px;
+}
+
+body {
+  background: #e9ede8;
+  color: var(--ui-text);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid rgba(65, 106, 77, 0.35);
+  outline-offset: 2px;
+}
+
+.action-bar {
+  left: 12px;
+  gap: 8px;
+}
+
+.action-pill,
+.swipe-toggle,
+.leaflet-control-zoom a {
+  width: 40px !important;
+  height: 40px !important;
+  border-color: rgba(37, 49, 40, 0.2) !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  color: #334139 !important;
+  box-shadow: var(--ui-shadow-soft) !important;
+  backdrop-filter: blur(12px);
+  transition:
+    transform 0.16s ease,
+    border-color 0.16s ease,
+    background 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.leaflet-control-zoom a {
+  line-height: 40px !important;
+}
+
+.action-pill:hover:not(:disabled),
+.swipe-toggle:hover,
+.leaflet-control-zoom a:hover {
+  border-color: var(--ui-border-strong) !important;
+  background: #fff !important;
+  transform: translateY(-1px);
+}
+
+.action-pill.is-active,
+.swipe-toggle.is-off {
+  border-color: rgba(65, 106, 77, 0.34) !important;
+  background: #edf5ee !important;
+  color: var(--ui-green-strong) !important;
+}
+
+.action-pill:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.action-pill svg,
+.swipe-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+
+.crop-download-menu,
+.index-menu {
+  border-color: var(--ui-border);
+  border-radius: 10px;
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow);
+  backdrop-filter: blur(14px);
+}
+
+.crop-download-menu button,
+.index-menu button {
+  background: #fff;
+  color: var(--ui-text);
+}
+
+.crop-download-menu button:hover,
+.index-menu button:hover {
+  background: #f5f8f4;
+}
+
+.controls {
+  top: 12px;
+  left: 68px;
+  width: min(392px, calc(100vw - 104px));
+  max-height: calc(100dvh - 24px);
+  padding: 9px;
+  overflow: visible;
+  border-color: rgba(216, 223, 214, 0.92);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--ui-shadow);
+  backdrop-filter: blur(16px) saturate(1.08);
+}
+
+.controls:not(.is-collapsed) {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #bcc8bd transparent;
+}
+
+.controls.is-collapsed {
+  width: 36px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  overflow: visible;
+}
+
+.controls-collapse-toggle {
+  position: sticky;
+  z-index: 5;
+  top: 0;
+  float: right;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  margin: -2px -2px 6px 8px;
+  padding: 0;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ui-green);
+  box-shadow: 0 4px 12px rgba(20, 29, 23, 0.08);
+  cursor: pointer;
+}
+
+.controls-collapse-toggle:hover {
+  border-color: var(--ui-border-strong);
+  background: #f6faf6;
+}
+
+.controls-collapse-toggle svg {
+  width: 15px;
+  height: 15px;
+  transition: transform 0.18s ease;
+}
+
+.controls.is-collapsed .controls-collapse-toggle {
+  position: absolute;
+  inset: 7px 5px auto auto;
+  margin: 0;
+}
+
+.controls.is-collapsed .controls-collapse-toggle svg {
+  transform: rotate(180deg);
+}
+
+.panel-section,
+.ndvi-section,
+.index-histogram-section,
+.detection-section,
+.equalization-card,
+.statistics-disclosure,
+.stats-grid div,
+.roi-summary,
+.detection-summary,
+.detection-dataset-card,
+.detection-representation-card,
+.detection-histogram-card,
+.detection-pie-overview,
+.detection-diameter-field,
+.prescription-panel-card,
+.prescription-histogram-card,
+.prescription-stats-card {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-soft);
+}
+
+.panel-section,
+.ndvi-section,
+.index-histogram-section,
+.detection-section {
+  padding: 8px;
+  border-radius: 10px;
+}
+
+.panel-section + .panel-section {
+  margin-top: 8px;
+}
+
+.panel-heading {
+  align-items: center;
+  margin-bottom: 6px;
+  color: var(--ui-text);
+  font-size: 10px;
+}
+
+.panel-heading strong,
+.statistics-disclosure strong,
+.detection-section-heading span strong {
+  color: var(--ui-text);
+}
+
+.legend-toggle,
+.equalization-toggle,
+.equalization-visibility,
+.equalization-dismiss,
+.statistics-disclosure-icon,
+.detection-summary > button,
+.detection-edit-actions button,
+.detection-view-modes > button,
+.roi-analysis-actions button + button,
+.hide-all-indices,
+.manage-rois,
+.roi-dashboard-action.is-secondary,
+.prescription-clear,
+.prescription-map-rotation-trigger.is-secondary,
+.confirm-dialog-actions button:first-child {
+  border-color: var(--ui-border);
+  background: #fff;
+  color: #4c5c51;
+}
+
+.legend-toggle:hover,
+.equalization-toggle:hover,
+.equalization-visibility:hover,
+.equalization-dismiss:hover,
+.statistics-disclosure:hover,
+.detection-summary > button:hover:not(:disabled),
+.detection-edit-actions button:hover:not(:disabled),
+.detection-view-modes > button:hover:not(:disabled),
+.roi-analysis-actions button + button:hover:not(:disabled),
+.hide-all-indices:hover,
+.manage-rois:hover,
+.roi-dashboard-action.is-secondary:hover:not(:disabled),
+.prescription-clear:hover:not(:disabled),
+.prescription-map-rotation-trigger.is-secondary:hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+  background: #f7faf6;
+}
+
+.legend-toggle.is-active,
+.equalization-toggle.is-active,
+.equalization-visibility.is-on,
+.detection-summary > button.is-visible,
+.detection-view-modes > button.is-selected,
+.statistics-section.is-expanded .statistics-disclosure-icon {
+  border-color: rgba(65, 106, 77, 0.34);
+  background: #eef6ef;
+  color: var(--ui-green-strong);
+}
+
+.tree-histogram {
+  height: 96px;
+  padding: 8px 7px 11px;
+  border-radius: 9px;
+}
+
+.equalization-toolbar {
+  height: 27px;
+  padding: 0 8px;
+  background: #f7faf6;
+}
+
+.equalization-histogram {
+  height: 104px;
+}
+
+.equalization-readout {
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.stats-grid {
+  gap: 5px;
+  font-size: 9px;
+}
+
+.stats-grid div {
+  padding: 6px 7px;
+  border-radius: 7px;
+}
+
+.roi-analysis-actions {
+  gap: 5px;
+}
+
+.roi-analysis-actions button,
+.prescription-panel-action,
+.detection-dropzone > button,
+.confirm-dialog-actions button,
+.prescription-dialog-actions button {
+  min-height: 34px;
+  border-radius: 8px;
+  font-size: 9px;
+}
+
+.import-dialog-backdrop,
+.roi-metric-modal-backdrop {
+  padding: 16px;
+  background: rgba(21, 28, 23, 0.48);
+  backdrop-filter: blur(7px) saturate(0.9);
+}
+
+.import-dialog,
+.roi-metric-modal,
+.prescription-dialog {
+  max-height: calc(100dvh - 32px);
+  border-color: rgba(215, 224, 216, 0.96);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7faf6 100%);
+  box-shadow:
+    0 22px 60px rgba(18, 31, 22, 0.26),
+    0 1px 0 rgba(255, 255, 255, 0.84) inset;
+}
+
+.import-dialog {
+  width: min(520px, calc(100vw - 32px));
+  height: auto;
+  padding: 20px;
+}
+
+.upload-dialog {
+  width: min(720px, calc(100vw - 32px));
+  padding: 0;
+}
+
+.cycle-dialog {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.orthomosaic-dialog,
+.roi-comparison-dialog,
+.detection-dialog {
+  width: min(1120px, calc(100vw - 32px));
+}
+
+.prescription-dialog {
+  width: min(1180px, calc(100vw - 32px));
+  padding: 22px;
+}
+
+.import-dialog-heading,
+.roi-dashboard-heading,
+.roi-metric-modal-head {
+  gap: 12px;
+}
+
+.modal-title-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #eef6ef;
+}
+
+.modal-title-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.import-dialog h2,
+.confirm-dialog h2,
+.roi-comparison-dialog .modal-title-group h2 {
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.import-dialog-copy {
+  margin: 10px 0 14px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.dialog-close,
+.roi-metric-modal-close {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.import-options,
+.roi-options,
+.index-selector,
+.sensor-options,
+.roi-dashboard-view-switcher,
+.prescription-view-switcher {
+  gap: 8px;
+}
+
+.import-options button,
+.roi-options button,
+.index-selector button,
+.sensor-options button,
+.prescription-view-switcher button {
+  min-height: 96px;
+  padding: 12px;
+  border-color: var(--ui-border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ui-text);
+  box-shadow: none;
+}
+
+.import-options button span,
+.import-options button small,
+.import-options button strong {
+  color: inherit;
+}
+
+.import-options button:hover,
+.roi-options button:hover,
+.index-selector button:hover,
+.sensor-options button:hover,
+.prescription-view-switcher button:hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+  background: #f7faf6;
+  transform: translateY(-1px);
+}
+
+.index-selector button.is-active,
+.sensor-options button.is-selected,
+.roi-options button:hover,
+.prescription-view-switcher button.is-active {
+  border-color: rgba(65, 106, 77, 0.36);
+  background: #eef6ef;
+}
+
+.upload-dialog-hero {
+  padding: 18px 20px 16px;
+}
+
+.upload-hero-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+}
+
+.upload-hero-copy h2 {
+  font-size: 19px;
+}
+
+.detection-dialog {
+  padding: 18px 20px 20px;
+}
+
+.detection-intro {
+  gap: 14px;
+  margin: 8px 0;
+}
+
+.detection-dropzone {
+  min-height: 68px;
+  padding: 11px 12px;
+  border-radius: 12px;
+}
+
+.detection-dashboard-grid {
+  gap: 10px;
+  grid-template-columns:
+    minmax(190px, 0.74fr) minmax(230px, 0.9fr)
+    minmax(300px, 1.18fr);
+}
+
+.detection-view-modes > button {
+  min-height: 58px;
+  padding: 9px 10px;
+  border-radius: 9px;
+}
+
+.prescription-layout {
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.prescription-sidebar,
+.prescription-main,
+.prescription-application {
+  gap: 12px;
+}
+
+.prescription-panel-card {
+  gap: 12px;
+  padding: 14px;
+  border-radius: 12px;
+}
+
+.prescription-config-grid,
+.prescription-tuning-grid,
+.prescription-analytics {
+  gap: 10px;
+}
+
+.prescription-config-grid > label {
+  gap: 7px;
+  padding: 12px;
+  border-radius: 10px;
+}
+
+.prescription-config-grid select,
+.prescription-size-input {
+  height: 38px;
+  border-radius: 8px;
+}
+
+.prescription-histogram-shell {
+  height: 126px;
+}
+
+.prescription-legend {
+  right: 14px;
+  bottom: 14px;
+  width: min(330px, calc(100vw - 86px));
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.error-toast,
+.cycle-exit-toast,
+.uploading-card {
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: var(--ui-shadow);
+}
+
+@media (max-width: 1100px) {
+  .controls {
+    left: 64px;
+    width: min(360px, calc(100vw - 96px));
+  }
+
+  .detection-dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .prescription-dialog {
+    width: min(900px, calc(100vw - 28px));
+    padding: 18px;
+  }
+}
+
+@media (max-width: 768px) {
+  .action-bar {
+    left: 10px;
+  }
+
+  .action-pill,
+  .swipe-toggle,
+  .leaflet-control-zoom a {
+    width: 38px !important;
+    height: 38px !important;
+  }
+
+  .leaflet-control-zoom a {
+    line-height: 38px !important;
+  }
+
+  .controls {
+    left: 58px;
+    right: 10px;
+    bottom: 10px;
+    top: auto;
+    width: auto;
+    max-height: min(56dvh, 430px);
+  }
+
+  .controls.is-collapsed {
+    left: auto;
+    right: 10px;
+    bottom: 10px;
+    width: 38px;
+    height: 40px;
+  }
+
+  .controls-collapse-toggle {
+    position: absolute;
+    top: -14px;
+    right: 8px;
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+  }
+
+  .controls-collapse-toggle svg {
+    transform: rotate(-90deg);
+  }
+
+  .controls.is-collapsed .controls-collapse-toggle {
+    inset: 5px 4px auto auto;
+  }
+
+  .controls.is-collapsed .controls-collapse-toggle svg {
+    transform: rotate(90deg);
+  }
+
+  .import-dialog-backdrop,
+  .roi-metric-modal-backdrop {
+    align-items: end;
+    padding: 10px;
+  }
+
+  .import-dialog,
+  .upload-dialog,
+  .cycle-dialog,
+  .orthomosaic-dialog,
+  .roi-comparison-dialog,
+  .detection-dialog,
+  .prescription-dialog,
+  .roi-metric-modal {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+    border-radius: 14px;
+  }
+
+  .import-dialog {
+    padding: 16px;
+  }
+
+  .upload-dialog,
+  .import-dialog.upload-dialog {
+    padding: 0;
+  }
+
+  .detection-dashboard-grid,
+  .prescription-analytics {
+    grid-template-columns: 1fr;
+  }
+
+  .detection-pie-overview {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .action-bar {
+    gap: 5px;
+  }
+
+  .controls {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    max-height: min(58dvh, 390px);
+    padding: 8px;
+  }
+
+  .panel-heading,
+  .histogram-legend,
+  .modal-intro-row,
+  .detection-intro,
+  .prescription-panel-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .equalization-toolbar {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 6px 8px;
+  }
+
+  .equalization-toggle-group {
+    order: 3;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .roi-analysis-actions,
+  .detection-size-summary,
+  .prescription-config-grid,
+  .prescription-tuning-grid,
+  .prescription-view-switcher,
+  .import-options,
+  .roi-options,
+  .index-selector {
+    grid-template-columns: 1fr;
+  }
+
+  .import-options button,
+  .roi-options button,
+  .index-selector button,
+  .sensor-options button {
+    min-height: 72px;
+  }
+
+  .prescription-dialog-actions {
+    position: sticky;
+    bottom: calc(-16px - env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* UX responsive: modales pesados como hojas compactas con flecha desplegable. */
+.mobile-dialog-toggle {
+  display: none;
+}
+
+.orthomosaic-table-wrap,
+.roi-table-wrap,
+.roi-comparison-table-wrap,
+.prescription-zones-table,
+.roi-dashboard-body {
+  scrollbar-width: thin;
+  scrollbar-color: #bdc8bd transparent;
+}
+
+.orthomosaic-table-wrap,
+.roi-table-wrap,
+.roi-comparison-table-wrap {
+  max-height: min(58dvh, 520px);
+}
+
+.roi-dashboard-body,
+.prescription-layout,
+.detection-dashboard-grid {
+  content-visibility: auto;
+  contain-intrinsic-size: 620px;
+}
+
+@media (max-width: 768px) {
+  .import-dialog-backdrop,
+  .roi-metric-modal-backdrop {
+    pointer-events: none;
+    background: rgba(13, 20, 16, 0.18);
+    backdrop-filter: none;
+  }
+
+  .import-dialog,
+  .roi-metric-modal,
+  .prescription-map-rotation-control {
+    pointer-events: auto;
+  }
+
+  .mobile-collapsible-dialog {
+    position: relative;
+    max-height: min(72dvh, 620px);
+    overflow: auto;
+    box-shadow: 0 12px 34px rgba(18, 31, 22, 0.22);
+    transition:
+      height 0.18s ease,
+      max-height 0.18s ease,
+      padding 0.18s ease,
+      transform 0.18s ease;
+  }
+
+  .mobile-dialog-toggle {
+    position: absolute;
+    z-index: 12;
+    top: -15px;
+    left: 50%;
+    width: 34px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    transform: translateX(-50%);
+    border: 1px solid rgba(192, 204, 193, 0.95);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--ui-green-strong);
+    box-shadow: 0 8px 18px rgba(18, 31, 22, 0.18);
+    cursor: pointer;
+  }
+
+  .mobile-dialog-toggle:hover {
+    border-color: var(--ui-border-strong);
+    background: #f7faf6;
+  }
+
+  .mobile-dialog-toggle svg {
+    width: 17px;
+    height: 17px;
+    transition: transform 0.18s ease;
+  }
+
+  .mobile-collapsible-dialog.is-mobile-collapsed {
+    width: min(148px, calc(100vw - 24px));
+    height: 44px !important;
+    min-height: 44px;
+    max-height: 44px !important;
+    padding: 0 !important;
+    overflow: visible;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.96);
+    transform: translateY(2px);
+  }
+
+  .mobile-collapsible-dialog.is-mobile-collapsed > :not(.mobile-dialog-toggle) {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .mobile-collapsible-dialog.is-mobile-collapsed .mobile-dialog-toggle {
+    top: 7px;
+    width: 32px;
+    height: 30px;
+    box-shadow: none;
+  }
+
+  .mobile-collapsible-dialog.is-mobile-collapsed .mobile-dialog-toggle svg {
+    transform: rotate(180deg);
+  }
+
+  .orthomosaic-table-wrap,
+  .roi-table-wrap,
+  .roi-comparison-table-wrap {
+    max-height: min(46dvh, 430px);
+  }
+
+  .orthomosaic-table,
+  .roi-table,
+  .roi-comparison-table {
+    min-width: 720px;
+  }
+
+  .upload-dialog-hero,
+  .import-dialog-heading {
+    padding-right: 42px;
+  }
+
+  .prescription-layout {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .prescription-panel-card,
+  .prescription-histogram-card,
+  .prescription-stats-card,
+  .roi-trend-card,
+  .roi-heatmap-card,
+  .roi-operational-card,
+  .roi-dashboard-insight-card {
+    box-shadow: 0 6px 16px rgba(20, 29, 23, 0.08);
+  }
+}
+
+@media (max-width: 520px) {
+  .import-dialog,
+  .roi-dialog,
+  .roi-library,
+  .orthomosaic-dialog,
+  .roi-comparison-dialog,
+  .prescription-dialog {
+    max-height: min(68dvh, 560px);
+  }
+
+  .upload-dialog {
+    max-height: min(70dvh, 580px);
+  }
+
+  .upload-dialog-hero {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 14px 48px 12px 14px;
+  }
+
+  .upload-hero-copy p,
+  .import-dialog-copy,
+  .orthomosaic-reorder-help,
+  .prescription-grid-note,
+  .roi-detail-note {
+    font-size: 10px;
+    line-height: 1.35;
+  }
+
+  .sensor-options,
+  .roi-options,
+  .prescription-view-switcher {
+    gap: 6px;
+  }
+
+  .sensor-options button,
+  .roi-options button,
+  .prescription-view-switcher button {
+    min-height: 58px;
+    padding: 9px;
+  }
+
+  .upload-dropzone {
+    min-height: 96px;
+    margin: 10px 14px;
+    padding: 12px;
+  }
+
+  .upload-note {
+    margin: 10px 14px 14px;
+  }
+
+  .prescription-dialog {
+    padding: 13px;
+  }
+
+  .prescription-dialog-actions {
+    margin-right: -13px;
+    margin-bottom: calc(-13px - env(safe-area-inset-bottom, 0px));
+    margin-left: -13px;
+    padding: 10px 13px calc(13px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .prescription-dialog-actions button {
+    min-height: 40px;
+  }
+
+  .prescription-histogram-shell {
+    height: 104px;
+  }
+
+  .roi-dashboard-body {
+    gap: 10px;
+  }
+}
+
+/* Presentacion movil de las bibliotecas y herramientas de analisis. */
+@media (max-width: 768px) {
+  .import-dialog-backdrop:has(> :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .indices-dialog, .prescription-dialog)) {
+    pointer-events: auto;
+    padding: 12px 12px max(12px, env(safe-area-inset-bottom));
+    background: rgba(19, 31, 23, 0.38);
+    backdrop-filter: blur(4px);
+  }
+
+  :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .indices-dialog, .prescription-dialog).import-dialog {
+    width: min(100%, 620px);
+    height: auto;
+    max-height: min(88dvh, 760px);
+    padding: 22px 18px 18px;
+    overflow-x: hidden;
+    border: 1px solid #e1e9e2;
+    border-radius: 20px;
+    background: #fff;
+    box-shadow: 0 20px 55px rgba(18, 31, 22, 0.22);
+  }
+
+  :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .indices-dialog, .prescription-dialog).import-dialog::before {
+    display: none;
+  }
+
+  :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .prescription-dialog) .mobile-dialog-toggle {
+    top: 5px;
+    width: 42px;
+    height: 20px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .prescription-dialog) .mobile-dialog-toggle::before {
+    position: absolute;
+    width: 34px;
+    height: 4px;
+    border-radius: 999px;
+    background: #b7c6b9;
+    content: "";
+  }
+
+  :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .prescription-dialog) .mobile-dialog-toggle svg {
+    opacity: 0;
+  }
+
+  :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .indices-dialog, .prescription-dialog) .import-dialog-heading {
+    padding-right: 0;
+  }
+
+  :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .indices-dialog, .prescription-dialog) .dialog-close {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+  }
+
+  :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .indices-dialog, .prescription-dialog) .import-dialog-copy {
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .orthomosaic-dialog .modal-intro-row,
+  .roi-library .modal-intro-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .orthomosaic-dialog .library-cycle-summary {
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .orthomosaic-dialog .library-cycle-actions {
+    justify-content: flex-start;
+  }
+
+  .orthomosaic-dialog .orthomosaic-table-wrap,
+  .roi-library .roi-table-wrap {
+    max-height: none;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .orthomosaic-dialog .orthomosaic-table,
+  .roi-library .roi-table {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .orthomosaic-dialog thead,
+  .roi-library thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .orthomosaic-dialog tbody,
+  .roi-library tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .orthomosaic-dialog tbody tr,
+  .roi-library tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 9px 12px;
+    padding: 14px;
+    border: 1px solid #e1e9e2;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 3px 12px rgba(25, 43, 30, 0.04);
+  }
+
+  .orthomosaic-dialog tbody td,
+  .roi-library tbody td {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .orthomosaic-dialog tbody td:nth-child(1) { grid-column: 2; grid-row: 1; }
+  .orthomosaic-dialog tbody td:nth-child(2) { grid-column: 1; grid-row: 1; }
+  .orthomosaic-dialog tbody td:nth-child(3) { grid-column: 1; grid-row: 2; }
+  .orthomosaic-dialog tbody td:nth-child(4) { grid-column: 2; grid-row: 2; align-self: center; }
+  .orthomosaic-dialog tbody td:nth-child(5) { grid-column: 1; grid-row: 3; align-self: center; }
+  .orthomosaic-dialog tbody td:nth-child(6) { grid-column: 2; grid-row: 3; }
+
+  .orthomosaic-dialog .orthomosaic-table td strong,
+  .roi-library .roi-table td strong {
+    display: block;
+    overflow-wrap: anywhere;
+    font-size: 14px;
+  }
+
+  .orthomosaic-dialog .orthomosaic-table td small {
+    max-width: 100%;
+    font-size: 11px;
+  }
+
+  .orthomosaic-dialog .orthomosaic-date-cell {
+    align-items: start;
+    font-size: 12px;
+  }
+
+  .orthomosaic-dialog :is(.orthomosaic-date-trigger, .orthomosaic-date-save, .orthomosaic-date-cancel),
+  .roi-library :is(.select-roi-button, .delete-orthomosaic) {
+    min-height: 38px;
+    font-size: 11px;
+  }
+
+  .orthomosaic-dialog .ortho-toggle {
+    width: 44px;
+    height: 26px;
+  }
+
+  .orthomosaic-dialog .ortho-toggle span {
+    width: 21px;
+    height: 21px;
+  }
+
+  .orthomosaic-dialog .ortho-toggle.is-on span {
+    transform: translateX(18px);
+  }
+
+  .roi-library tbody td:nth-child(1) { grid-column: 1 / -1; }
+  .roi-library tbody td:nth-child(2) { grid-column: 1 / -1; color: #69796d; }
+  .roi-library tbody td:nth-child(3) { grid-column: 1 / -1; }
+
+  .roi-library .table-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .roi-dialog .roi-options,
+  .indices-dialog .index-selector {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .roi-dialog .roi-options button,
+  .indices-dialog .index-selector button {
+    min-height: 82px;
+    padding: 14px;
+    border-radius: 14px;
+    box-shadow: none;
+  }
+
+  .roi-dialog .roi-options button > span:last-child {
+    min-height: 0;
+    gap: 4px;
+  }
+
+  .roi-dialog .roi-options i {
+    margin-top: 5px;
+    font-size: 10px;
+  }
+
+  .roi-dialog .manage-rois,
+  .indices-dialog .hide-all-indices {
+    min-height: 44px;
+    margin-top: 14px;
+    border-radius: 12px;
+    font-size: 12px;
+  }
+
+  .indices-dialog .index-selector button {
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+    grid-template-rows: 1fr;
+  }
+
+  .indices-dialog .index-selector .index-option-icon { grid-column: 1; grid-row: 1; }
+  .indices-dialog .index-selector button > span { grid-column: 2; grid-row: 1; }
+  .indices-dialog .index-selector .layer-toggle { grid-column: 3; grid-row: 1; }
+  .indices-dialog .index-selector strong { font-size: 14px; }
+  .indices-dialog .index-selector small { font-size: 11px; }
+
+  .prescription-dialog .prescription-view-switcher {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .prescription-dialog .prescription-view-switcher button {
+    flex: 1 0 120px;
+    min-height: 54px;
+    padding: 10px 12px;
+    border-radius: 12px;
+  }
+
+  .prescription-dialog .prescription-view-switcher button span {
+    display: none;
+  }
+
+  .prescription-dialog .prescription-layout {
+    gap: 12px;
+    margin-top: 14px;
+  }
+
+  .prescription-dialog :is(.prescription-panel-card, .prescription-histogram-card, .prescription-stats-card) {
+    min-width: 0;
+    padding: 14px;
+    border-radius: 14px;
+    box-shadow: none;
+  }
+
+  .prescription-dialog .prescription-dialog-actions {
+    gap: 8px;
+    background: #fff;
+  }
+
+  .prescription-dialog .prescription-dialog-actions button {
+    min-height: 44px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 520px) {
+  :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .indices-dialog, .prescription-dialog).import-dialog {
+    max-height: calc(100dvh - 24px - env(safe-area-inset-bottom));
+    padding: 24px 16px 16px;
+  }
+
+  .prescription-dialog .prescription-dialog-actions {
+    margin-right: -16px;
+    margin-bottom: calc(-16px - env(safe-area-inset-bottom, 0px));
+    margin-left: -16px;
+    padding: 10px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (max-width: 768px) {
+  :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .prescription-dialog).mobile-collapsible-dialog.is-mobile-collapsed {
+    width: min(148px, calc(100vw - 24px));
+  }
+}
+
+/* Los dialogos flotan en el centro y dejan espacio libre arriba y abajo. */
+@media (max-width: 768px) {
+  .import-dialog-backdrop,
+  .roi-metric-modal-backdrop,
+  .import-dialog-backdrop:has(> :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .indices-dialog, .prescription-dialog)) {
+    align-items: center;
+    justify-items: center;
+    pointer-events: auto;
+    padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+  }
+
+  .import-dialog-backdrop > .import-dialog,
+  .roi-metric-modal-backdrop > .roi-metric-modal {
+    width: min(100%, 680px);
+    height: auto;
+    max-height: min(82dvh, calc(100dvh - 48px - env(safe-area-inset-bottom)));
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-bottom: 24px;
+  }
+
+  .import-dialog-backdrop > .mobile-collapsible-dialog,
+  .roi-metric-modal-backdrop > .mobile-collapsible-dialog {
+    max-height: min(82dvh, calc(100dvh - 48px - env(safe-area-inset-bottom)));
+  }
+
+  .import-dialog-backdrop .mobile-dialog-toggle,
+  .roi-metric-modal-backdrop .mobile-dialog-toggle,
+  :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .prescription-dialog) .mobile-dialog-toggle {
+    position: sticky;
+    z-index: 15;
+    top: 0;
+    left: auto;
+    display: grid;
+    width: 44px;
+    height: 32px;
+    margin: 0 auto 8px;
+    transform: none;
+    border: 1px solid #d7e3d9;
+    border-radius: 0 0 12px 12px;
+    background: #f2f7f2;
+    color: #275d3d;
+    box-shadow: none;
+  }
+
+  .import-dialog-backdrop .mobile-dialog-toggle::before,
+  .roi-metric-modal-backdrop .mobile-dialog-toggle::before {
+    display: none;
+  }
+
+  .import-dialog-backdrop .mobile-dialog-toggle svg,
+  .roi-metric-modal-backdrop .mobile-dialog-toggle svg {
+    width: 20px;
+    height: 20px;
+    opacity: 1;
+  }
+
+  .import-dialog-backdrop > .mobile-collapsible-dialog.is-mobile-collapsed,
+  .roi-metric-modal-backdrop > .mobile-collapsible-dialog.is-mobile-collapsed {
+    width: 148px;
+    height: 48px !important;
+    min-height: 48px;
+    max-height: 48px !important;
+    padding: 0 !important;
+    border-radius: 999px;
+    overflow: hidden;
+    transform: none;
+  }
+
+  .import-dialog-backdrop > .mobile-collapsible-dialog.is-mobile-collapsed .mobile-dialog-toggle,
+  .roi-metric-modal-backdrop > .mobile-collapsible-dialog.is-mobile-collapsed .mobile-dialog-toggle {
+    top: 4px;
+    width: 100%;
+    height: 40px;
+    margin: 4px auto;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+  }
+
+  .import-dialog-backdrop > .mobile-collapsible-dialog.is-mobile-collapsed .mobile-dialog-toggle svg,
+  .roi-metric-modal-backdrop > .mobile-collapsible-dialog.is-mobile-collapsed .mobile-dialog-toggle svg {
+    transform: rotate(180deg);
+  }
+
+  .import-dialog-backdrop > .mobile-collapsible-dialog.is-mobile-collapsed > :not(.mobile-dialog-toggle),
+  .roi-metric-modal-backdrop > .mobile-collapsible-dialog.is-mobile-collapsed > :not(.mobile-dialog-toggle) {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .import-dialog-backdrop .import-dialog-heading {
+    padding-right: 0;
+  }
+
+  .import-dialog-backdrop :is(.dialog-close, .roi-metric-modal-close) {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .prescription-dialog .prescription-dialog-actions {
+    z-index: 4;
+    bottom: 0;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 520px) {
+  .import-dialog-backdrop > .import-dialog,
+  .roi-metric-modal-backdrop > .roi-metric-modal {
+    max-height: min(82dvh, calc(100dvh - 48px - env(safe-area-inset-bottom)));
+  }
+
+  .prescription-dialog .prescription-dialog-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    flex-direction: initial;
+    margin-bottom: -16px;
+  }
+
+  .prescription-dialog .prescription-dialog-actions .prescription-generate {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Paneles compactos y pestaña de reapertura junto al borde inferior. */
+@media (max-width: 768px) {
+  .import-dialog-backdrop > .import-dialog,
+  .roi-metric-modal-backdrop > .roi-metric-modal,
+  .import-dialog-backdrop > .mobile-collapsible-dialog,
+  .roi-metric-modal-backdrop > .mobile-collapsible-dialog {
+    max-height: min(56dvh, 460px, calc(100dvh - 96px - env(safe-area-inset-bottom)));
+  }
+
+  .import-dialog-backdrop:has(> .is-mobile-collapsed),
+  .roi-metric-modal-backdrop:has(> .is-mobile-collapsed) {
+    align-items: end;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+
+  .prescription-map-rotation-control.is-mobile-collapsed {
+    top: auto;
+    bottom: max(16px, env(safe-area-inset-bottom));
+  }
+
+  .map-shell:has(.import-dialog-backdrop) .prescription-legend {
+    display: none;
+  }
+
+  .controls:not(.is-collapsed) {
+    width: min(300px, calc(100vw - 112px));
+    max-height: min(54dvh, 360px);
+    left: 56px;
+    right: auto;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    padding: 8px;
+  }
+
+  .controls .equalization-card {
+    margin-top: 5px;
+    border-radius: 10px;
+  }
+
+  .controls .equalization-toolbar {
+    min-height: 28px;
+    height: auto;
+    gap: 4px;
+    padding: 4px 6px;
+  }
+
+  .controls .equalization-toggle-group {
+    order: 3;
+    width: 100%;
+    gap: 3px;
+  }
+
+  .controls .equalization-toggle {
+    min-height: 24px;
+    padding: 0 6px;
+    font-size: 9px;
+  }
+
+  .controls .equalization-histogram {
+    height: 64px;
+  }
+
+  .controls .equalization-curve-shell {
+    inset: 6px 8px 16px;
+  }
+
+  .controls .equalization-selection,
+  .controls .equalization-shade,
+  .controls .equalization-marker {
+    top: 6px;
+    bottom: 16px;
+  }
+
+  .controls .equalization-marker span {
+    top: calc(100% + 3px);
+    height: 13px;
+    font-size: 7px;
+  }
+
+  .controls .equalization-color-ramp {
+    right: 8px;
+    bottom: 4px;
+    left: 8px;
+    height: 6px;
+  }
+
+  .controls .equalization-readout {
+    gap: 4px;
+    padding: 4px 6px;
+  }
+
+  .controls .equalization-readout small,
+  .controls .equalization-key {
+    font-size: 7px;
+  }
+
+  .controls .equalization-readout strong {
+    font-size: 9px;
+  }
+}
+
+.prescription-legend-mobile-toggle {
+  display: none;
+}
+
+.prescription-mobile-rotation-shortcut,
+.mobile-panel-toggle-label {
+  display: none;
+}
+
+/* Vista del mapa disponible al contraer cualquier panel en telefono. */
+@media (max-width: 768px) {
+  .import-dialog-backdrop,
+  .roi-metric-modal-backdrop,
+  .import-dialog-backdrop:has(> :is(.orthomosaic-dialog, .roi-library, .roi-dialog, .indices-dialog, .prescription-dialog)) {
+    background: rgba(15, 32, 20, 0.12);
+    backdrop-filter: none;
+  }
+
+  .import-dialog-backdrop:has(> .is-mobile-collapsed),
+  .roi-metric-modal-backdrop:has(> .is-mobile-collapsed) {
+    pointer-events: none;
+    background: transparent;
+  }
+
+  .import-dialog-backdrop > .import-dialog,
+  .roi-metric-modal-backdrop > .roi-metric-modal {
+    width: min(calc(100vw - 112px), 420px);
+    max-height: min(62dvh, calc(100dvh - 80px - env(safe-area-inset-bottom)));
+    padding: 14px;
+    pointer-events: auto;
+    border-radius: 16px;
+  }
+
+  .import-dialog-backdrop > .mobile-collapsible-dialog,
+  .roi-metric-modal-backdrop > .mobile-collapsible-dialog {
+    max-height: min(62dvh, calc(100dvh - 80px - env(safe-area-inset-bottom)));
+  }
+
+  .import-dialog-backdrop .mobile-dialog-toggle,
+  .roi-metric-modal-backdrop .mobile-dialog-toggle,
+  .prescription-map-rotation-control .mobile-dialog-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 112px;
+    height: 30px;
+    margin: 0 auto 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 750;
+    white-space: nowrap;
+  }
+
+  .import-dialog-backdrop .mobile-dialog-toggle::after,
+  .roi-metric-modal-backdrop .mobile-dialog-toggle::after,
+  .prescription-map-rotation-control .mobile-dialog-toggle::after {
+    content: "Ver mapa";
+  }
+
+  .import-dialog-backdrop .mobile-dialog-toggle svg,
+  .roi-metric-modal-backdrop .mobile-dialog-toggle svg,
+  .prescription-map-rotation-control .mobile-dialog-toggle svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    opacity: 1;
+  }
+
+  .import-dialog-backdrop > .is-mobile-collapsed .mobile-dialog-toggle,
+  .roi-metric-modal-backdrop > .is-mobile-collapsed .mobile-dialog-toggle {
+    width: 100%;
+    height: 40px;
+    margin: 4px auto;
+  }
+
+  .import-dialog-backdrop > .is-mobile-collapsed .mobile-dialog-toggle::after,
+  .roi-metric-modal-backdrop > .is-mobile-collapsed .mobile-dialog-toggle::after,
+  .prescription-map-rotation-control.is-mobile-collapsed .mobile-dialog-toggle::after {
+    content: "Abrir panel";
+  }
+
+  .prescription-map-rotation-control {
+    top: max(24px, env(safe-area-inset-top));
+    right: auto;
+    bottom: auto;
+    left: 50%;
+    width: min(calc(100vw - 112px), 420px);
+    max-height: min(58dvh, 440px);
+    overflow: auto;
+    padding: 14px;
+    transform: translateX(-50%);
+    border-radius: 16px;
+  }
+
+  .prescription-map-rotation-control .mobile-dialog-toggle {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    border: 1px solid #d7e3d9;
+    background: #f2f7f2;
+    color: #275d3d;
+  }
+
+  .prescription-map-rotation-control.is-mobile-collapsed {
+    width: 148px;
+    height: 48px !important;
+    min-height: 48px;
+    max-height: 48px !important;
+    padding: 4px !important;
+    overflow: hidden;
+    border-radius: 999px;
+    transform: translateX(-50%);
+  }
+
+  .prescription-map-rotation-control.is-mobile-collapsed .mobile-dialog-toggle {
+    width: 100%;
+    height: 38px;
+    margin: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .prescription-map-rotation-control.is-mobile-collapsed .mobile-dialog-toggle svg {
+    transform: rotate(180deg);
+  }
+
+  .prescription-legend {
+    right: 12px;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    width: min(calc(100vw - 112px), 280px);
+    max-height: min(38dvh, 240px);
+    overflow-y: auto;
+    padding: 10px;
+  }
+
+  .prescription-legend-mobile-toggle {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
+    place-items: center;
+    border: 1px solid #d7e3d9;
+    border-radius: 9px;
+    background: #f2f7f2;
+    color: #275d3d;
+  }
+
+  .prescription-legend-mobile-toggle svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .prescription-legend.is-mobile-collapsed {
+    width: min(calc(100vw - 112px), 220px);
+  }
+
+  .prescription-legend.is-mobile-collapsed > :not(header),
+  .prescription-legend.is-mobile-collapsed header > button:not(.prescription-legend-mobile-toggle) {
+    display: none;
+  }
+
+  .prescription-legend.is-mobile-collapsed header > div {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .prescription-legend.is-mobile-collapsed header strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .prescription-legend.is-mobile-collapsed .prescription-legend-mobile-toggle svg {
+    transform: rotate(180deg);
+  }
+}
+
+@media (max-width: 520px) {
+  .import-dialog-backdrop > .import-dialog,
+  .roi-metric-modal-backdrop > .roi-metric-modal {
+    max-height: min(62dvh, calc(100dvh - 80px - env(safe-area-inset-bottom)));
+    padding: 12px;
+  }
+
+  .prescription-dialog .prescription-dialog-actions {
+    margin-right: -12px;
+    margin-left: -12px;
+    margin-bottom: -12px;
+    padding: 8px 12px 12px;
+  }
+}
+
+/* El histograma usa el mismo centro y control inferior que los dialogos. */
+@media (max-width: 768px) {
+  .controls.visible:not(.is-collapsed) {
+    top: 50%;
+    right: auto;
+    bottom: auto;
+    left: 50%;
+    width: min(300px, calc(100vw - 112px));
+    max-height: min(56dvh, 460px);
+    transform: translate(-50%, -50%);
+  }
+
+  .controls.visible.is-collapsed {
+    z-index: 1900;
+    top: auto;
+    right: auto;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    left: 50%;
+    width: min(190px, calc(100vw - 112px));
+    height: 48px;
+    min-height: 48px;
+    padding: 0;
+    overflow: hidden;
+    border-radius: 999px;
+    transform: translateX(-50%);
+  }
+
+  .controls.visible .controls-collapse-toggle,
+  .controls.visible.is-collapsed .controls-collapse-toggle {
+    position: sticky;
+    inset: auto;
+    top: 0;
+    float: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 112px;
+    height: 30px;
+    margin: 0 auto 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 750;
+    white-space: nowrap;
+  }
+
+  .controls.visible .controls-collapse-toggle::after { content: none; }
+
+  .controls.visible .mobile-panel-toggle-label {
+    display: inline;
+  }
+
+  .controls.visible.is-collapsed .controls-collapse-toggle {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .controls.visible.is-collapsed .controls-collapse-toggle::after { content: none; }
+
+  .controls.visible .controls-collapse-toggle svg {
+    width: 16px;
+    height: 16px;
+    transform: none;
+  }
+
+  .controls.visible.is-collapsed .controls-collapse-toggle svg {
+    transform: rotate(180deg);
+  }
+}
+
+@media (max-width: 520px) {
+  .import-dialog-backdrop > .import-dialog,
+  .roi-metric-modal-backdrop > .roi-metric-modal {
+    max-height: min(56dvh, 460px, calc(100dvh - 96px - env(safe-area-inset-bottom)));
+  }
+}
+
+@media (min-width: 769px) {
+  .map-shell:has(.prescription-dialog) .prescription-legend {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .prescription-map-rotation-control.mobile-collapsible-dialog {
+    position: fixed;
+    z-index: 2800;
+  }
+
+  .prescription-map-rotation-control .mobile-dialog-toggle {
+    min-height: 30px;
+    padding: 0 8px;
+  }
+
+  .prescription-map-rotation-control.is-mobile-collapsed .mobile-dialog-toggle {
+    min-height: 38px;
+  }
+
+  .prescription-mobile-rotation-shortcut {
+    display: flex;
+    width: 100%;
+    min-height: 42px;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 8px 12px;
+    border: 1px solid #89aa91;
+    border-radius: 11px;
+    background: #edf7ef;
+    color: #275d3d;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 750;
+    cursor: pointer;
+  }
+
+  .prescription-mobile-rotation-shortcut:disabled {
+    opacity: 0.55;
+    cursor: wait;
+  }
+
+  .prescription-mobile-rotation-shortcut svg {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+  }
+
+  .map-shell:has(.prescription-dialog.is-mobile-collapsed) .prescription-legend,
+  .map-shell:has(.prescription-map-rotation-control) .prescription-legend {
+    display: block;
+  }
+
+  .map-shell:has(.prescription-dialog.is-mobile-collapsed) .prescription-legend {
+    bottom: max(76px, calc(60px + env(safe-area-inset-bottom)));
+  }
+}
+
+.prescription-legend header .prescription-legend-mobile-toggle,
+.prescription-legend header .prescription-legend-histogram-button {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .prescription-legend header {
+    flex-wrap: wrap;
+  }
+
+  .prescription-legend header .prescription-legend-mobile-toggle {
+    display: grid;
+  }
+
+  .prescription-legend header .prescription-legend-histogram-button,
+  .prescription-legend.is-mobile-collapsed header > button.prescription-legend-histogram-button {
+    display: inline-flex;
+    min-height: 30px;
+    height: auto;
+    align-items: center;
+    justify-content: center;
+    padding: 5px 7px;
+    border-color: #a8c5ad;
+    background: #edf7ef;
+    color: #275d3d;
+    font-size: 10px;
+    font-weight: 750;
+    line-height: 1.2;
+  }
+
+  .prescription-legend.is-mobile-collapsed header {
+    flex-wrap: nowrap;
+    align-items: center;
+  }
+
+  .prescription-legend.is-mobile-collapsed header > div {
+    display: none;
   }
 }

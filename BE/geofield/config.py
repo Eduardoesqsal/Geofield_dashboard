@@ -34,7 +34,7 @@ class Settings:
     frontend_origins: tuple[str, ...] = ("http://localhost:3000", "http://localhost:5173")
     rgb_max_pixels: int = 850_000
     ndvi_max_pixels: int = 2_250_000
-    port: int = 8005
+    port: int = 8000
     supabase_url: str | None = None
     supabase_service_role_key: str | None = None
     supabase_bucket: str = "orthomosaics"
@@ -58,7 +58,7 @@ class Settings:
         return cls(
             raster_path=Path(raster).resolve() if raster else None,
             frontend_origins=origins,
-            port=int(os.getenv("PORT", "8005")),
+            port=int(os.getenv("PORT", "8000")),
             supabase_url=_normalize_supabase_url(os.getenv("SUPABASE_URL")),
             supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
             supabase_bucket=os.getenv("SUPABASE_BUCKET", "orthomosaics"),

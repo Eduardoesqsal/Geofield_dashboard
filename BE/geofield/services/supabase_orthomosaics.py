@@ -26,6 +26,7 @@ from geofield.errors import (
     SupabaseNotConfiguredError,
 )
 from geofield.services.raster_service import RasterService
+from geofield.services.local_paths import resolve_upload_path
 
 
 
@@ -147,7 +148,7 @@ class SupabaseOrthomosaicMixin:
                 f"No existe el ciclo agricola {cycle_id}.",
             )
         return data[0]
-    
+
     def delete_agricultural_cycle(self, cycle_id: str) -> dict[str, Any]:
         client = self.require_client()
         response = (
@@ -297,11 +298,11 @@ class SupabaseOrthomosaicMixin:
                 f"No existe el ortomosaico {orthomosaic_id}.",
             )
         return data[0]
-    
+
     def delete_orthomosaic(self, orthomosaic_id: str) -> dict[str, Any]:
         record = self.get_orthomosaic(orthomosaic_id)
         if self.uses_local_storage:
-            local_path = Path(record["file_path"]).resolve()
+            local_path = resolve_upload_path(record["file_path"], self.settings.uploads_dir)
             uploads_root = self.settings.uploads_dir.resolve()
             try:
                 local_path.relative_to(uploads_root)
@@ -342,4 +343,3 @@ class SupabaseOrthomosaicMixin:
                 f"No existe el ortomosaico {orthomosaic_id}.",
             )
         return data[0]
-    

@@ -39,6 +39,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Runtime artifacts
+.tools/
 BE/uploads/
 BE/cache/
 BE/static/active_ortho.tif

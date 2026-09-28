@@ -8,6 +8,7 @@ import {
   IconAperture,
   IconCamera,
   IconCheck,
+  IconChevronDown,
   IconDrone,
   IconPhoto,
   IconSparkles,
@@ -78,6 +79,7 @@ function SensorIcon({ kind }: { kind: OrthoSensor }) {
 export function ImportDialog({ open, onClose, onFile }: Props) {
   const [sensor, setSensor] = useState<SensorOption>(sensors[0]);
   const [dragging, setDragging] = useState(false);
+  const [mobileCollapsed, setMobileCollapsed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   if (!open) return null;
   // Centraliza clic y arrastre para entregar siempre el sensor seleccionado.
@@ -95,12 +97,22 @@ export function ImportDialog({ open, onClose, onFile }: Props) {
       onMouseDown={onClose}
     >
       <section
-        className="import-dialog upload-dialog"
+        className={`import-dialog upload-dialog mobile-collapsible-dialog ${mobileCollapsed ? "is-mobile-collapsed" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="import-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
+        <button
+          className="mobile-dialog-toggle"
+          type="button"
+          onClick={() => setMobileCollapsed((current) => !current)}
+          aria-expanded={!mobileCollapsed}
+          aria-label={mobileCollapsed ? "Mostrar modal" : "Ocultar modal"}
+          title={mobileCollapsed ? "Mostrar modal" : "Ocultar modal"}
+        >
+          <IconChevronDown aria-hidden="true" />
+        </button>
         <div className="upload-dialog-hero">
           <div className="upload-hero-icon">
             <IconDrone aria-hidden="true" />

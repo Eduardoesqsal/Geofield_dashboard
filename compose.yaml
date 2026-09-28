@@ -1,0 +1,17 @@
+services:
+  geofield:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - ./BE/.env
+    environment:
+      ORTHOMOSAIC_STORAGE_MODE: local
+      ARTIFACT_STORAGE_MODE: local
+    ports:
+      - "127.0.0.1:8080:8000"
+    volumes:
+      - ./BE/uploads:/app/uploads
+      - ./BE/cache:/app/cache
+      - ./BE/static:/app/static
+    restart: unless-stopped

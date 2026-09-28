@@ -26,6 +26,7 @@ from geofield.errors import (
     SupabaseNotConfiguredError,
 )
 from geofield.services.raster_service import RasterContext, RasterService
+from geofield.services.local_paths import resolve_upload_path
 
 
 
@@ -39,7 +40,7 @@ class SupabaseActivationMixin:
     ) -> dict[str, Any]:
         orthomosaic_id = str(record["id"])
         if self.uses_local_storage:
-            local_path = Path(record["file_path"]).resolve()
+            local_path = resolve_upload_path(record["file_path"], self.settings.uploads_dir)
             if not local_path.is_file():
                 raise FileNotFoundError(
                     f"No existe el archivo local del ortomosaico: {local_path}",

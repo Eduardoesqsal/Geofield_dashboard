@@ -1,6 +1,6 @@
 """Punto de entrada compatible con el backend original.
 
-Ejecutar con: ``uvicorn app:app --reload --port 8005``.
+Ejecutar con: ``uvicorn app:app --reload --host 0.0.0.0 --port 8000``.
 """
 
 import socket
