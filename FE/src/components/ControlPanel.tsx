@@ -40,6 +40,8 @@ type ComparisonIndex = "NDVI" | "NDWI" | "NDRE";
 interface ControlPanelProps {
   data: TreeCollection | null;
   filteredData: TreeCollection | null;
+  orthoMode: "rgb" | "multispectral" | null;
+  showDetectionHistogram: boolean;
   selectedIndex: ComparisonIndex | "VARI" | null;
   visibleTreeSizes: Record<VisibleTreeSize, boolean>;
   onToggleTreeSize: (size: VisibleTreeSize) => void;
@@ -439,6 +441,8 @@ function StatisticsDisclosure({
 export function ControlPanel({
   data,
   filteredData,
+  orthoMode,
+  showDetectionHistogram,
   selectedIndex,
   visibleTreeSizes,
   onToggleTreeSize,
@@ -494,8 +498,9 @@ export function ControlPanel({
 
   useEffect(() => {
     if (selectedIndex) setPanelTab("indices");
-    else if (data) setPanelTab("detections");
-  }, [selectedIndex, data]);
+    else if (orthoMode === "rgb" && showDetectionHistogram && data?.features.length)
+      setPanelTab("detections");
+  }, [selectedIndex, data, orthoMode, showDetectionHistogram]);
 
   const updateRange = (nextMinimum: number, nextMaximum: number) => {
     const safeMinimum = Math.min(nextMinimum, nextMaximum);
@@ -580,12 +585,20 @@ export function ControlPanel({
   const ndviHistogramMaximum = activeNdviResponse?.range_max ?? activeNdviStats.max;
   const roiAnalysisReady = canSaveRoiAnalysis && Boolean(ndvi.roiResponse);
   const hasSelectedSpectralPanel =
-    selectedIndex === "NDVI"
+    selectedIndex === "NDVI" && orthoMode === "multispectral"
       ? Boolean(ndvi.response)
-      : selectedIndex != null
+      : selectedIndex != null && (
+          (orthoMode === "rgb" && selectedIndex === "VARI") ||
+          (orthoMode === "multispectral" && selectedIndex !== "VARI")
+        )
         ? indices.some((analysis) => analysis.name === selectedIndex)
         : false;
-  const hasVisiblePanel = hasSelectedSpectralPanel || Boolean(data);
+  const showDetectionPanel =
+    orthoMode === "rgb" && showDetectionHistogram && Boolean(data?.features.length);
+  const hasVisiblePanel = hasSelectedSpectralPanel || showDetectionPanel;
+  const visiblePanelTab = hasSelectedSpectralPanel && showDetectionPanel
+    ? panelTab
+    : hasSelectedSpectralPanel ? "indices" : "detections";
 
   const closeHistogram = (hideIndex: () => void) => {
     if (window.matchMedia("(max-width: 768px)").matches) {
@@ -632,11 +645,11 @@ export function ControlPanel({
       </button>
       {!panelCollapsed && (
         <>
-          <div className="controls-tabs" role="tablist" aria-label="Panel de análisis">
-            <button type="button" role="tab" aria-selected={panelTab === "indices"} className={panelTab === "indices" ? "is-active" : ""} disabled={!hasSelectedSpectralPanel} onClick={() => setPanelTab("indices")}>Índices</button>
-            <button type="button" role="tab" aria-selected={panelTab === "detections"} className={panelTab === "detections" ? "is-active" : ""} disabled={!data} onClick={() => setPanelTab("detections")}>Detecciones</button>
-          </div>
-          {panelTab === "indices" && selectedIndex === "NDVI" && ndvi.response && (
+          {hasSelectedSpectralPanel && showDetectionPanel && <div className="controls-tabs" role="tablist" aria-label="Panel de análisis">
+            <button type="button" role="tab" aria-selected={visiblePanelTab === "indices"} className={visiblePanelTab === "indices" ? "is-active" : ""} onClick={() => setPanelTab("indices")}>Índices</button>
+            <button type="button" role="tab" aria-selected={visiblePanelTab === "detections"} className={visiblePanelTab === "detections" ? "is-active" : ""} onClick={() => setPanelTab("detections")}>Detecciones</button>
+          </div>}
+          {visiblePanelTab === "indices" && selectedIndex === "NDVI" && ndvi.response && (
             <section className="panel-section ndvi-section">
         <div className="panel-heading">
           <strong>Analisis NDVI</strong>
@@ -868,7 +881,7 @@ export function ControlPanel({
         </section>
           )}
 
-          {panelTab === "indices" && indices
+          {visiblePanelTab === "indices" && indices
         .filter((analysis) => analysis.name === selectedIndex)
         .map((analysis) => {
         const histogramMinimum = analysis.response.range_min ?? analysis.stats.min;
@@ -1103,7 +1116,7 @@ export function ControlPanel({
         );
           })}
 
-          {panelTab === "detections" && data && (
+          {visiblePanelTab === "detections" && showDetectionPanel && data && (
             <section className="panel-section detection-section">
           <div className="panel-heading">
             <strong>Detecciones por diametro</strong>

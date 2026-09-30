@@ -426,6 +426,7 @@ export function useDashboardMap(
     reloadDetections,
   } = useDetectionPersistence({
     orthomosaicId: state.orthomosaicId,
+    orthoMode: state.orthoMode,
     commitTreeCollection,
     setState,
     treeDisplayModeRef,
@@ -1184,6 +1185,7 @@ export function useDashboardMap(
     ndviTileRef,
     orthoRef,
     ratioRef,
+    rawTreeDataRef,
     restoreRoiSelection,
     roiIndexResponsesRef,
     roiLayersRef,

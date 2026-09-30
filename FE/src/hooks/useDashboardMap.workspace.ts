@@ -36,6 +36,7 @@ export function useDashboardMapWorkspace(ctx: any) {
     ndviTileRef,
     orthoRef,
     ratioRef,
+    rawTreeDataRef,
     restoreRoiSelection,
     roiIndexResponsesRef,
     roiLayersRef,
@@ -98,6 +99,15 @@ export function useDashboardMapWorkspace(ctx: any) {
           })
         )
           return;
+        cancelDetectionEdit();
+        treeRef.current?.remove();
+        treeRef.current = undefined;
+        labelsRef.current?.remove();
+        labelsEnabledRef.current = false;
+        rawTreeDataRef.current = null;
+        treeDataRef.current = null;
+        setTreeData(null);
+        setFilteredTreeData(null);
         setState((current) => ({
           ...current,
           orthomosaicId: record.id,
@@ -105,6 +115,8 @@ export function useDashboardMapWorkspace(ctx: any) {
           orthoMode: modeFromSensor(record.sensor_type),
           rgb: true,
           ndvi: false,
+          trees: false,
+          labels: false,
           vari: false,
           exg: false,
           roiSelected: false,

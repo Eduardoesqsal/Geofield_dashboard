@@ -5,6 +5,7 @@ import type { MapState, TreeDisplayMode } from "./useDashboardMap";
 
 interface DetectionPersistenceContext {
   orthomosaicId: string | null;
+  orthoMode: MapState["orthoMode"];
   commitTreeCollection: (collection: TreeCollection, visible?: boolean) => void;
   setState: Dispatch<SetStateAction<MapState>>;
   treeDisplayModeRef: MutableRefObject<TreeDisplayMode>;
@@ -13,6 +14,7 @@ interface DetectionPersistenceContext {
 /** Guarda ediciones en orden y recupera el conjunto del vuelo activo. */
 export function useDetectionPersistence({
   orthomosaicId,
+  orthoMode,
   commitTreeCollection,
   setState,
   treeDisplayModeRef,
@@ -95,8 +97,12 @@ export function useDetectionPersistence({
   }, [commitTreeCollection, saveDetectionsNow, setState, treeDisplayModeRef]);
 
   useEffect(() => {
-    if (orthomosaicId) void reloadDetections().catch(() => undefined);
-  }, [orthomosaicId, reloadDetections]);
+    if (orthomosaicId && orthoMode === "rgb") {
+      void reloadDetections().catch(() => undefined);
+    } else {
+      detectionLoadTokenRef.current += 1;
+    }
+  }, [orthomosaicId, orthoMode, reloadDetections]);
 
   return {
     activeOrthomosaicIdRef,

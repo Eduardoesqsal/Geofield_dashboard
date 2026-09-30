@@ -147,6 +147,7 @@ export function MapView() {
   const [selectedIndex, setSelectedIndex] = useState<ComparisonIndex | "VARI" | null>(
     null,
   );
+  const [showDetectionHistogram, setShowDetectionHistogram] = useState(false);
   const [roiAnalysisLoading, setRoiAnalysisLoading] = useState(false);
   const [roiAnalysisSaving, setRoiAnalysisSaving] = useState(false);
   const [roiAnalysisExporting, setRoiAnalysisExporting] = useState(false);
@@ -166,6 +167,11 @@ export function MapView() {
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedIndex(null);
+    setShowDetectionHistogram(false);
+  }, [map.state.orthomosaicId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1019,7 +1025,10 @@ export function MapView() {
         }
         onOpenDetections={() =>
           void requireActiveCycle(
-            async () => setDetectionsOpen(true),
+            async () => {
+              setShowDetectionHistogram(true);
+              setDetectionsOpen(true);
+            },
             "entry",
           )
         }
@@ -1308,8 +1317,10 @@ export function MapView() {
         }}
       />
       <ControlPanel
-        data={map.treeData}
-        filteredData={map.filteredTreeData}
+        data={map.state.orthoMode === "rgb" ? map.treeData : null}
+        filteredData={map.state.orthoMode === "rgb" ? map.filteredTreeData : null}
+        orthoMode={map.state.orthoMode}
+        showDetectionHistogram={showDetectionHistogram}
         selectedIndex={selectedIndex}
         visibleTreeSizes={map.state.visibleTreeSizes}
         onToggleTreeSize={map.toggleTreeSize}
