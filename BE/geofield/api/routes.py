@@ -6,6 +6,7 @@ Traduce requests web a operaciones de servicios para ortomosaicos, ROI,
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from typing import Any
 import rasterio
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from geofield.errors import OrthomosaicNotFoundError, RoiAnalysisNotFoundError, SupabaseNotConfiguredError
 from geofield.api.prescription_routes import register_prescription_routes
@@ -651,6 +653,66 @@ def create_router(
             return TreeService.process(payload_object(payload)["geojson"])
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+
+    def detection_storage_error(exc: Exception, action: str) -> HTTPException:
+        if "PGRST205" in str(exc) and "tree_detection_sets" in str(exc):
+            return HTTPException(
+                503,
+                "Falta la tabla de detecciones en Supabase. Ejecuta la migracion "
+                "BE/sql/supabase/006_create_tree_detection_sets.sql en el SQL Editor.",
+            )
+        return HTTPException(502, f"No se pudieron {action} las detecciones: {exc}")
+
+    @router.get("/detections")
+    def list_detections(cycle_id: str | None = Query(None)) -> dict[str, Any]:
+        try:
+            return {"status": "ok", "items": supabase.list_detections(cycle_id)}
+        except SupabaseNotConfiguredError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except Exception as exc:
+            raise detection_storage_error(exc, "listar") from exc
+
+    @router.get("/orthomosaics/{orthomosaic_id}/detections")
+    def get_detections(orthomosaic_id: str) -> dict[str, Any]:
+        try:
+            return {"status": "ok", "detections": supabase.get_detections(orthomosaic_id)}
+        except SupabaseNotConfiguredError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except Exception as exc:
+            raise detection_storage_error(exc, "cargar") from exc
+
+    @router.delete("/orthomosaics/{orthomosaic_id}/detections")
+    def delete_detections(orthomosaic_id: str) -> dict[str, str]:
+        try:
+            supabase.delete_detections(orthomosaic_id)
+            return {"status": "ok"}
+        except SupabaseNotConfiguredError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except Exception as exc:
+            raise detection_storage_error(exc, "eliminar") from exc
+
+    @router.put("/orthomosaics/{orthomosaic_id}/detections")
+    async def save_detections(orthomosaic_id: str, request: Request) -> dict[str, Any]:
+        try:
+            payload = payload_object(await run_in_threadpool(json.loads, await request.body()))
+            geojson = payload.get("geojson")
+            if not isinstance(geojson, dict):
+                raise ValueError("Falta la coleccion GeoJSON de detecciones.")
+            saved = await run_in_threadpool(supabase.save_detections, orthomosaic_id, geojson)
+            return {
+                "status": "ok",
+                "orthomosaic_id": saved["orthomosaic_id"],
+                "feature_count": saved["feature_count"],
+                "updated_at": saved.get("updated_at"),
+            }
+        except SupabaseNotConfiguredError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except OrthomosaicNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except Exception as exc:
+            raise detection_storage_error(exc, "guardar") from exc
 
     return router
 

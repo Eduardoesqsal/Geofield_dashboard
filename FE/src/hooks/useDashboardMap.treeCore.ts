@@ -22,6 +22,7 @@ export function useDashboardMapTreeCore(ctx: any) {
     addDetectionClickRef,
     deleteDetectionHandlersRef,
     detectionEditModeRef,
+    diameterFillEnabledRef,
     diameterRangeRef,
     labelsEnabledRef,
     labelsRef,
@@ -82,16 +83,21 @@ export function useDashboardMapTreeCore(ctx: any) {
       const map = mapRef.current;
       if (!map) return;
       treeRef.current?.remove();
+      const renderer = L.canvas({ padding: 0.5 });
       treeRef.current = L.geoJSON(collection, {
         pointToLayer: (feature, latlng) => {
           const treeFeature = feature as TreeFeature;
           const diameter = diameterOf(treeFeature);
           const category = sizeOf(diameter);
+          const showSizeFill = treeDisplayModeRef.current !== "diameters" ||
+            diameterFillEnabledRef.current;
           const options: L.PathOptions = {
+            renderer,
             color: treeSizeColors[category],
             fillColor: treeSizeColors[category],
             opacity: category === "unknown" ? 0.35 : 0.85,
-            fillOpacity: category === "unknown" ? 0.12 : 0.35,
+            fillOpacity: showSizeFill
+              ? (category === "unknown" ? 0.12 : 0.35) : 0,
             weight: category === "unknown" ? 1 : 2,
           };
           return treeDisplayModeRef.current === "diameters"
@@ -124,6 +130,8 @@ export function useDashboardMapTreeCore(ctx: any) {
         Number.isFinite(diameter) && diameter >= min && diameter <= max;
       const visibleBySize =
         category === "unknown" || visibleTreeSizesRef.current[category];
+      const showSizeFill = treeDisplayModeRef.current !== "diameters" ||
+        diameterFillEnabledRef.current;
       (layer as L.Path).setStyle({
         opacity: !visibleBySize
           ? 0
@@ -132,7 +140,7 @@ export function useDashboardMapTreeCore(ctx: any) {
             : withinRange
               ? 0.85
               : 0.1,
-        fillOpacity: !visibleBySize
+        fillOpacity: !showSizeFill || !visibleBySize
           ? 0
           : category === "unknown"
             ? 0.08

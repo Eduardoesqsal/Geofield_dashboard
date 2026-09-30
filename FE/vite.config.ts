@@ -26,6 +26,7 @@ export default defineConfig(({ mode }) => {
         '/crop_tiles': backendUrl,
         '/static': backendUrl,
         '/tree_points': backendUrl,
+        '/detections': backendUrl,
         '/ortho_analysis': backendUrl,
         '/orthomosaics': backendUrl,
         '/agricultural_cycles': backendUrl,

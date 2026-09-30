@@ -17,6 +17,9 @@ Supabase/base actual conserva la operacion interna:
 3. `003_create_agricultural_cycles.sql`
 4. `004_link_rois_to_agricultural_cycles.sql`
 5. `005_add_orthomosaic_display_order.sql`
+6. `006_create_tree_detection_sets.sql`
+
+Ejecuta `006_create_tree_detection_sets.sql` en el SQL Editor de Supabase antes de usar la importacion persistente de detecciones.
 
 ## Nota
 

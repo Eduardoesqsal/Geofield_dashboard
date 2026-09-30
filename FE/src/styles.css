@@ -8713,3 +8713,75 @@ select:focus-visible {
     display: none;
   }
 }
+.detection-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0;
+  border-bottom: 1px solid #d7ded4;
+}
+
+.detection-tabs button {
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: #607064;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.detection-tabs button.is-active {
+  border-bottom-color: #3d8656;
+  color: #235a38;
+}
+
+.detection-manage-saved {
+  margin-top: 14px;
+}
+
+.detection-library-refresh {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid #cbd8cc;
+  border-radius: 8px;
+  background: #fff;
+  color: #245c39;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.detection-library .roi-table td small {
+  display: block;
+  margin-top: 3px;
+  color: #69796d;
+}
+
+.controls-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px 0;
+  border-bottom: 1px solid #d7ded4;
+}
+
+.controls-tabs button {
+  flex: 1;
+  padding: 8px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: #66776c;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.controls-tabs button.is-active {
+  border-bottom-color: #3d8656;
+  color: #245c39;
+}
+
+.controls-tabs button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

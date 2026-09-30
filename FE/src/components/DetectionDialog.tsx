@@ -11,6 +11,7 @@ import {
   IconChartDonut,
   IconCheck,
   IconCircleDot,
+  IconDatabase,
   IconEye,
   IconEyeOff,
   IconFileZip,
@@ -45,6 +46,7 @@ interface Props {
   visibleSizes: Record<VisibleTreeSize, boolean>;
   rgbAvailable: boolean;
   variDetectionsEnabled: boolean;
+  diameterFillEnabled: boolean;
   onImport: (
     files: File[],
     reportProgress: (progress: number, message: string) => void,
@@ -57,6 +59,8 @@ interface Props {
   onDeleteArea: () => void;
   onToggleSize: (size: VisibleTreeSize) => void;
   onToggleVariDetections: () => void;
+  onToggleDiameterFill: () => void;
+  onManageSaved: () => void;
   onClose: () => void;
 }
 
@@ -84,6 +88,7 @@ export function DetectionDialog({
   visibleSizes,
   rgbAvailable,
   variDetectionsEnabled,
+  diameterFillEnabled,
   onImport,
   onToggleLayer,
   onDisplayModeChange,
@@ -93,6 +98,8 @@ export function DetectionDialog({
   onDeleteArea,
   onToggleSize,
   onToggleVariDetections,
+  onToggleDiameterFill,
+  onManageSaved,
   onClose,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -106,6 +113,7 @@ export function DetectionDialog({
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [selectedDiameterField, setSelectedDiameterField] = useState("");
   const [manualDiameter, setManualDiameter] = useState(2.5);
+  const [activeTab, setActiveTab] = useState<"files" | "dashboard">("files");
   const validManualDiameter =
     Number.isFinite(manualDiameter) && manualDiameter > 0;
   const stats = useMemo(() => treeStats(data), [data]);
@@ -129,6 +137,7 @@ export function DetectionDialog({
     setProgressMessage("");
     setError(null);
     setPendingFiles([]);
+    setActiveTab(data?.features.length ? "dashboard" : "files");
   }, [open]);
 
   useEffect(() => {
@@ -156,6 +165,7 @@ export function DetectionDialog({
         setProgressMessage(message);
       });
       setPendingFiles([]);
+      setActiveTab("dashboard");
     } catch (importError) {
       setError(
         importError instanceof Error
@@ -261,6 +271,33 @@ export function DetectionDialog({
             <IconX aria-hidden="true" />
           </button>
         </div>
+
+        <div className="detection-tabs" role="tablist" aria-label="Secciones de detecciones">
+          <button
+            id="detection-files-tab"
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "files"}
+            aria-controls="detection-files-panel"
+            className={activeTab === "files" ? "is-active" : ""}
+            onClick={() => setActiveTab("files")}
+          >
+            1. Importar y biblioteca
+          </button>
+          <button
+            id="detection-dashboard-tab"
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "dashboard"}
+            aria-controls="detection-dashboard-panel"
+            className={activeTab === "dashboard" ? "is-active" : ""}
+            onClick={() => setActiveTab("dashboard")}
+          >
+            2. Dashboard de detecciones
+          </button>
+        </div>
+
+        {activeTab === "files" && <div id="detection-files-panel" role="tabpanel" aria-labelledby="detection-files-tab">
 
         <div className="detection-intro">
           <div>
@@ -374,7 +411,29 @@ export function DetectionDialog({
 
         {error && <p className="detection-error">{error}</p>}
 
-        <div className="detection-workspace">
+        <button
+          className="manage-rois button-with-icon detection-manage-saved"
+          type="button"
+          onClick={() => {
+            onManageSaved();
+            onClose();
+          }}
+          disabled={loading}
+        >
+          <IconDatabase aria-hidden="true" />
+          Ver detecciones guardadas
+        </button>
+        </div>}
+
+        {activeTab === "dashboard" && <div id="detection-dashboard-panel" role="tabpanel" aria-labelledby="detection-dashboard-tab">
+        {!data?.features.length && (
+          <div className="modal-empty-state">
+            <IconTrees aria-hidden="true" />
+            <strong>No hay detecciones activas</strong>
+            <span>Importa un archivo o abre un conjunto guardado en la primera pestaña.</span>
+          </div>
+        )}
+        {data?.features.length ? <div className="detection-workspace">
           <div className="detection-dashboard-grid">
             <section className="detection-dataset-card">
               <div className="detection-summary">
@@ -495,6 +554,20 @@ export function DetectionDialog({
                   </small>
                 </span>
                 <i>{variDetectionsEnabled && <IconCheck aria-hidden="true" />}</i>
+              </button>
+              <button
+                className={`detection-vari-toggle ${!diameterFillEnabled ? "is-selected" : ""}`}
+                type="button"
+                onClick={onToggleDiameterFill}
+                disabled={!data?.features.length || displayMode !== "diameters"}
+                aria-pressed={!diameterFillEnabled}
+              >
+                <IconEyeOff aria-hidden="true" />
+                <span>
+                  <strong>Sin relleno de tamaños</strong>
+                  <small>Deja sólo el borde del diámetro para ver el VARI sin rojo, amarillo o verde encima.</small>
+                </span>
+                <i>{!diameterFillEnabled && <IconCheck aria-hidden="true" />}</i>
               </button>
               <div className="detection-editor">
                 <div className="detection-editor-heading">
@@ -662,6 +735,8 @@ export function DetectionDialog({
             </section>
           </div>
         </div>
+        : null}
+        </div>}
       </section>
     </div>
   );

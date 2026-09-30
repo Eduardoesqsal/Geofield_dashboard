@@ -20,6 +20,7 @@ from supabase import Client, create_client
 from geofield.config import Settings
 from geofield.errors import SupabaseNotConfiguredError
 from geofield.services.supabase_activation import SupabaseActivationMixin
+from geofield.services.supabase_detections import SupabaseDetectionsMixin
 from geofield.services.supabase_orthomosaics import SupabaseOrthomosaicMixin
 from geofield.services.supabase_roi_analysis import SupabaseRoiAnalysisMixin
 
@@ -34,7 +35,7 @@ class RasterMetadata:
     file_size_bytes: int
 
 
-class SupabaseService(SupabaseOrthomosaicMixin, SupabaseRoiAnalysisMixin, SupabaseActivationMixin):
+class SupabaseService(SupabaseOrthomosaicMixin, SupabaseRoiAnalysisMixin, SupabaseActivationMixin, SupabaseDetectionsMixin):
     INDEX_RESULT_LEGACY_COLUMNS = (
         "id,roi_id,orthomosaic_id,index_type,avg_value,min_value,max_value,"
         "stddev,p10,p25,p50,p75,p90,pixel_count,range_min,range_max,"

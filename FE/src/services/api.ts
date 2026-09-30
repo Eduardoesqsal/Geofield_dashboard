@@ -82,6 +82,13 @@ export interface OrthomosaicRecord {
   display_order?: number | null;
 }
 
+export interface DetectionSetRecord {
+  orthomosaic_id: string;
+  feature_count: number;
+  updated_at: string;
+  orthomosaics: OrthomosaicRecord;
+}
+
 export interface PrescriptionLegendEntry {
   class_id: number;
   label: string;
@@ -289,7 +296,6 @@ export async function fetchPrescriptionJson(path: string): Promise<Blob> {
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(backendUrl(url), options);
   const contentType = response.headers.get("content-type") ?? "";
-  const body = await response.text();
 
   if (!contentType.includes("application/json")) {
     throw new Error(
@@ -299,7 +305,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     );
   }
 
-  const data = JSON.parse(body) as T & { message?: string; detail?: string };
+  const data = (await response.json()) as T & { message?: string; detail?: string };
 
   if (!response.ok) {
     throw new Error(data.message ?? data.detail ?? `Error en ${url}`);
@@ -598,6 +604,34 @@ export const dashboardApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ geojson }),
     }),
+  getDetections: (orthomosaicId: string) =>
+    request<{
+      status: string;
+      detections: {
+        orthomosaic_id: string;
+        geojson: TreeCollection;
+        feature_count: number;
+        updated_at: string;
+      } | null;
+    }>(`/orthomosaics/${encodeURIComponent(orthomosaicId)}/detections`),
+  listDetections: (cycleId?: string) =>
+    request<{ status: string; items: DetectionSetRecord[] }>(
+      `/detections${cycleId ? `?cycle_id=${encodeURIComponent(cycleId)}` : ""}`,
+    ),
+  deleteDetections: (orthomosaicId: string) =>
+    request<{ status: string }>(
+      `/orthomosaics/${encodeURIComponent(orthomosaicId)}/detections`,
+      { method: "DELETE" },
+    ),
+  saveDetections: (orthomosaicId: string, geojson: TreeCollection) =>
+    request<{ status: string; orthomosaic_id: string; feature_count: number }>(
+      `/orthomosaics/${encodeURIComponent(orthomosaicId)}/detections`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ geojson }),
+      },
+    ),
   orthoAnalysis: (file: File, sensor: OrthoSensor) => {
     const type: OrthoMode =
       sensor === "mavic3m" || sensor === "micasense" ? "multispectral" : "rgb";

@@ -37,6 +37,7 @@ import { AgriculturalCycleDialog } from "./AgriculturalCycleDialog";
 import { ControlPanel } from "./ControlPanel";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DetectionDialog } from "./DetectionDialog";
+import { DetectionLibraryDialog } from "./DetectionLibraryDialog";
 import { ImportDialog } from "./ImportDialog";
 import { MobileDialogToggle } from "./MobileDialogToggle";
 import { RoiDialog } from "./RoiDialog";
@@ -55,12 +56,14 @@ import {
   type PublishedAnalysisRecord,
   type SaveRoiAnalysisPayload,
   type RoiRecord,
+  type DetectionSetRecord,
 } from "../services/api";
 
 type DeleteTarget =
   | { kind: "cycle"; record: AgriculturalCycleRecord }
   | { kind: "orthomosaic"; record: OrthomosaicRecord }
   | { kind: "roi"; record: RoiRecord }
+  | { kind: "detections"; record: DetectionSetRecord }
   | { kind: "analysis"; record: RoiAnalysisRecord };
 type CycleDialogMode = "entry" | "import" | "library";
 
@@ -96,6 +99,11 @@ export function MapView() {
   const [cycleError, setCycleError] = useState<string | null>(null);
   const [cycleExitNotice, setCycleExitNotice] = useState<string | null>(null);
   const [detectionsOpen, setDetectionsOpen] = useState(false);
+  const [detectionLibraryOpen, setDetectionLibraryOpen] = useState(false);
+  const [detectionSets, setDetectionSets] = useState<DetectionSetRecord[]>([]);
+  const [detectionLibraryLoading, setDetectionLibraryLoading] = useState(false);
+  const [detectionLibraryBusyId, setDetectionLibraryBusyId] = useState<string | null>(null);
+  const [detectionLibraryError, setDetectionLibraryError] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [indicesOpen, setIndicesOpen] = useState(false);
   const [indicesMobileCollapsed, setIndicesMobileCollapsed] = useState(false);
@@ -246,6 +254,41 @@ export function MapView() {
     }
     await openLibraryForCycle(activeCycle);
   };
+  const refreshDetectionLibrary = async () => {
+    setDetectionLibraryLoading(true);
+    setDetectionLibraryError(null);
+    try {
+      const response = await dashboardApi.listDetections(activeCycle?.id);
+      setDetectionSets(response.items);
+    } catch (error) {
+      setDetectionLibraryError(
+        error instanceof Error ? error.message : "No se pudieron listar las detecciones.",
+      );
+    } finally {
+      setDetectionLibraryLoading(false);
+    }
+  };
+  const openDetectionLibrary = async () => {
+    setDetectionLibraryOpen(true);
+    await refreshDetectionLibrary();
+  };
+  const selectDetectionSet = async (record: DetectionSetRecord) => {
+    setDetectionLibraryBusyId(record.orthomosaic_id);
+    setDetectionLibraryError(null);
+    try {
+      if (map.state.orthomosaicId === record.orthomosaic_id)
+        await map.reloadDetections();
+      else
+        await map.activateStoredOrtho(record.orthomosaics);
+      setDetectionLibraryOpen(false);
+    } catch (error) {
+      setDetectionLibraryError(
+        error instanceof Error ? error.message : "No se pudieron abrir las detecciones.",
+      );
+    } finally {
+      setDetectionLibraryBusyId(null);
+    }
+  };
   const leaveActiveCycle = () => {
     const cycleName = activeCycle?.name ?? "ciclo agrÃ­cola";
     map.resetWorkspace();
@@ -255,6 +298,8 @@ export function MapView() {
     setRoiOpen(false);
     setRoiLibraryOpen(false);
     setDetectionsOpen(false);
+    setDetectionLibraryOpen(false);
+    setDetectionSets([]);
     setPrescriptionOpen(false);
     setPrescriptionError(null);
     setSelectedIndex(null);
@@ -755,6 +800,13 @@ export function MapView() {
           items.filter((item) => item.id !== target.record.id),
         );
         map.removeRoiPolygon(target.record.id);
+      } else if (target.kind === "detections") {
+        await dashboardApi.deleteDetections(target.record.orthomosaic_id);
+        setDetectionSets((items) =>
+          items.filter((item) => item.orthomosaic_id !== target.record.orthomosaic_id),
+        );
+        if (map.state.orthomosaicId === target.record.orthomosaic_id)
+          await map.reloadDetections();
       } else {
         const roiId = comparisonRoiId;
         if (!roiId)
@@ -1072,6 +1124,7 @@ export function MapView() {
         visibleSizes={map.state.visibleTreeSizes}
         rgbAvailable={map.state.orthoMode === "rgb"}
         variDetectionsEnabled={map.variDetectionsEnabled}
+        diameterFillEnabled={map.diameterFillEnabled}
         onImport={map.importDetections}
         onToggleLayer={map.toggleTrees}
         onDisplayModeChange={(mode) => {
@@ -1090,7 +1143,24 @@ export function MapView() {
           setSelectedIndex(map.variDetectionsEnabled ? null : "VARI");
           map.toggleVariDetections();
         }}
+        onToggleDiameterFill={map.toggleDiameterFill}
+        onManageSaved={() => void openDetectionLibrary()}
         onClose={() => setDetectionsOpen(false)}
+      />
+      <DetectionLibraryDialog
+        open={detectionLibraryOpen}
+        items={detectionSets}
+        loading={detectionLibraryLoading}
+        busyId={detectionLibraryBusyId}
+        error={detectionLibraryError}
+        activeOrthomosaicId={map.state.orthomosaicId}
+        onClose={() => setDetectionLibraryOpen(false)}
+        onRefresh={() => void refreshDetectionLibrary()}
+        onSelect={(record) => void selectDetectionSet(record)}
+        onDelete={(record) => {
+          setDeleteError(null);
+          setDeleteTarget({ kind: "detections", record });
+        }}
       />
       <RoiDialog
         open={roiOpen}

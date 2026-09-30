@@ -67,6 +67,7 @@ import {
 import { useDashboardMapPrescription } from "./useDashboardMap.prescription";
 import { useDashboardMapRoi } from "./useDashboardMap.roiActions";
 import { useDashboardMapTreeCore } from "./useDashboardMap.treeCore";
+import { useDetectionPersistence } from "./useDashboardMap.detectionsPersistence";
 import { useDashboardMapTreeActions } from "./useDashboardMap.treeActions";
 import { useDashboardMapWorkspace } from "./useDashboardMap.workspace";
 import { useDashboardMapSpectralActions } from "./useDashboardMap.spectralActions";
@@ -248,6 +249,7 @@ export function useDashboardMap(
   const rawTreeDataRef = useRef<TreeCollection | null>(null);
   const treeDataRef = useRef<TreeCollection | null>(null);
   const diameterRangeRef = useRef({ min: -Infinity, max: Infinity });
+  const diameterFillEnabledRef = useRef(true);
   const treeDisplayModeRef = useRef<TreeDisplayMode>("points");
   const visibleTreeSizesRef = useRef<Record<VisibleTreeSize, boolean>>({
     small: true,
@@ -297,6 +299,7 @@ export function useDashboardMap(
   const orthoModeRef = useRef(state.orthoMode);
   orthoModeRef.current = state.orthoMode;
   const [treeData, setTreeData] = useState<TreeCollection | null>(null);
+  const [diameterFillEnabled, setDiameterFillEnabled] = useState(true);
   const [filteredTreeData, setFilteredTreeData] =
     useState<TreeCollection | null>(null);
   const [ndviAnalysis, setNdviAnalysis] = useState<NdviAnalysis>(
@@ -398,6 +401,7 @@ export function useDashboardMap(
     addDetectionClickRef,
     deleteDetectionHandlersRef,
     detectionEditModeRef,
+    diameterFillEnabledRef,
     diameterRangeRef,
     labelsEnabledRef,
     labelsRef,
@@ -414,6 +418,24 @@ export function useDashboardMap(
     variLoadFailedRef,
     visibleTreeSizesRef,
   });
+  const {
+    activeOrthomosaicIdRef,
+    detectionLoadTokenRef,
+    saveDetectionsNow,
+    commitAndPersistDetections,
+    reloadDetections,
+  } = useDetectionPersistence({
+    orthomosaicId: state.orthomosaicId,
+    commitTreeCollection,
+    setState,
+    treeDisplayModeRef,
+  });
+  const toggleDiameterFill = useCallback(() => {
+    const enabled = !diameterFillEnabledRef.current;
+    diameterFillEnabledRef.current = enabled;
+    setDiameterFillEnabled(enabled);
+    syncTreeLayerVisibility();
+  }, [syncTreeLayerVisibility]);
   const shouldRenderIndexAsTiles = useCallback(
     (_equalized: boolean, _fillMode: ClassificationFillMode) => true,
     [],
@@ -628,8 +650,8 @@ export function useDashboardMap(
   }, [cancelDetectionEdit]);
 
   useEffect(() => {
-    commitTreeCollectionHandlerRef.current = commitTreeCollection;
-  }, [commitTreeCollection]);
+    commitTreeCollectionHandlerRef.current = commitAndPersistDetections;
+  }, [commitAndPersistDetections]);
 
   useEffect(() => {
     selectRoiHandlerRef.current = selectRoi;
@@ -1000,7 +1022,10 @@ export function useDashboardMap(
     boundsRef,
     cancelDetectionEdit,
     clearPrescription,
-    commitTreeCollection,
+    commitTreeCollection: commitAndPersistDetections,
+    detectionLoadTokenRef,
+    activeOrthomosaicIdRef,
+    saveDetectionsNow,
     deleteDetectionHandlersRef,
     detectionEditModeRef,
     diameterRangeRef,
@@ -1313,6 +1338,8 @@ export function useDashboardMap(
   return {
     state,
     treeData,
+    reloadDetections,
+    diameterFillEnabled,
     filteredTreeData,
     ndviAnalysis,
     indexAnalyses,
@@ -1339,6 +1366,7 @@ export function useDashboardMap(
     toggleNdvi,
     toggleIndexLayer,
     toggleVariDetections,
+    toggleDiameterFill,
     drawRoi,
     drawPrescriptionArea,
     importRoi,

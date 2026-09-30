@@ -11,7 +11,8 @@ import {
   treeSizeColors,
   type VisibleTreeSize,
 } from "../utils/tree";
-import { parseDetectionFiles, parseImportFile } from "../utils/importFormats";
+import { parseImportFile } from "../utils/importFormats";
+import { importDetectionsInWorker } from "../utils/importDetections";
 import { ndviStats } from "../utils/ndvi";
 import { buildGeometryPopupHtml, filterVisibleTrees } from "./useDashboardMap.helpers";
 import type { TreeDisplayMode } from "./useDashboardMap";
@@ -37,6 +38,9 @@ export function useDashboardMapTreeActions(ctx: any) {
     ndviTileRef,
     prescriptionDrawCompleteRef,
     rawTreeDataRef,
+    detectionLoadTokenRef,
+    activeOrthomosaicIdRef,
+    saveDetectionsNow,
     refreshLabels,
     renderNdvi,
     renderTreeLayer,
@@ -236,26 +240,26 @@ export function useDashboardMapTreeActions(ctx: any) {
       reportProgress?: (progress: number, message: string) => void,
     ) => {
       try {
+        const orthomosaicId = activeOrthomosaicIdRef.current;
+        if (!orthomosaicId)
+          throw new Error("Activa un ortomosaico antes de importar detecciones.");
+        detectionLoadTokenRef.current += 1;
         reportProgress?.(8, "Leyendo archivos...");
         await waitForPaint();
         reportProgress?.(34, "Interpretando geometrÃ­as...");
-        const rawCollection = await parseDetectionFiles(files);
-        rawTreeDataRef.current = rawCollection;
-        const parsed = normalizeTreeCollection(rawCollection);
+        const parsed = await importDetectionsInWorker(files);
+        if (!parsed.features.length)
+          throw new Error("El archivo no contiene detecciones con coordenadas válidas.");
+        if (activeOrthomosaicIdRef.current !== orthomosaicId)
+          throw new Error("El ortomosaico activo cambió durante la importación.");
         await waitForPaint();
 
-        reportProgress?.(54, "Normalizando diÃ¡metros en el servidor...");
-        let collection = parsed;
-        try {
-          const normalized = await dashboardApi.treePoints(parsed);
-          collection = normalizeTreeCollection(normalized.geojson);
-        } catch {
-          // El render local mantiene operativo el mapa si la API estÃ¡ apagada.
-          reportProgress?.(
-            62,
-            "Backend no disponible; usando datos locales...",
-          );
-        }
+        reportProgress?.(54, "Guardando detecciones en la base de datos...");
+        await saveDetectionsNow(orthomosaicId, parsed);
+        if (activeOrthomosaicIdRef.current !== orthomosaicId)
+          throw new Error("El ortomosaico activo cambió durante la importación.");
+        const collection = parsed;
+        rawTreeDataRef.current = parsed;
         await waitForPaint();
 
         reportProgress?.(70, "Clasificando tamaÃ±os...");

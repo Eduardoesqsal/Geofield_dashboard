@@ -1,10 +1,11 @@
-import type { AgriculturalCycleRecord, OrthomosaicRecord, RoiAnalysisRecord, RoiAnalysisStats } from "../services/api";
+import type { AgriculturalCycleRecord, DetectionSetRecord, OrthomosaicRecord, RoiAnalysisRecord, RoiAnalysisStats } from "../services/api";
 import { sameStats, statsForIndex } from "./MapView.helpers";
 
 export type DeleteTarget =
   | { kind: "cycle"; record: AgriculturalCycleRecord }
   | { kind: "orthomosaic"; record: OrthomosaicRecord }
   | { kind: "roi"; record: { name: string; id: string } }
+  | { kind: "detections"; record: DetectionSetRecord }
   | { kind: "analysis"; record: RoiAnalysisRecord };
 
 export type PrescriptionRange = {
@@ -53,6 +54,12 @@ export const getDeleteDialogContent = (target: DeleteTarget | null) =>
               "El ROI y su historial asociado dejarán de estar disponibles. Esta acción no se puede deshacer.",
             subject: target.record.name,
           }
+        : target?.kind === "detections"
+          ? {
+              title: "¿Eliminar estas detecciones?",
+              description: "Se eliminará el conjunto guardado de este ortomosaico. Esta acción no se puede deshacer.",
+              subject: target.record.orthomosaics.name,
+            }
         : target?.kind === "analysis"
           ? {
               title: "¿Eliminar estas estadísticas?",

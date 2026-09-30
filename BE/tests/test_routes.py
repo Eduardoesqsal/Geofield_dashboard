@@ -16,6 +16,7 @@ from geofield.api.routes import create_router
 class FakeRasterService:
     def __init__(self, active_path: Path) -> None:
         self.active_path: Path | None = active_path
+        self.active_context = None
         self.sensor: str | None = "mavic3m"
         self.rgb_stretch: tuple[float, float] | None = (1.0, 2.0)
         self.overlay: tuple[int, int, object] | None = (10, 10, object())
@@ -37,6 +38,7 @@ class FakeSupabaseService:
         self.created_rois: list[dict[str, Any]] = []
         self.saved_roi_analyses: list[dict[str, Any]] = []
         self.activated_orthomosaic_ids: list[str] = []
+        self.detections: dict[str, Any] | None = None
         self.roi_record: dict[str, Any] = {
             "id": "roi-1",
             "geojson": {
@@ -68,6 +70,26 @@ class FakeSupabaseService:
         if orthomosaic_id != self.record["id"]:
             raise KeyError(orthomosaic_id)
         return self.record
+
+    def get_detections(self, orthomosaic_id: str) -> dict[str, Any] | None:
+        return self.detections if orthomosaic_id == self.record["id"] else None
+
+    def list_detections(self, _cycle_id: str | None = None) -> list[dict[str, Any]]:
+        if not self.detections:
+            return []
+        return [{key: value for key, value in self.detections.items() if key != "geojson"}]
+
+    def delete_detections(self, _orthomosaic_id: str) -> None:
+        self.detections = None
+
+    def save_detections(self, orthomosaic_id: str, geojson: dict[str, Any]) -> dict[str, Any]:
+        self.detections = {
+            "orthomosaic_id": orthomosaic_id,
+            "geojson": geojson,
+            "feature_count": len(geojson["features"]),
+            "updated_at": "2026-09-30T00:00:00Z",
+        }
+        return self.detections
 
     def delete_orthomosaic(self, orthomosaic_id: str) -> dict[str, Any]:
         return self.record
@@ -508,6 +530,56 @@ class RoutesPublicationTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json(), {"source": "storage"})
             self.assertEqual(artifacts.read_keys, [key])
+
+
+class RoutesDetectionTests(unittest.TestCase):
+    def test_missing_detection_table_has_actionable_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            supabase = FakeSupabaseService({"id": "ortho-1"}, root / "cache")
+
+            def missing_table(_cycle_id: str | None = None) -> list[dict[str, Any]]:
+                raise RuntimeError("PGRST205: public.tree_detection_sets missing")
+
+            supabase.list_detections = missing_table  # type: ignore[method-assign]
+            app = FastAPI()
+            app.include_router(create_router(FakeRasterService(root / "active.tif"), root, root, supabase))  # type: ignore[arg-type]
+
+            response = TestClient(app).get("/detections")
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("006_create_tree_detection_sets.sql", response.json()["detail"])
+
+    def test_save_and_reload_detections_for_orthomosaic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            supabase = FakeSupabaseService({"id": "ortho-1"}, root / "cache")
+            app = FastAPI()
+            app.include_router(
+                create_router(FakeRasterService(root / "active.tif"), root, root, supabase),  # type: ignore[arg-type]
+            )
+            collection = {
+                "type": "FeatureCollection",
+                "features": [{
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [-107.0, 24.0]},
+                    "properties": {"diameter_m": 2.5},
+                }],
+            }
+            client = TestClient(app)
+            saved = client.put("/orthomosaics/ortho-1/detections", json={"geojson": collection})
+            loaded = client.get("/orthomosaics/ortho-1/detections")
+            listed = client.get("/detections?cycle_id=cycle-1")
+
+            self.assertEqual(saved.status_code, 200)
+            self.assertEqual(saved.json()["feature_count"], 1)
+            self.assertEqual(loaded.status_code, 200)
+            self.assertEqual(loaded.json()["detections"]["geojson"], collection)
+            self.assertEqual(listed.json()["items"][0]["feature_count"], 1)
+            self.assertNotIn("geojson", listed.json()["items"][0])
+
+            deleted = client.delete("/orthomosaics/ortho-1/detections")
+            self.assertEqual(deleted.status_code, 200)
+            self.assertIsNone(client.get("/orthomosaics/ortho-1/detections").json()["detections"])
 
 
 if __name__ == "__main__":

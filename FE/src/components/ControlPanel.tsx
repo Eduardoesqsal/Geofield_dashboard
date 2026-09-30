@@ -470,11 +470,11 @@ export function ControlPanel({
   onOpenPrescription,
   onExitPrescription,
 }: ControlPanelProps) {
-  const stats = treeStats(filteredData);
-  const domainStats = treeStats(data);
+  const stats = useMemo(() => treeStats(filteredData), [filteredData]);
+  const domainStats = useMemo(() => treeStats(data), [data]);
   const [minimum, setMinimum] = useState(stats.min);
   const [maximum, setMaximum] = useState(stats.max);
-  const [detectionPanelVisible, setDetectionPanelVisible] = useState(true);
+  const [panelTab, setPanelTab] = useState<"indices" | "detections">("indices");
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [expandedStatistics, setExpandedStatistics] = useState<
     Record<string, boolean>
@@ -490,8 +490,12 @@ export function ControlPanel({
   useEffect(() => {
     setMinimum(stats.min);
     setMaximum(stats.max);
-    setDetectionPanelVisible(true);
   }, [data, stats.min, stats.max]);
+
+  useEffect(() => {
+    if (selectedIndex) setPanelTab("indices");
+    else if (data) setPanelTab("detections");
+  }, [selectedIndex, data]);
 
   const updateRange = (nextMinimum: number, nextMaximum: number) => {
     const safeMinimum = Math.min(nextMinimum, nextMaximum);
@@ -506,15 +510,18 @@ export function ControlPanel({
     (_, index) =>
       domainStats.min + ((domainMax - domainStats.min) * index) / 28,
   );
-  const diameterBins = Array.from({ length: 28 }, (_, index) => {
-    const start = diameterBinEdges[index];
-    const end = diameterBinEdges[index + 1];
-    return diameters.filter(
-      (value) => value >= start && (index === 27 ? value <= end : value < end),
-    ).length;
-  });
+  const diameterBins = useMemo(() => {
+    const bins = Array.from({ length: 28 }, () => 0);
+    const width = (domainMax - domainStats.min) / bins.length;
+    for (const value of diameters) {
+      if (value < domainStats.min || value > domainMax) continue;
+      const index = Math.min(bins.length - 1, Math.floor((value - domainStats.min) / width));
+      bins[index] += 1;
+    }
+    return bins;
+  }, [diameters, domainMax, domainStats.min]);
   const diameterPeak = Math.max(...diameterBins, 1);
-  const visibleDiameterCount = diameters.filter((diameter) => {
+  const visibleDiameterCount = useMemo(() => diameters.filter((diameter) => {
     const category = sizeOf(diameter);
     return (
       diameter >= minimum &&
@@ -522,7 +529,7 @@ export function ControlPanel({
       category !== "unknown" &&
       visibleTreeSizes[category]
     );
-  }).length;
+  }).length, [diameters, minimum, maximum, visibleTreeSizes]);
 
   const histogramBins = (values: number[], min: number, max: number) => {
     const count = 96;
@@ -559,11 +566,11 @@ export function ControlPanel({
     );
 
   const activeNdviStats = ndvi.roiResponse ? ndvi.roiStats : ndvi.stats;
-  const selectedNdviStats = ndviStatsFromValues(
+  const selectedNdviStats = useMemo(() => ndviStatsFromValues(
     activeNdviStats.values.filter(
       (value) => value >= ndvi.minimum && value <= ndvi.maximum,
     ),
-  );
+  ), [activeNdviStats, ndvi.minimum, ndvi.maximum]);
   const ndviSelection = {
     left: positionInRange(ndvi.minimum, activeNdviStats),
     right: positionInRange(ndvi.maximum, activeNdviStats),
@@ -578,8 +585,7 @@ export function ControlPanel({
       : selectedIndex != null
         ? indices.some((analysis) => analysis.name === selectedIndex)
         : false;
-  const hasVisiblePanel =
-    hasSelectedSpectralPanel || Boolean(data && detectionPanelVisible);
+  const hasVisiblePanel = hasSelectedSpectralPanel || Boolean(data);
 
   const closeHistogram = (hideIndex: () => void) => {
     if (window.matchMedia("(max-width: 768px)").matches) {
@@ -626,7 +632,11 @@ export function ControlPanel({
       </button>
       {!panelCollapsed && (
         <>
-          {selectedIndex === "NDVI" && ndvi.response && (
+          <div className="controls-tabs" role="tablist" aria-label="Panel de análisis">
+            <button type="button" role="tab" aria-selected={panelTab === "indices"} className={panelTab === "indices" ? "is-active" : ""} disabled={!hasSelectedSpectralPanel} onClick={() => setPanelTab("indices")}>Índices</button>
+            <button type="button" role="tab" aria-selected={panelTab === "detections"} className={panelTab === "detections" ? "is-active" : ""} disabled={!data} onClick={() => setPanelTab("detections")}>Detecciones</button>
+          </div>
+          {panelTab === "indices" && selectedIndex === "NDVI" && ndvi.response && (
             <section className="panel-section ndvi-section">
         <div className="panel-heading">
           <strong>Analisis NDVI</strong>
@@ -858,7 +868,7 @@ export function ControlPanel({
         </section>
           )}
 
-          {indices
+          {panelTab === "indices" && indices
         .filter((analysis) => analysis.name === selectedIndex)
         .map((analysis) => {
         const histogramMinimum = analysis.response.range_min ?? analysis.stats.min;
@@ -1093,7 +1103,7 @@ export function ControlPanel({
         );
           })}
 
-          {data && detectionPanelVisible && (
+          {panelTab === "detections" && data && (
             <section className="panel-section detection-section">
           <div className="panel-heading">
             <strong>Detecciones por diametro</strong>
@@ -1124,7 +1134,7 @@ export function ControlPanel({
               <button
                 className="index-close"
                 type="button"
-                onClick={() => setDetectionPanelVisible(false)}
+                onClick={() => setPanelCollapsed(true)}
                 aria-label="Cerrar histograma de detecciones"
                 title="Cerrar histograma"
               >
