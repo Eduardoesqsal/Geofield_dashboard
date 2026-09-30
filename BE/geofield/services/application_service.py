@@ -63,13 +63,8 @@ class OrthomosaicApplicationService:
             # El registro recien insertado ya contiene todo lo necesario para
             # activar el archivo. Evita una segunda lectura susceptible a una
             # conexion HTTP persistente rota despues de reiniciar el backend.
-            self.supabase.activate_orthomosaic_record(record, self.raster)
-        analysis = self.raster.analyze_uploaded(
-            content,
-            self._kind_from_sensor(sensor_type),
-            filename,
-            sensor_type,
-        )
+            self.supabase.activate_orthomosaic_record(record, self.raster, validated=True)
+        analysis = self.raster.raster_bounds() if activate else None
         return {"orthomosaic": record, "analysis": analysis}
 
     def activate_orthomosaic(self, orthomosaic_id: str) -> dict[str, Any]:

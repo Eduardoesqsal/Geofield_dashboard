@@ -181,3 +181,77 @@ def reproject_index_matrix(
         resampling=Resampling.nearest,
     )
     return tile_values, (tile_valid > 0) & np.isfinite(tile_values), dst_transform
+
+
+def reproject_vari_matrix(
+    src: Any,
+    z: int,
+    x: int,
+    y: int,
+    *,
+    tile_size: int,
+    mercator_bounds: tuple[float, float, float, float],
+    rgb_bands: Callable[[Any], tuple[int, int, int]],
+    calculate_vari: Callable[[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]],
+) -> tuple[np.ndarray, np.ndarray, Affine]:
+    if not src.crs:
+        raise ValueError("El ortomosaico no tiene CRS y no puede reproyectar VARI.")
+    dst_transform = rasterio.transform.from_bounds(*mercator_bounds, tile_size, tile_size)
+    tile_values = np.full((tile_size, tile_size), np.nan, dtype=np.float32)
+    tile_valid = np.zeros((tile_size, tile_size), dtype=np.uint8)
+    source_bounds = transform_bounds("EPSG:3857", src.crs, *mercator_bounds, densify_pts=21)
+    try:
+        source_window = from_bounds(*source_bounds, transform=src.transform).intersection(
+            Window(0, 0, src.width, src.height),
+        )
+    except Exception:
+        source_window = None
+    if source_window is None or source_window.width <= 0 or source_window.height <= 0:
+        return tile_values, tile_valid.astype(bool), dst_transform
+
+    sample_scale = max(1.0, max(source_window.width, source_window.height) / 2048)
+    source_width = max(1, int(np.ceil(source_window.width / sample_scale)))
+    source_height = max(1, int(np.ceil(source_window.height / sample_scale)))
+    bands = rgb_bands(src)
+    red, green, blue = src.read(
+        list(bands), window=source_window,
+        out_shape=(3, source_height, source_width),
+        resampling=Resampling.nearest,
+    ).astype(np.float32)
+    values, valid = calculate_vari(red, green, blue)
+    band_masks = src.read_masks(
+        list(bands), window=source_window,
+        out_shape=(3, source_height, source_width),
+        resampling=Resampling.nearest,
+    )
+    dataset_mask = src.dataset_mask(
+        window=source_window,
+        out_shape=(source_height, source_width),
+        resampling=Resampling.nearest,
+    )
+    valid &= np.all(band_masks > 0, axis=0) & (dataset_mask > 0)
+    source_transform = window_transform(source_window, src.transform) * Affine.scale(
+        source_window.width / source_width,
+        source_window.height / source_height,
+    )
+    reproject(
+        source=np.where(valid, values, np.nan).astype(np.float32),
+        destination=tile_values,
+        src_transform=source_transform,
+        src_crs=src.crs,
+        src_nodata=np.nan,
+        dst_transform=dst_transform,
+        dst_crs="EPSG:3857",
+        dst_nodata=np.nan,
+        resampling=Resampling.nearest,
+    )
+    reproject(
+        source=valid.astype(np.uint8),
+        destination=tile_valid,
+        src_transform=source_transform,
+        src_crs=src.crs,
+        dst_transform=dst_transform,
+        dst_crs="EPSG:3857",
+        resampling=Resampling.nearest,
+    )
+    return tile_values, (tile_valid > 0) & np.isfinite(tile_values), dst_transform

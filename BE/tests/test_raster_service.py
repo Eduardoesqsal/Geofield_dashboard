@@ -65,6 +65,11 @@ class RasterServiceIndexTileTests(unittest.TestCase):
     @staticmethod
     def _rgba(content: bytes) -> np.ndarray:
         return np.asarray(Image.open(io.BytesIO(content)).convert("RGBA"))
+    def test_bounds_only_reads_raster_metadata(self) -> None:
+        with patch.object(self.service, "rgb_render_profile", side_effect=AssertionError("Pixel read")):
+            result = self.service.raster_bounds()
+        self.assertEqual(result["bounds"], [[0.0, 0.0], [4.0, 4.0]])
+        self.assertIn("tile_version", result)
     def test_full_and_roi_ndvi_use_nir_minus_red_and_identical_colors(self) -> None:
         full = self._rgba(self.service.index_tile("NDVI", 0, 0, 0))
         crop = self._rgba(self.service.crop_index_tile("NDVI", self.crop_id, 0, 0, 0))
@@ -116,6 +121,42 @@ class RasterServiceIndexTileTests(unittest.TestCase):
             self.service._index_color_lut("NDRE"),
             self.service._index_color_lut("NDVI"),
         )
+
+    def test_vari_uses_rgb_bands_for_full_image_and_roi(self) -> None:
+        raster_path = self.root / "rgb-vari.tif"
+        bands = np.zeros((3, 4, 4), dtype=np.uint8)
+        bands[0] = 40  # Red
+        bands[1] = 80  # Green
+        bands[2] = 20  # Blue
+        bands[:, 0, 1] = 0  # Denominator zero must be masked.
+        with rasterio.open(
+            raster_path, "w", driver="GTiff", width=4, height=4,
+            count=3, dtype="uint8", crs="EPSG:4326",
+            transform=from_origin(0, 4, 1, 1),
+        ) as destination:
+            destination.write(bands)
+        service = RasterService(self.service.settings)
+        service.active_path = raster_path
+        service.sensor = "rgb"
+        full = service.vegetation_index_data("VARI")
+        roi = service.roi_vegetation_index(box(0, 0, 4, 4), "VARI")
+        expected = (80 - 40) / (80 + 40 - 20)
+        self.assertAlmostEqual(full["matrix"][0][0], expected)
+        self.assertAlmostEqual(roi["matrix"][0][0], expected)
+        self.assertEqual(full["mask"][0][0], 1)
+        self.assertEqual(roi["mask"][0][0], 1)
+        self.assertEqual(full["mask"][0][1], 0)
+        self.assertEqual(service.INDEX_RAMPS["VARI"], service.INDEX_RAMPS["NDVI"])
+        mercator_bounds = rasterio.warp.transform_bounds(
+            "EPSG:4326", "EPSG:3857", 0, 0, 4, 4,
+        )
+        service.tile_bounds_mercator = lambda _z, _x, _y: mercator_bounds  # type: ignore[method-assign]
+        tile = self._rgba(service.index_tile("VARI", 0, 0, 0, equalized=True))
+        self.assertEqual(tile.shape, (256, 256, 4))
+        self.assertEqual(tile[128, 128, 3], 255)
+        self.assertEqual(tile[32, 96, 3], 0)
+        with self.assertRaisesRegex(ValueError, "solo funciona"):
+            self.service.vegetation_index_data("VARI")
     def test_ndwi_zone_palette_uses_its_own_ramp_for_four_zones(self) -> None:
         colors = self.service._zone_palette("NDWI", 4)
         expected = np.asarray(

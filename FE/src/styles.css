@@ -3983,8 +3983,16 @@ body {
 /* Selector modal de índices espectrales. */
 .index-selector {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
+}
+
+.index-selector > div button { width: 100%; }
+.index-selector > div p {
+  margin: 0 0 6px;
+  color: #8a5a00;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .index-selector button {
@@ -5478,6 +5486,14 @@ body {
   text-shadow: none;
 }
 
+.tree-diameter-label-icon span {
+  display: block;
+  width: max-content;
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 3px;
+}
+
 /* Adaptaciones visuales de controles y etiquetas Leaflet. */
 .leaflet-control-zoom {
   margin: 0 !important;
@@ -6098,6 +6114,37 @@ body {
   width: 13px;
   height: 13px;
 }
+
+.detection-vari-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr 22px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 58px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid #d8ddd5;
+  border-radius: 9px;
+  background: #fff;
+  color: #4c5c51;
+  text-align: left;
+  cursor: pointer;
+}
+
+.detection-vari-toggle.is-selected {
+  border-color: #728c76;
+  background: #eef6ef;
+  color: #3f6049;
+}
+
+.detection-vari-toggle:disabled { opacity: 0.55; cursor: not-allowed; }
+.detection-vari-toggle > svg { width: 24px; height: 24px; }
+.detection-vari-toggle span strong,
+.detection-vari-toggle span small { display: block; }
+.detection-vari-toggle span strong { font-size: 11px; }
+.detection-vari-toggle span small { margin-top: 3px; font-size: 9px; }
+.detection-vari-toggle > i { display: grid; place-items: center; }
 
 .detection-histogram-card {
   margin-top: 0;

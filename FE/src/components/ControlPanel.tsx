@@ -40,7 +40,7 @@ type ComparisonIndex = "NDVI" | "NDWI" | "NDRE";
 interface ControlPanelProps {
   data: TreeCollection | null;
   filteredData: TreeCollection | null;
-  selectedIndex: ComparisonIndex | null;
+  selectedIndex: ComparisonIndex | "VARI" | null;
   visibleTreeSizes: Record<VisibleTreeSize, boolean>;
   onToggleTreeSize: (size: VisibleTreeSize) => void;
   onDiameterRangeChange: (min: number, max: number) => void;
@@ -85,7 +85,7 @@ interface ControlPanelProps {
 interface EqualizationHistogramProps {
   id: string;
   label: string;
-  indexName: ComparisonIndex;
+  indexName: ComparisonIndex | "VARI";
   values: number[];
   domainMinimum: number;
   domainMaximum: number;
@@ -974,7 +974,7 @@ export function ControlPanel({
                 aria-label={`Valor maximo ${analysis.name}`}
               />
             </div>
-            <button
+            {analysis.name !== "VARI" && <button
               type="button"
               className={`prescription-panel-action ${prescriptionMode !== "idle" ? "is-active" : ""}`}
               onClick={
@@ -994,7 +994,7 @@ export function ControlPanel({
                   : prescriptionMode === "zoning"
                     ? "Salir de la zonificacion"
                     : `Generar zonificacion ${analysis.name} para este ROI`}
-            </button>
+            </button>}
             <StatisticsDisclosure
               expanded={Boolean(expandedStatistics[analysis.name])}
               onToggle={() => toggleStatistics(analysis.name)}
@@ -1051,12 +1051,12 @@ export function ControlPanel({
                   P90
                 </div>
               </div>
-              <div className="roi-analysis-actions">
+              {analysis.name !== "VARI" && <div className="roi-analysis-actions">
                 <button
                   type="button"
                   onClick={() =>
                     onSaveRoiAnalysis({
-                      index: analysis.name,
+                      index: analysis.name as ComparisonIndex,
                       stats: {
                         count: selectedStats.count,
                         min: selectedStats.min,
@@ -1081,13 +1081,13 @@ export function ControlPanel({
                 </button>
                 <button
                   type="button"
-                  onClick={() => onOpenRoiComparison(analysis.name)}
+                  onClick={() => onOpenRoiComparison(analysis.name as ComparisonIndex)}
                   disabled={!canSaveRoiAnalysis}
                 >
                   <IconChartLine aria-hidden="true" />
                   Comparar vuelos
                 </button>
-              </div>
+              </div>}
             </StatisticsDisclosure>
           </section>
         );

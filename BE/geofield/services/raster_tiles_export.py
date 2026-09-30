@@ -51,6 +51,21 @@ logger = logging.getLogger(__name__)
 class RasterTileExportMixin:
     """Analisis de raster, tiles, recortes y respuestas de indices."""
 
+    def raster_bounds(self) -> dict[str, Any]:
+        """Return map bounds from GeoTIFF metadata without reading its pixels."""
+        path = self._path()
+        with rasterio.open(path) as src:
+            if not src.crs:
+                raise ValueError("El ortomosaico no tiene CRS.")
+            west, south, east, north = transform_bounds(
+                src.crs, "EPSG:4326", *src.bounds, densify_pts=21,
+            )
+        return {
+            "status": "ok",
+            "bounds": [[south, west], [north, east]],
+            "tile_version": self.tile_cache_version(path),
+        }
+
     def analyze_uploaded(self, content: bytes, kind: str, filename: str = "upload.tif", sensor: str | None = None) -> dict[str, Any]:
         """Analyze one uploaded raster using the same RGB/NDVI preparation as the configured raster."""
         suffix = Path(filename).suffix.lower() or ".tif"
@@ -637,11 +652,20 @@ class RasterTileExportMixin:
                 low,
                 high,
             )
-        bands = self._index_bands(name)
+        bands = self._vari_bands() if name == "VARI" else self._index_bands(name)
         if not bands:
             raise ValueError("El Ã­ndice requiere un ortomosaico multiespectral compatible.")
         with rasterio.open(self._path()) as src:
-            values, valid, dst_transform = self._reproject_index_matrix(src, name, z, x, y)
+            if name == "VARI":
+                values, valid, dst_transform = raster_tiles.reproject_vari_matrix(
+                    src, z, x, y,
+                    tile_size=self.RGB_TILE_SIZE,
+                    mercator_bounds=self.tile_bounds_mercator(z, x, y),
+                    rgb_bands=lambda _src: bands,
+                    calculate_vari=self._calculate_vari,
+                )
+            else:
+                values, valid, dst_transform = self._reproject_index_matrix(src, name, z, x, y)
             if crop_id is not None:
                 geom = self.crop_geometries.get(crop_id)
                 if geom is None:
@@ -882,7 +906,87 @@ class RasterTileExportMixin:
                 "bounds": [[bounds[1], bounds[0]], [bounds[3], bounds[2]]],
             }
     
+    @staticmethod
+    def _calculate_vari(red: np.ndarray, green: np.ndarray, blue: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        denominator = green + red - blue
+        valid = (
+            np.isfinite(red) & np.isfinite(green) & np.isfinite(blue)
+            & (denominator != 0)
+        )
+        values = np.divide(
+            green - red, denominator,
+            out=np.zeros_like(denominator, dtype=np.float32),
+            where=valid,
+        )
+        return values, valid
+
+    def _vari_bands(self) -> tuple[int, int, int]:
+        with rasterio.open(self._path()) as src:
+            if self.sensor in {"mavic3m", "micasense"} or src.count not in {3, 4}:
+                raise ValueError("VARI solo funciona con ortomosaicos RGB.")
+            return self._rgb_bands(src)
+
+    def vari_data(self) -> dict[str, Any]:
+        bands = self._vari_bands()
+        width, height, overlay_transform = self.ensure_overlay()
+        with rasterio.open(self._path()) as src:
+            scale = self.scale(src, self.settings.rgb_max_pixels)
+            coarse_height, coarse_width = max(1, src.height // scale), max(1, src.width // scale)
+            source_transform = src.transform * Affine.scale(src.width / coarse_width, src.height / coarse_height)
+            data = src.read(
+                list(bands), out_shape=(3, coarse_height, coarse_width),
+                resampling=Resampling.nearest,
+            ).astype(np.float32)
+            source_mask = src.dataset_mask(
+                out_shape=(coarse_height, coarse_width), resampling=Resampling.nearest,
+            )
+            if src.crs and src.crs.to_string() != "EPSG:4326":
+                projected = np.zeros((3, height, width), dtype=np.float32)
+                for source, destination in zip(data, projected):
+                    reproject(
+                        source=source, destination=destination,
+                        src_transform=source_transform, src_crs=src.crs,
+                        dst_transform=overlay_transform, dst_crs="EPSG:4326",
+                        resampling=Resampling.nearest,
+                    )
+                projected_mask = np.zeros((height, width), dtype=np.uint8)
+                reproject(
+                    source=source_mask, destination=projected_mask,
+                    src_transform=source_transform, src_crs=src.crs,
+                    dst_transform=overlay_transform, dst_crs="EPSG:4326",
+                    resampling=Resampling.nearest,
+                )
+                data, source_mask = projected, projected_mask
+            values, valid = self._calculate_vari(*data)
+            valid &= source_mask > 0
+            bounds = array_bounds(height, width, overlay_transform)
+            return {
+                "status": "ok", "matrix": values.tolist(),
+                "mask": valid.astype(np.uint8).tolist(),
+                "bounds": [[bounds[1], bounds[0]], [bounds[3], bounds[2]]],
+            }
+
+    def roi_vari(self, geom: Any) -> dict[str, Any]:
+        result = self.geometry_window(
+            geom, list(self._vari_bands()), resampling=Resampling.nearest,
+        )
+        if result is None:
+            raise ValueError("El ROI no intersecta el raster.")
+        data, transform, mask, meta = result
+        values, valid = self._calculate_vari(*data.astype(np.float32))
+        with rasterio.open(self._path()) as src:
+            if src.nodata is not None:
+                valid &= np.all(data != src.nodata, axis=0)
+        valid &= mask
+        return {
+            "status": "ok", "matrix": values.tolist(),
+            "mask": valid.astype(np.uint8).tolist(),
+            **self._bounds_response(transform, data.shape[1], data.shape[2], meta),
+        }
+
     def vegetation_index_data(self, name: str) -> dict[str, Any]:
+        if name == "VARI":
+            return self.vari_data()
         if self.sensor == "mavic3m":
             bands = {"green": 1, "red": 2, "rededge": 3, "nir": 4}
         elif self.sensor == "micasense":
@@ -958,6 +1062,8 @@ class RasterTileExportMixin:
     
     def roi_vegetation_index(self, geom: Any, name: str) -> dict[str, Any]:
         """Calcula un índice únicamente dentro de una geometría de interés."""
+        if name == "VARI":
+            return self.roi_vari(geom)
         if name == "NDVI":
             return self.roi_ndvi(geom)
         if self.sensor == "mavic3m":

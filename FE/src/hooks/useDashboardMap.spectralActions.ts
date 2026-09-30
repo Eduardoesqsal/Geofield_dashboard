@@ -4,13 +4,13 @@ import L from "leaflet";
 import {
   backendUrl,
   dashboardApi,
-  type NdviResponse,
   type OrthoMode,
   type OrthoSensor,
 } from "../services/api";
 import {
   type ClassificationFillMode,
   ndviStats,
+  ndviStatsFromValues,
 } from "../utils/ndvi";
 import {
   createEmptyNdviAnalysis,
@@ -19,7 +19,6 @@ import {
 import { mountUploadedOrthomosaic, resetOrthomosaicArtifacts } from "./useDashboardMap.orthomosaic";
 import {
   clearSpectralLayers,
-  createNdviResponse,
   removeSingleSpectralLayer,
 } from "./useDashboardMap.spectral";
 import type { IndexAnalysis } from "./useDashboardMap";
@@ -127,32 +126,6 @@ export function useDashboardMapSpectralActions(ctx: any) {
           selectedRoiIds: [],
         }));
         restoreRoiSelection(persistentRoiSelections);
-        if (type === "multispectral") {
-          if (!result.ndvi_matrix)
-            throw new Error(
-              "El backend no devolviÃ³ la matriz NDVI del ortomosaico.",
-            );
-          const response: NdviResponse = {
-            ...createNdviResponse(result.bounds, result.mask, result.ndvi_matrix),
-          };
-          const stats = ndviStats(response);
-          ndviResponseRef.current = response;
-          ndviRangeRef.current = {
-            min: response.range_min ?? stats.min,
-            max: response.range_max ?? stats.max,
-            equalized: false,
-            fillMode: "transparent",
-            values: stats.values,
-          };
-          setNdviAnalysis(createEmptyNdviAnalysis());
-          setState((current) => ({
-            ...current,
-            ndvi: false,
-            loaded: true,
-            error: null,
-          }));
-          return;
-        }
         uploadedRgbRef.current?.remove();
         uploadedRgbRef.current = undefined;
         setState((current) => ({ ...current, loaded: true, error: null }));
@@ -292,7 +265,9 @@ export function useDashboardMapSpectralActions(ctx: any) {
   const selectIndex = useCallback(
     async (name: "NDVI" | IndexAnalysis["name"]) => {
       try {
-        if (state.orthoMode !== "multispectral")
+        if (name === "VARI" && state.orthoMode !== "rgb")
+          throw new Error("VARI solo funciona con datos RGB.");
+        if (name !== "VARI" && state.orthoMode !== "multispectral")
           throw new Error(
             "Carga un ortomosaico multiespectral para calcular Ã­ndices.",
           );
@@ -352,7 +327,13 @@ export function useDashboardMapSpectralActions(ctx: any) {
             ...roiIndexResponsesRef.current,
             [name]: roiResponse,
           };
-          const stats = ndviStats(roiResponse);
+          const stats = name === "VARI"
+            ? ndviStatsFromValues(roiResponse.matrix.flatMap((row, y) =>
+                row.filter((value, x) =>
+                  Number.isFinite(value) && Number(roiResponse.mask?.[y]?.[x] ?? 1) > 0,
+                ),
+              ))
+            : ndviStats(roiResponse);
           const defaultMinimum = roiResponse.range_min ?? stats.min;
           const defaultMaximum = roiResponse.range_max ?? stats.max;
           setIndexAnalyses((current) => [
@@ -364,7 +345,7 @@ export function useDashboardMapSpectralActions(ctx: any) {
               minimum: defaultMinimum,
               maximum: defaultMaximum,
               visible: true,
-              equalized: false,
+              equalized: name === "VARI",
               fillMode: "transparent",
             },
           ]);
@@ -373,7 +354,7 @@ export function useDashboardMapSpectralActions(ctx: any) {
             roiResponse,
             defaultMinimum,
             defaultMaximum,
-            false,
+            name === "VARI",
             "transparent",
             stats.values,
           );
@@ -381,7 +362,13 @@ export function useDashboardMapSpectralActions(ctx: any) {
           return;
         }
         const response = await dashboardApi.vegetationIndex(name);
-        const stats = ndviStats(response);
+        const stats = name === "VARI"
+          ? ndviStatsFromValues(response.matrix.flatMap((row, y) =>
+              row.filter((value, x) =>
+                Number.isFinite(value) && Number(response.mask?.[y]?.[x] ?? 1) > 0,
+              ),
+            ))
+          : ndviStats(response);
         const defaultMinimum = response.range_min ?? stats.min;
         const defaultMaximum = response.range_max ?? stats.max;
         setIndexAnalyses((current) => [
@@ -393,7 +380,7 @@ export function useDashboardMapSpectralActions(ctx: any) {
             minimum: defaultMinimum,
             maximum: defaultMaximum,
             visible: true,
-            equalized: false,
+            equalized: name === "VARI",
             fillMode: "transparent",
           },
         ]);
@@ -402,7 +389,7 @@ export function useDashboardMapSpectralActions(ctx: any) {
           response,
           defaultMinimum,
           defaultMaximum,
-          false,
+          name === "VARI",
           "transparent",
           stats.values,
         );

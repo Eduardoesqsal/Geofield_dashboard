@@ -370,7 +370,7 @@ export const dashboardApi = {
       `/bounds${orthomosaicId ? `?orthomosaic_id=${encodeURIComponent(orthomosaicId)}` : ""}`,
     ),
   ndvi: () => request<NdviResponse>("/ndvi_data"),
-  vegetationIndex: (name: "NDWI" | "NDRE") =>
+  vegetationIndex: (name: "NDWI" | "NDRE" | "VARI") =>
     request<NdviResponse>(`/vegetation_indices/${name}`),
   createNdviZoning: (
     orthomosaicId: string,
@@ -446,7 +446,7 @@ export const dashboardApi = {
         doses: options?.doses,
       }),
     }),
-  roiVegetationIndex: (name: "NDWI" | "NDRE", geojson: unknown) =>
+  roiVegetationIndex: (name: "NDWI" | "NDRE" | "VARI", geojson: unknown) =>
     request<NdviResponse>(`/roi_indices/${name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

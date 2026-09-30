@@ -37,6 +37,8 @@ class SupabaseActivationMixin:
         self,
         record: dict[str, Any],
         raster_service: RasterService,
+        *,
+        validated: bool = False,
     ) -> dict[str, Any]:
         orthomosaic_id = str(record["id"])
         if self.uses_local_storage:
@@ -57,7 +59,8 @@ class SupabaseActivationMixin:
                     self.settings.supabase_bucket,
                 ).download(record["file_path"])
                 local_path.write_bytes(content)
-        raster_service.validate_path(local_path)
+        if not validated:
+            raster_service.validate_path(local_path)
         raster_service.set_active_context(
             RasterContext(
                 path=local_path,

@@ -23,6 +23,7 @@ export function useDashboardMapRoi(ctx: any) {
     ndviResponseRef,
     ndviTileRef,
     orthoRef,
+    orthoMode,
     roiIndexResponsesRef,
     roiLayersRef,
     selectedRoiRef,
@@ -125,32 +126,34 @@ export function useDashboardMapRoi(ctx: any) {
   /** Solicita el recorte ROI y deja NDWI/NDRE para cÃ¡lculo explÃ­cito. */
   const analyzeRoi = useCallback(async (geojson: unknown) => {
     clearPrescriptionArea();
-    const [ndviResponse, crop] = await Promise.all([
-      dashboardApi.roi(geojson),
-      dashboardApi.cropTiles(geojson),
-    ]);
-    const ndviZoneStats = ndviStats(ndviResponse);
-    ndviResponseRef.current = ndviResponse;
-    roiIndexResponsesRef.current = { NDVI: ndviResponse };
+    const crop = await dashboardApi.cropTiles(geojson);
+    if (orthoMode === "multispectral") {
+      const ndviResponse = await dashboardApi.roi(geojson);
+      const ndviZoneStats = ndviStats(ndviResponse);
+      ndviResponseRef.current = ndviResponse;
+      roiIndexResponsesRef.current = { NDVI: ndviResponse };
+      ndviRangeRef.current = {
+        min: ndviZoneStats.min,
+        max: ndviZoneStats.max,
+        equalized: false,
+        fillMode: "transparent",
+        values: ndviZoneStats.values,
+      };
+      setNdviAnalysis((current) => ({
+        ...current,
+        response: null,
+        roiResponse: null,
+        minimum: ndviZoneStats.min,
+        maximum: ndviZoneStats.max,
+        equalized: false,
+        fillMode: "transparent",
+      }));
+    } else {
+      ndviResponseRef.current = null;
+      roiIndexResponsesRef.current = {};
+      setNdviAnalysis(createEmptyNdviAnalysis());
+    }
     activeCropGeometryRef.current = geojson;
-    ndviRangeRef.current = {
-      min: ndviZoneStats.min,
-      max: ndviZoneStats.max,
-      equalized: false,
-      fillMode: "transparent",
-      values: ndviZoneStats.values,
-    };
-    setNdviAnalysis((current) => ({
-      ...current,
-      response: null,
-      stats: current.stats,
-      roiResponse: null,
-      roiStats: current.roiStats,
-      minimum: ndviZoneStats.min,
-      maximum: ndviZoneStats.max,
-      equalized: false,
-      fillMode: "transparent",
-    }));
     setIndexAnalyses([]);
     ndviRef.current?.remove();
     ndviTileRef.current?.remove();

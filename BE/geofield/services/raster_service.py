@@ -44,6 +44,7 @@ class RasterService(RasterClassificationMixin, RasterIndexMixin, RasterTileExpor
     )
     INDEX_RAMPS = {
         "NDVI": VEGETATION_COLOR_RAMP,
+        "VARI": VEGETATION_COLOR_RAMP,
         # Colores de turbo.png, compartidos con FE/src/utils/ndvi.ts.
         "NDWI": [
             "5956a5", "476db0", "3387bc", "459eb4", "5bb5aa",
@@ -60,9 +61,9 @@ class RasterService(RasterClassificationMixin, RasterIndexMixin, RasterTileExpor
         ("NDRE", 4): ["ff1f1f", "ff9b1f", "d6f01f", "30df1f"],
         ("NDRE", 5): ["ff1f1f", "ffb31f", "fff01f", "b7ef1f", "18e61f"],
     }
-    INDEX_DOMAINS = {"NDVI": (-0.2, 0.8), "NDWI": (-0.5, 0.5), "NDRE": (-0.2, 0.8)}
+    INDEX_DOMAINS = {"NDVI": (-0.2, 0.8), "NDWI": (-0.5, 0.5), "NDRE": (-0.2, 0.8), "VARI": (-1.0, 1.0)}
     RGB_RENDER_VERSION = "webmercator-v3"
-    INDEX_RENDER_VERSION = "index-matrix-webmercator-v7"
+    INDEX_RENDER_VERSION = "index-matrix-webmercator-v8"
     RGB_TILE_SIZE = 256
     EAVISION_DOSAGE_EXPORT_SCALE = 0.1
     _rgb_profile_cache: ClassVar[

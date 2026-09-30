@@ -64,7 +64,7 @@ type DeleteTarget =
   | { kind: "analysis"; record: RoiAnalysisRecord };
 type CycleDialogMode = "entry" | "import" | "library";
 
-function IndexIcon({ name }: { name: "NDVI" | "NDWI" | "NDRE" }) {
+function IndexIcon({ name }: { name: "NDVI" | "NDWI" | "NDRE" | "VARI" }) {
   if (name === "NDVI")
     return <IconLeaf className="index-option-icon" aria-hidden="true" />;
   if (name === "NDWI")
@@ -136,7 +136,7 @@ export function MapView() {
     null,
   );
   const [roiComparisonOpen, setRoiComparisonOpen] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState<ComparisonIndex | null>(
+  const [selectedIndex, setSelectedIndex] = useState<ComparisonIndex | "VARI" | null>(
     null,
   );
   const [roiAnalysisLoading, setRoiAnalysisLoading] = useState(false);
@@ -417,7 +417,16 @@ export function MapView() {
       setDragOverOrthomosaicId(null);
     }
   };
-  const toggleIndex = (name: "NDVI" | "NDWI" | "NDRE") => {
+  const toggleIndex = (name: "NDVI" | "NDWI" | "NDRE" | "VARI") => {
+    if (name === "VARI" && map.treeData?.features.length && map.state.orthoMode === "rgb") {
+      if (!map.variDetectionsEnabled && map.state.treeDisplayMode !== "diameters")
+        map.setTreeDisplayMode("diameters");
+      if (!map.variDetectionsEnabled && !map.state.trees) map.toggleTrees();
+      map.toggleVariDetections();
+      setSelectedIndex(map.variDetectionsEnabled ? null : "VARI");
+      return;
+    }
+    if (name === "VARI" && map.variDetectionsEnabled) map.toggleVariDetections();
     if (name === "NDVI") {
       if (map.ndviAnalysis.response) {
         setSelectedIndex((current) => (current === "NDVI" ? null : "NDVI"));
@@ -793,7 +802,7 @@ export function MapView() {
   };
 
   const openPrescription = () => {
-    const indexName = selectedIndex ?? "NDVI";
+    const indexName = selectedIndex === "VARI" ? "NDVI" : selectedIndex ?? "NDVI";
     const ready =
       indexName === "NDVI"
         ? Boolean(map.ndviAnalysis.roiResponse)
@@ -807,7 +816,7 @@ export function MapView() {
   };
 
   const activePrescriptionDisplayRange = getActivePrescriptionDisplayRange(
-    selectedIndex,
+    selectedIndex === "VARI" ? null : selectedIndex,
     map.ndviAnalysis,
     map.indexAnalyses,
   );
@@ -817,7 +826,7 @@ export function MapView() {
     cellSizeM: number,
     gridAngleDeg: number,
   ) => {
-    const indexName = selectedIndex ?? "NDVI";
+    const indexName = selectedIndex === "VARI" ? "NDVI" : selectedIndex ?? "NDVI";
     setPrescriptionError(null);
     try {
       return await map.generateZoning(
@@ -844,7 +853,7 @@ export function MapView() {
     detailLevel: number,
     manualBreaks?: number[],
   ) => {
-    const indexName = selectedIndex ?? "NDVI";
+    const indexName = selectedIndex === "VARI" ? "NDVI" : selectedIndex ?? "NDVI";
     setPrescriptionError(null);
     try {
       return await map.generateZoning(
@@ -877,7 +886,7 @@ export function MapView() {
     manualBreaks?: number[],
     allowExisting = false,
   ) => {
-    const indexName = selectedIndex ?? "NDVI";
+    const indexName = selectedIndex === "VARI" ? "NDVI" : selectedIndex ?? "NDVI";
     try {
       await map.previewZoning(
         indexName,
@@ -910,7 +919,7 @@ export function MapView() {
     manualBreaks?: number[],
     doses?: number[],
   ) => {
-    const indexName = selectedIndex ?? "NDVI";
+    const indexName = selectedIndex === "VARI" ? "NDVI" : selectedIndex ?? "NDVI";
     setPrescriptionError(null);
     try {
       const result = await map.generatePrescription(
@@ -994,7 +1003,7 @@ export function MapView() {
         open={prescriptionOpen}
         configurationRequestId={prescriptionConfigurationRequest}
         analysisRequestId={prescriptionAnalysisRequest}
-        indexName={selectedIndex ?? "NDVI"}
+        indexName={selectedIndex === "VARI" ? "NDVI" : selectedIndex ?? "NDVI"}
         displayRange={activePrescriptionDisplayRange}
         busy={map.zoningLoading || map.prescriptionLoading}
         error={prescriptionError}
@@ -1061,14 +1070,26 @@ export function MapView() {
         displayMode={map.state.treeDisplayMode}
         editMode={map.state.detectionEditMode}
         visibleSizes={map.state.visibleTreeSizes}
+        rgbAvailable={map.state.orthoMode === "rgb"}
+        variDetectionsEnabled={map.variDetectionsEnabled}
         onImport={map.importDetections}
         onToggleLayer={map.toggleTrees}
-        onDisplayModeChange={map.setTreeDisplayMode}
+        onDisplayModeChange={(mode) => {
+          if (mode !== "diameters" && map.variDetectionsEnabled) {
+            map.toggleVariDetections();
+            setSelectedIndex(null);
+          }
+          map.setTreeDisplayMode(mode);
+        }}
         onDiameterFieldChange={map.setTreeDiameterField}
         onAddDetection={map.startAddDetection}
         onDeleteDetection={map.startDeleteDetection}
         onDeleteArea={map.startDeleteDetectionsArea}
         onToggleSize={map.toggleTreeSize}
+        onToggleVariDetections={() => {
+          setSelectedIndex(map.variDetectionsEnabled ? null : "VARI");
+          map.toggleVariDetections();
+        }}
         onClose={() => setDetectionsOpen(false)}
       />
       <RoiDialog
@@ -1132,35 +1153,41 @@ export function MapView() {
               índices visibles al mismo tiempo.
             </p>
             <div className="index-selector">
-              {(["NDVI", "NDWI", "NDRE"] as const).map((name) => {
+              {(["NDVI", "NDWI", "NDRE", "VARI"] as const).map((name) => {
                 const active =
                   name === "NDVI"
                     ? map.state.ndvi
+                    : name === "VARI" && map.variDetectionsEnabled
+                      ? true
                     : map.indexAnalyses.some(
                         (analysis) =>
                           analysis.name === name && analysis.visible,
                       );
                 return (
-                  <button
-                    key={name}
-                    type="button"
-                    className={active ? "is-active" : ""}
-                    onClick={() => toggleIndex(name)}
-                  >
-                    <IndexIcon name={name} />
-                    <span>
-                      <strong>{name}</strong>
-                      <small>
-                        {active ? "Índice visible" : "Índice oculto"}
-                      </small>
-                    </span>
-                    <i
-                      className={`layer-toggle ${active ? "is-on" : ""}`}
-                      aria-label={active ? "Encendido" : "Apagado"}
+                  <div key={name}>
+                    {name === "VARI" && (
+                      <p role="note">Aviso: VARI solo funciona con datos RGB.</p>
+                    )}
+                    <button
+                      type="button"
+                      className={active ? "is-active" : ""}
+                      onClick={() => toggleIndex(name)}
                     >
-                      <b />
-                    </i>
-                  </button>
+                      <IndexIcon name={name} />
+                      <span>
+                        <strong>{name}</strong>
+                        <small>
+                          {active ? "Índice visible" : "Índice oculto"}
+                        </small>
+                      </span>
+                      <i
+                        className={`layer-toggle ${active ? "is-on" : ""}`}
+                        aria-label={active ? "Encendido" : "Apagado"}
+                      >
+                        <b />
+                      </i>
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -1236,7 +1263,7 @@ export function MapView() {
           setSelectedIndex((current) => (current === name ? null : current));
         }}
         canSaveRoiAnalysis={Boolean(
-          selectedIndex &&
+          selectedIndex && selectedIndex !== "VARI" &&
           map.state.selectedRoiId &&
             map.state.orthomosaicId &&
             activeRoiIndexReady,

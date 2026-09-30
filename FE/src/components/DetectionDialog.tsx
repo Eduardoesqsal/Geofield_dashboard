@@ -43,6 +43,8 @@ interface Props {
   displayMode: TreeDisplayMode;
   editMode: DetectionEditMode;
   visibleSizes: Record<VisibleTreeSize, boolean>;
+  rgbAvailable: boolean;
+  variDetectionsEnabled: boolean;
   onImport: (
     files: File[],
     reportProgress: (progress: number, message: string) => void,
@@ -54,6 +56,7 @@ interface Props {
   onDeleteDetection: () => void;
   onDeleteArea: () => void;
   onToggleSize: (size: VisibleTreeSize) => void;
+  onToggleVariDetections: () => void;
   onClose: () => void;
 }
 
@@ -79,6 +82,8 @@ export function DetectionDialog({
   displayMode,
   editMode,
   visibleSizes,
+  rgbAvailable,
+  variDetectionsEnabled,
   onImport,
   onToggleLayer,
   onDisplayModeChange,
@@ -87,6 +92,7 @@ export function DetectionDialog({
   onDeleteDetection,
   onDeleteArea,
   onToggleSize,
+  onToggleVariDetections,
   onClose,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -472,6 +478,24 @@ export function DetectionDialog({
                   </i>
                 </button>
               </div>
+              <button
+                className={`detection-vari-toggle ${variDetectionsEnabled ? "is-selected" : ""}`}
+                type="button"
+                onClick={onToggleVariDetections}
+                disabled={!rgbAvailable || !visible || !data?.features.length || displayMode !== "diameters"}
+                aria-pressed={variDetectionsEnabled}
+              >
+                <IconTrees aria-hidden="true" />
+                <span>
+                  <strong>VARI en diámetros</strong>
+                  <small>
+                    {displayMode === "diameters"
+                      ? "Colorea solo los círculos; conserva el RGB alrededor."
+                      : "Selecciona Diámetros para activar esta vista."}
+                  </small>
+                </span>
+                <i>{variDetectionsEnabled && <IconCheck aria-hidden="true" />}</i>
+              </button>
               <div className="detection-editor">
                 <div className="detection-editor-heading">
                   <span>

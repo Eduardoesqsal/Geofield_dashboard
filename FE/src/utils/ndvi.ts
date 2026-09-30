@@ -48,13 +48,21 @@ const PRESCRIPTION_HISTOGRAM_STOPS = [
 
 /** Metadatos y rampas cromaticas compartidas por mapa, leyenda e histogramas. */
 export const INDEX_COLOR_RAMPS: Record<
-  "NDVI" | "GNDVI" | "NDWI" | "NDRE",
+  "NDVI" | "GNDVI" | "NDWI" | "NDRE" | "VARI",
   IndexColorRampDefinition
 > = {
   NDVI: {
     label: "NDVI",
     fullLabel: "Normalized Difference Vegetation Index",
     description: "Low vegetation / stressed vegetation -> high vegetation vigor",
+    noDataColor: "#00000000",
+    ramp: VEGETATION_COLOR_RAMP,
+    stops: VEGETATION_COLOR_STOPS,
+  },
+  VARI: {
+    label: "VARI",
+    fullLabel: "Visible Atmospherically Resistant Index",
+    description: "Índice de vegetación calculado con bandas RGB",
     noDataColor: "#00000000",
     ramp: VEGETATION_COLOR_RAMP,
     stops: VEGETATION_COLOR_STOPS,

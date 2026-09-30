@@ -72,7 +72,7 @@ export const getActivePrescriptionDisplayRange = (
     stats: RangeSource;
   },
   indexAnalyses: Array<{
-    name: "NDVI" | "NDWI" | "NDRE";
+    name: ComparisonIndex | "VARI";
     response: { range_min?: number | null; range_max?: number | null };
     stats: RangeSource;
   }>,

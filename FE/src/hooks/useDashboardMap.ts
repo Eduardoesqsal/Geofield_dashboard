@@ -27,6 +27,7 @@ import {
   type VisibleTreeSize,
 } from "../utils/tree";
 import { parseDetectionFiles, parseImportFile } from "../utils/importFormats";
+import { createVariDiameterTileLayer } from "../utils/variDetections";
 import {
   buildHistogramEqualization,
   equalizedPosition,
@@ -56,6 +57,7 @@ import {
   restoreBaseOrthoLayer,
 } from "./useDashboardMap.roi";
 import {
+  INDEX_TILE_VERSION,
   clearSpectralLayers,
   createNdviResponse,
   removeSingleSpectralLayer,
@@ -111,7 +113,7 @@ export interface NdviAnalysis {
 
 /** Estado equivalente para Ã­ndices adicionales que pueden coexistir. */
 export interface IndexAnalysis {
-  name: "NDWI" | "NDRE";
+  name: "NDWI" | "NDRE" | "VARI";
   response: NdviResponse;
   stats: NdviStats;
   minimum: number;
@@ -292,6 +294,8 @@ export function useDashboardMap(
   const activeCycleIdRef = useRef(activeCycleId);
   // Estado declarativo expuesto a la interfaz.
   const [state, setState] = useState<MapState>(createInitialMapState());
+  const orthoModeRef = useRef(state.orthoMode);
+  orthoModeRef.current = state.orthoMode;
   const [treeData, setTreeData] = useState<TreeCollection | null>(null);
   const [filteredTreeData, setFilteredTreeData] =
     useState<TreeCollection | null>(null);
@@ -299,6 +303,17 @@ export function useDashboardMap(
     createEmptyNdviAnalysis(),
   );
   const [indexAnalyses, setIndexAnalyses] = useState<IndexAnalysis[]>([]);
+  const [variDetectionsEnabled, setVariDetectionsEnabled] = useState(false);
+  const [variDetectionStyle, setVariDetectionStyle] = useState<{
+    minimum: number;
+    maximum: number;
+    equalized: boolean;
+    fillMode: ClassificationFillMode;
+    cropId: string | null;
+  } | null>(null);
+  const variResponseRef = useRef<NdviResponse | null>(null);
+  const variLoadFailedRef = useRef(false);
+  const variDetectionOverlayRef = useRef<L.GridLayer>();
   const [zoning, setZoning] = useState<NdviZoningResponse | null>(null);
   const [zoningLoading, setZoningLoading] = useState(false);
   const [prescription, setPrescription] =
@@ -387,6 +402,7 @@ export function useDashboardMap(
     labelsEnabledRef,
     labelsRef,
     mapRef,
+    orthoModeRef,
     rawTreeDataRef,
     setFilteredTreeData,
     setState,
@@ -394,6 +410,8 @@ export function useDashboardMap(
     treeDataRef,
     treeDisplayModeRef,
     treeRef,
+    variResponseRef,
+    variLoadFailedRef,
     visibleTreeSizesRef,
   });
   const shouldRenderIndexAsTiles = useCallback(
@@ -593,6 +611,7 @@ export function useDashboardMap(
     ndviResponseRef,
     ndviTileRef,
     orthoRef,
+    orthoMode: state.orthoMode,
     roiIndexResponsesRef,
     roiLayersRef,
     selectedRoiRef,
@@ -1010,6 +1029,109 @@ export function useDashboardMap(
     treeRef,
     visibleTreeSizesRef,
   });
+  const toggleVariDetections = useCallback(() => {
+    if (state.orthoMode !== "rgb" || !treeData?.features.length) return;
+    if (!variDetectionsEnabled) {
+      const selectedVari = indexAnalyses.find((item) => item.name === "VARI");
+      setVariDetectionStyle((current) => selectedVari ? {
+        minimum: selectedVari.minimum,
+        maximum: selectedVari.maximum,
+        equalized: selectedVari.equalized,
+        fillMode: selectedVari.fillMode,
+        cropId: activeCropIdRef.current,
+      } : current);
+      hideIndex("VARI");
+    }
+    setVariDetectionsEnabled((current) => !current);
+  }, [hideIndex, indexAnalyses, state.orthoMode, treeData, variDetectionsEnabled]);
+  const hideAllIndices = useCallback(() => {
+    hideIndices();
+    setVariDetectionsEnabled(false);
+  }, [hideIndices]);
+
+  useEffect(() => {
+    if (variDetectionsEnabled && indexRefs.current.has("VARI"))
+      hideIndex("VARI");
+  }, [variDetectionsEnabled, indexAnalyses, hideIndex]);
+
+  useEffect(() => {
+    setVariDetectionsEnabled(false);
+    setVariDetectionStyle(null);
+    variResponseRef.current = null;
+    variLoadFailedRef.current = false;
+  }, [state.orthomosaicId, state.orthoMode]);
+
+  useEffect(() => {
+    if ((!variDetectionsEnabled && !state.labels) ||
+        !state.trees || state.orthoMode !== "rgb") return;
+    if (!state.labels && variDetectionStyle) return;
+    if (variResponseRef.current) {
+      refreshLabels();
+      return;
+    }
+    let cancelled = false;
+    variLoadFailedRef.current = false;
+    dashboardApi.vegetationIndex("VARI")
+      .then((response) => {
+        if (cancelled) return;
+        variResponseRef.current = response;
+        variLoadFailedRef.current = false;
+        setVariDetectionStyle((current) => {
+          if (current) return current;
+          let minimum = Infinity;
+          let maximum = -Infinity;
+          response.matrix.forEach((row, y) => row.forEach((value, x) => {
+            if (!Number.isFinite(value) || Number(response.mask?.[y]?.[x] ?? 1) <= 0) return;
+            minimum = Math.min(minimum, value);
+            maximum = Math.max(maximum, value);
+          }));
+          return {
+            minimum: Number.isFinite(minimum) ? minimum : -1,
+            maximum: Number.isFinite(maximum) ? maximum : 1,
+            equalized: true,
+            fillMode: "transparent",
+            cropId: null,
+          };
+        });
+        refreshLabels();
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        variLoadFailedRef.current = true;
+        refreshLabels();
+        if (variDetectionsEnabled && !variDetectionStyle) setVariDetectionsEnabled(false);
+        setState((current) => ({
+          ...current,
+          error: error instanceof Error ? error.message : "No se pudo calcular VARI.",
+        }));
+      });
+    return () => { cancelled = true; };
+  }, [variDetectionsEnabled, variDetectionStyle, state.labels, state.trees, state.orthoMode, state.orthomosaicId, refreshLabels]);
+
+  useEffect(() => {
+    variDetectionOverlayRef.current?.remove();
+    variDetectionOverlayRef.current = undefined;
+    const map = mapRef.current;
+    if (!map || !variDetectionsEnabled || !state.trees ||
+        state.treeDisplayMode !== "diameters" || !variDetectionStyle ||
+        !filteredTreeData?.features.length) return;
+    const url = spectralTileUrl(
+      "VARI",
+      variDetectionStyle.minimum,
+      variDetectionStyle.maximum,
+      variDetectionStyle.cropId,
+      variDetectionStyle.equalized,
+      variDetectionStyle.fillMode,
+    );
+    variDetectionOverlayRef.current = createVariDiameterTileLayer(
+      `${url}&v=${encodeURIComponent(INDEX_TILE_VERSION)}`,
+      filteredTreeData,
+    ).addTo(map);
+    return () => {
+      variDetectionOverlayRef.current?.remove();
+      variDetectionOverlayRef.current = undefined;
+    };
+  }, [variDetectionsEnabled, variDetectionStyle, filteredTreeData, state.trees, state.treeDisplayMode, spectralTileUrl]);
   const {
     activateStoredOrtho,
     exportCrop,
@@ -1194,6 +1316,7 @@ export function useDashboardMap(
     filteredTreeData,
     ndviAnalysis,
     indexAnalyses,
+    variDetectionsEnabled,
     zoning,
     zoningLoading,
     prescription,
@@ -1210,11 +1333,12 @@ export function useDashboardMap(
     clearZoning,
     clearZoningPreview,
     selectIndex,
-    hideIndices,
+    hideIndices: hideAllIndices,
     hideNdvi,
     hideIndex,
     toggleNdvi,
     toggleIndexLayer,
+    toggleVariDetections,
     drawRoi,
     drawPrescriptionArea,
     importRoi,

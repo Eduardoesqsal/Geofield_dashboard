@@ -15,6 +15,7 @@ import {
   type HistogramEqualization,
 } from "../utils/ndvi";
 import { buildTreePopupHtml, filterVisibleTrees } from "./useDashboardMap.helpers";
+import { treeVariValue } from "../utils/variDetections";
 
 export function useDashboardMapTreeCore(ctx: any) {
   const {
@@ -25,6 +26,7 @@ export function useDashboardMapTreeCore(ctx: any) {
     labelsEnabledRef,
     labelsRef,
     mapRef,
+    orthoModeRef,
     rawTreeDataRef,
     setFilteredTreeData,
     setState,
@@ -32,6 +34,8 @@ export function useDashboardMapTreeCore(ctx: any) {
     treeDataRef,
     treeDisplayModeRef,
     treeRef,
+    variLoadFailedRef,
+    variResponseRef,
     visibleTreeSizesRef,
   } = ctx;
 
@@ -58,7 +62,13 @@ export function useDashboardMapTreeCore(ctx: any) {
           interactive: false,
           icon: L.divIcon({
             className: "tree-diameter-label-icon",
-            html: `<span>${diameter.toFixed(2)} m</span>`,
+            html: `<span>Diámetro: ${diameter.toFixed(2)} m</span>${
+              orthoModeRef.current === "rgb"
+                ? `<span>Salud (VARI): ${variResponseRef.current
+                    ? (treeVariValue(variResponseRef.current, feature)?.toFixed(3) ?? "sin dato")
+                    : variLoadFailedRef.current ? "sin dato" : "cargando..."}</span>`
+                : ""
+            }`,
             iconSize: [1, 1],
           }),
         },
@@ -188,7 +198,7 @@ export function useDashboardMapTreeCore(ctx: any) {
 
   const renderClassificationPixel = useCallback(
     (
-      name: "NDVI" | "NDWI" | "NDRE",
+      name: "NDVI" | "NDWI" | "NDRE" | "VARI",
       value: number,
       minimum: number,
       maximum: number,

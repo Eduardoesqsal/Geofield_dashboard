@@ -6,7 +6,6 @@ Traduce requests web a operaciones de servicios para ortomosaicos, ROI,
 
 from __future__ import annotations
 
-import ast
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -50,6 +49,10 @@ def create_router(
 
     def ensure_orthomosaic(orthomosaic_id: str | None) -> None:
         if not orthomosaic_id:
+            return
+        context = raster.active_context
+        if (context is not None and context.orthomosaic_id == orthomosaic_id
+                and context.path.is_file()):
             return
         try:
             orthomosaics.activate_orthomosaic(orthomosaic_id)
@@ -445,13 +448,7 @@ def create_router(
     def bounds(orthomosaic_id: str | None = Query(None)) -> dict[str, Any]:
         try:
             ensure_orthomosaic(orthomosaic_id)
-            raster.ensure_overlay()
-            path = output_dir / "bounds_overlay.txt"
-            return {
-                "status": "ok",
-                "bounds": ast.literal_eval(path.read_text(encoding="utf-8")),
-                "tile_version": raster.tile_cache_version(),
-            }
+            return raster.raster_bounds()
         except HTTPException:
             raise
         except (ValueError, rasterio.errors.RasterioIOError) as exc:

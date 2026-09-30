@@ -550,8 +550,11 @@ class SupabaseHistoryTests(unittest.TestCase):
                 self,
                 selected: dict[str, object],
                 _raster: object,
+                *,
+                validated: bool = False,
             ) -> dict[str, object]:
                 self.activated = selected
+                self.validated = validated
                 return selected
 
             def activate_orthomosaic(self, *_args: object) -> None:
@@ -561,7 +564,7 @@ class SupabaseHistoryTests(unittest.TestCase):
             def validate_uploaded(self, _content: bytes) -> None:
                 return None
 
-            def analyze_uploaded(self, *_args: object) -> dict[str, str]:
+            def raster_bounds(self) -> dict[str, str]:
                 return {"status": "ok"}
 
         persistence = Persistence()
@@ -579,6 +582,7 @@ class SupabaseHistoryTests(unittest.TestCase):
         )
 
         self.assertIs(persistence.activated, record)
+        self.assertTrue(persistence.validated)
         self.assertIs(result["orthomosaic"], record)
 
     def test_save_roi_analysis_falls_back_to_roi_analyses_for_ndwi(self) -> None:
