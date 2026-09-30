@@ -57,7 +57,62 @@ export function createVariDiameterTileLayer(
   detections: TreeCollection,
 ): L.GridLayer {
   type ProjectedCircle = { x: number; y: number; radiusX: number; radiusY: number };
-  const circlesByZoom = new Map<number, ProjectedCircle[]>();
+  type CircleIndex = {
+    buckets: Map<string, ProjectedCircle[]>;
+    oversized: ProjectedCircle[];
+  };
+  const bucketSize = 1024;
+  const circlesByZoom = new Map<number, CircleIndex>();
+
+  const indexAtZoom = (zoom: number): CircleIndex => {
+    const cached = circlesByZoom.get(zoom);
+    if (cached) return cached;
+    const index: CircleIndex = { buckets: new Map(), oversized: [] };
+    for (const feature of detections.features) {
+      const diameter = diameterOf(feature);
+      if (!Number.isFinite(diameter) || diameter <= 0) continue;
+      const [longitude, latitude] = feature.geometry.coordinates;
+      const center = L.CRS.EPSG3857.latLngToPoint(L.latLng(latitude, longitude), zoom);
+      const radiusMeters = diameter / 2;
+      const latitudeOffset = radiusMeters / 111_320;
+      const longitudeOffset = radiusMeters /
+        (111_320 * Math.max(0.01, Math.cos(latitude * Math.PI / 180)));
+      const east = L.CRS.EPSG3857.latLngToPoint(
+        L.latLng(latitude, longitude + longitudeOffset), zoom,
+      );
+      const north = L.CRS.EPSG3857.latLngToPoint(
+        L.latLng(latitude + latitudeOffset, longitude), zoom,
+      );
+      const circle = {
+        x: center.x,
+        y: center.y,
+        radiusX: Math.abs(east.x - center.x),
+        radiusY: Math.abs(north.y - center.y),
+      };
+      const minX = Math.floor((circle.x - circle.radiusX) / bucketSize);
+      const maxX = Math.floor((circle.x + circle.radiusX) / bucketSize);
+      const minY = Math.floor((circle.y - circle.radiusY) / bucketSize);
+      const maxY = Math.floor((circle.y + circle.radiusY) / bucketSize);
+      if ((maxX - minX + 1) * (maxY - minY + 1) > 64) {
+        index.oversized.push(circle);
+        continue;
+      }
+      for (let bucketX = minX; bucketX <= maxX; bucketX += 1) {
+        for (let bucketY = minY; bucketY <= maxY; bucketY += 1) {
+          const key = `${bucketX}:${bucketY}`;
+          const bucket = index.buckets.get(key) ?? [];
+          bucket.push(circle);
+          index.buckets.set(key, bucket);
+        }
+      }
+    }
+    circlesByZoom.set(zoom, index);
+    if (circlesByZoom.size > 3) {
+      const oldestZoom = circlesByZoom.keys().next().value;
+      if (oldestZoom !== undefined) circlesByZoom.delete(oldestZoom);
+    }
+    return index;
+  };
 
   class VariDiameterLayer extends L.GridLayer {
     createTile(coords: L.Coords, done: L.DoneCallback): HTMLElement {
@@ -69,35 +124,14 @@ export function createVariDiameterTileLayer(
         queueMicrotask(() => done(new Error("No se pudo crear el tile VARI."), canvas));
         return canvas;
       }
-      let circles = circlesByZoom.get(coords.z);
-      if (!circles) {
-        circles = detections.features.flatMap((feature) => {
-          const diameter = diameterOf(feature);
-          if (!Number.isFinite(diameter) || diameter <= 0) return [];
-          const [longitude, latitude] = feature.geometry.coordinates;
-          const center = L.CRS.EPSG3857.latLngToPoint(L.latLng(latitude, longitude), coords.z);
-          const radiusMeters = diameter / 2;
-          const latitudeOffset = radiusMeters / 111_320;
-          const longitudeOffset = radiusMeters /
-            (111_320 * Math.max(0.01, Math.cos(latitude * Math.PI / 180)));
-          const east = L.CRS.EPSG3857.latLngToPoint(
-            L.latLng(latitude, longitude + longitudeOffset), coords.z,
-          );
-          const north = L.CRS.EPSG3857.latLngToPoint(
-            L.latLng(latitude + latitudeOffset, longitude), coords.z,
-          );
-          return [{
-            x: center.x,
-            y: center.y,
-            radiusX: Math.abs(east.x - center.x),
-            radiusY: Math.abs(north.y - center.y),
-          }];
-        });
-        circlesByZoom.set(coords.z, circles);
-      }
       const tileLeft = coords.x * 256;
       const tileTop = coords.y * 256;
-      const intersecting = circles.filter(({ x, y, radiusX, radiusY }) =>
+      const index = indexAtZoom(coords.z);
+      const candidates = [
+        ...(index.buckets.get(`${Math.floor(tileLeft / bucketSize)}:${Math.floor(tileTop / bucketSize)}`) ?? []),
+        ...index.oversized,
+      ];
+      const intersecting = candidates.filter(({ x, y, radiusX, radiusY }) =>
         x + radiusX >= tileLeft && x - radiusX <= tileLeft + 256 &&
         y + radiusY >= tileTop && y - radiusY <= tileTop + 256,
       );
