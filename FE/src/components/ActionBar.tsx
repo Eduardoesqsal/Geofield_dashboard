@@ -6,6 +6,7 @@
 import { useState } from "react";
 import {
   IconDownload,
+  IconGridDots,
   IconLeaf,
   IconMap2,
   IconPolygon,
@@ -15,9 +16,16 @@ import {
 } from "@tabler/icons-react";
 
 interface Props {
-  state: { rgb: boolean; ndvi: boolean; trees: boolean; labels: boolean };
+  state: {
+    rgb: boolean;
+    ndvi: boolean;
+    trees: boolean;
+    labels: boolean;
+    orthoMode: "rgb" | "multispectral" | null;
+  };
   onOrthoLibrary: () => void;
   onOpenIndices: () => void;
+  onOpenZoning: () => void;
   onOpenRoi: () => void;
   onOpenDetections: () => void;
   onLabels: () => void;
@@ -32,6 +40,7 @@ export function ActionBar({
   state,
   onOrthoLibrary,
   onOpenIndices,
+  onOpenZoning,
   onOpenRoi,
   onOpenDetections,
   onLabels,
@@ -60,30 +69,46 @@ export function ActionBar({
       >
         <IconLeaf aria-hidden="true" />
       </button>
-      <button
-        className="action-pill"
-        onClick={onOpenRoi}
-        title="Región de interés"
-        aria-label="Región de interés"
-      >
-        <IconPolygon aria-hidden="true" />
-      </button>
-      <button
-        className={`action-pill ${state.trees ? "is-active" : ""}`}
-        onClick={onOpenDetections}
-        title="Importar y administrar detecciones"
-        aria-label="Importar y administrar detecciones"
-      >
-        <IconTrees aria-hidden="true" />
-      </button>
-      <button
-        className={`action-pill ${state.labels ? "is-active" : ""}`}
-        onClick={onLabels}
-        title="Activar etiquetas"
-        aria-label="Activar etiquetas"
-      >
-        <IconTags aria-hidden="true" />
-      </button>
+      {state.orthoMode === "multispectral" && (
+        <>
+          <button
+            className="action-pill"
+            onClick={onOpenRoi}
+            title="Región de interés"
+            aria-label="Región de interés"
+          >
+            <IconPolygon aria-hidden="true" />
+          </button>
+          <button
+            className="action-pill"
+            onClick={onOpenZoning}
+            title="Zonificación"
+            aria-label="Zonificación"
+          >
+            <IconGridDots aria-hidden="true" />
+          </button>
+        </>
+      )}
+      {state.orthoMode === "rgb" && (
+        <>
+          <button
+            className={`action-pill ${state.trees ? "is-active" : ""}`}
+            onClick={onOpenDetections}
+            title="Importar y administrar detecciones"
+            aria-label="Importar y administrar detecciones"
+          >
+            <IconTrees aria-hidden="true" />
+          </button>
+          <button
+            className={`action-pill ${state.labels ? "is-active" : ""}`}
+            onClick={onLabels}
+            title="Activar etiquetas"
+            aria-label="Activar etiquetas"
+          >
+            <IconTags aria-hidden="true" />
+          </button>
+        </>
+      )}
       <button
         className="action-pill"
         onClick={onImport}

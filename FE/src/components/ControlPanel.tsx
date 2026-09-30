@@ -721,29 +721,25 @@ export function ControlPanel({
             aria-label="Valor maximo NDVI"
           />
         </div>
-        {ndvi.roiResponse && (
-          <button
-            type="button"
-            className={`prescription-panel-action ${prescriptionMode !== "idle" ? "is-active" : ""}`}
-            onClick={
-              prescriptionMode === "idle" ? onOpenPrescription : onExitPrescription
-            }
-            disabled={prescriptionLoading}
-          >
-            {prescriptionMode === "idle" ? (
-              <IconGridDots aria-hidden="true" />
-            ) : (
-              <IconX aria-hidden="true" />
-            )}
-            {prescriptionLoading
-              ? "Procesando zonificación..."
-              : prescriptionMode === "prescription"
-                ? "Salir de la prescripción"
-                : prescriptionMode === "zoning"
-                  ? "Salir de la zonificación"
-                  : "Generar zonificación NDVI para este ROI"}
-          </button>
-        )}
+        <button
+          type="button"
+          className={`prescription-panel-action ${prescriptionMode !== "idle" ? "is-active" : ""}`}
+          onClick={prescriptionMode === "idle" ? onOpenPrescription : onExitPrescription}
+          disabled={prescriptionLoading}
+        >
+          {prescriptionMode === "idle" ? (
+            <IconGridDots aria-hidden="true" />
+          ) : (
+            <IconX aria-hidden="true" />
+          )}
+          {prescriptionLoading
+            ? "Procesando zonificación..."
+            : prescriptionMode === "prescription"
+              ? "Salir de la prescripción"
+              : prescriptionMode === "zoning"
+                ? "Salir de la zonificación"
+                : "Generar zonificación NDVI"}
+        </button>
         <StatisticsDisclosure
           expanded={Boolean(expandedStatistics.ndvi)}
           onToggle={() => toggleStatistics("ndvi")}

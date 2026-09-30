@@ -860,9 +860,9 @@ export function MapView() {
         ? Boolean(map.ndviAnalysis.roiResponse)
         : map.indexAnalyses.some((analysis) => analysis.name === indexName);
     setPrescriptionError(
-      map.state.orthomosaicId && ready
+      map.state.orthoMode === "multispectral" && map.cropAvailable && ready
         ? null
-        : "Selecciona un ROI, recÃ³rtalo y abre su histograma NDVI antes de generar la prescripciÃ³n.",
+        : `Selecciona y recorta un ROI multiespectral, luego activa ${indexName} antes de generar la zonificación.`,
     );
     setPrescriptionOpen(true);
   };
@@ -1001,6 +1001,7 @@ export function MapView() {
       <div ref={mapElement} className="map" />
       <ActionBar
         state={map.state}
+        onOpenZoning={openPrescription}
         cropAvailable={map.cropAvailable}
         cropExporting={map.cropExporting}
         onExportCrop={(variant) => void map.exportCrop(variant)}
@@ -1063,9 +1064,12 @@ export function MapView() {
         prescription={map.prescription}
         prescriptionAreaReady={map.prescriptionAreaReady}
         onDrawArea={() => {
-          setPrescriptionOpen(false);
-          setPrescriptionError(null);
-          map.drawPrescriptionArea(() => setPrescriptionOpen(true));
+          if (map.drawPrescriptionArea(() => setPrescriptionOpen(true))) {
+            setPrescriptionOpen(false);
+            setPrescriptionError(null);
+          } else {
+            setPrescriptionError("Selecciona y recorta un ROI multiespectral antes de dibujar la zona.");
+          }
         }}
         onGenerateZoning={generateZoning}
         onPreviewZoning={previewZoning}
@@ -1223,7 +1227,15 @@ export function MapView() {
               índices visibles al mismo tiempo.
             </p>
             <div className="index-selector">
-              {(["NDVI", "NDWI", "NDRE", "VARI"] as const).map((name) => {
+              {!map.state.orthoMode && (
+                <p role="note">Selecciona un ortomosaico RGB o multiespectral para ver sus índices.</p>
+              )}
+              {(map.state.orthoMode === "rgb"
+                ? (["VARI"] as const)
+                : map.state.orthoMode === "multispectral"
+                  ? (["NDVI", "NDWI", "NDRE"] as const)
+                  : ([] as const)
+              ).map((name) => {
                 const active =
                   name === "NDVI"
                     ? map.state.ndvi
@@ -1235,9 +1247,6 @@ export function MapView() {
                       );
                 return (
                   <div key={name}>
-                    {name === "VARI" && (
-                      <p role="note">Aviso: VARI solo funciona con datos RGB.</p>
-                    )}
                     <button
                       type="button"
                       className={active ? "is-active" : ""}
