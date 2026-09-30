@@ -90,12 +90,12 @@ export function useDashboardMapTreeActions(ctx: any) {
   const drawPrescriptionArea = useCallback(
     (onComplete: () => void) => {
       const map = mapRef.current;
-      if (state.orthoMode !== "multispectral" || !map || !activeCropGeometryRef.current) {
+      if (!map || !activeCropGeometryRef.current || !ndviAnalysis.roiResponse) {
         setState((current) => ({
           ...current,
-          error: "Primero selecciona y recorta un ROI multiespectral.",
+          error: "Primero recorta un ROI y abre su histograma NDVI.",
         }));
-        return false;
+        return;
       }
       clearPrescription();
       prescriptionDrawCompleteRef.current = onComplete;
@@ -112,9 +112,8 @@ export function useDashboardMapTreeActions(ctx: any) {
         ...current,
         error: "Dibuja en el mapa el poligono que delimita la zona de cultivo.",
       }));
-      return true;
     },
-    [clearPrescription, state.orthoMode],
+    [clearPrescription, ndviAnalysis.roiResponse],
   );
 
   /** Importa, guarda y selecciona de forma aditiva todas las geometrÃ­as vÃ¡lidas. */

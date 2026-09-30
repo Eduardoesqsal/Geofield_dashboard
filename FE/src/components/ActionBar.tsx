@@ -6,7 +6,6 @@
 import { useState } from "react";
 import {
   IconDownload,
-  IconGridDots,
   IconLeaf,
   IconMap2,
   IconPolygon,
@@ -25,7 +24,6 @@ interface Props {
   };
   onOrthoLibrary: () => void;
   onOpenIndices: () => void;
-  onOpenZoning: () => void;
   onOpenRoi: () => void;
   onOpenDetections: () => void;
   onLabels: () => void;
@@ -40,7 +38,6 @@ export function ActionBar({
   state,
   onOrthoLibrary,
   onOpenIndices,
-  onOpenZoning,
   onOpenRoi,
   onOpenDetections,
   onLabels,
@@ -70,24 +67,14 @@ export function ActionBar({
         <IconLeaf aria-hidden="true" />
       </button>
       {state.orthoMode === "multispectral" && (
-        <>
-          <button
-            className="action-pill"
-            onClick={onOpenRoi}
-            title="Región de interés"
-            aria-label="Región de interés"
-          >
-            <IconPolygon aria-hidden="true" />
-          </button>
-          <button
-            className="action-pill"
-            onClick={onOpenZoning}
-            title="Zonificación"
-            aria-label="Zonificación"
-          >
-            <IconGridDots aria-hidden="true" />
-          </button>
-        </>
+        <button
+          className="action-pill"
+          onClick={onOpenRoi}
+          title="Región de interés"
+          aria-label="Región de interés"
+        >
+          <IconPolygon aria-hidden="true" />
+        </button>
       )}
       {state.orthoMode === "rgb" && (
         <>
