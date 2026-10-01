@@ -866,9 +866,9 @@ export function MapView() {
         ? Boolean(map.ndviAnalysis.roiResponse)
         : map.indexAnalyses.some((analysis) => analysis.name === indexName);
     setPrescriptionError(
-      map.state.orthomosaicId && ready
+      map.state.orthoMode === "multispectral" && map.cropAvailable && ready
         ? null
-        : "Selecciona un ROI, recórtalo y abre su histograma NDVI antes de generar la prescripción.",
+        : `Selecciona y recorta un ROI multiespectral; después activa ${indexName} para generar la zonificación.`,
     );
     setPrescriptionOpen(true);
   };
@@ -1070,11 +1070,15 @@ export function MapView() {
         error={prescriptionError}
         zoning={map.zoning}
         prescription={map.prescription}
-        prescriptionAreaReady={map.prescriptionAreaReady}
+        prescriptionAreaReady={map.prescriptionAreaReady || (map.state.orthoMode === "multispectral" && map.cropAvailable)}
+        areaFromRoi={!map.prescriptionAreaReady && map.state.orthoMode === "multispectral" && map.cropAvailable}
         onDrawArea={() => {
-          setPrescriptionOpen(false);
-          setPrescriptionError(null);
-          map.drawPrescriptionArea(() => setPrescriptionOpen(true));
+          if (map.drawPrescriptionArea(() => setPrescriptionOpen(true))) {
+            setPrescriptionOpen(false);
+            setPrescriptionError(null);
+          } else {
+            setPrescriptionError("Selecciona y recorta un ROI multiespectral antes de dibujar otra área.");
+          }
         }}
         onGenerateZoning={generateZoning}
         onPreviewZoning={previewZoning}

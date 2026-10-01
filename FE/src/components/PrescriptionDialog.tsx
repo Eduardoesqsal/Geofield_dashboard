@@ -66,6 +66,7 @@ interface PrescriptionDialogProps {
   zoning: NdviZoningResponse | null;
   prescription: PrescriptionMapResponse | null;
   prescriptionAreaReady: boolean;
+  areaFromRoi: boolean;
   onDrawArea: () => void;
   onGenerateZoning: (
     zoneCount: number,
@@ -277,6 +278,7 @@ export function PrescriptionDialog({
   zoning,
   prescription,
   prescriptionAreaReady,
+  areaFromRoi,
   onDrawArea,
   onGenerateZoning,
   onPreviewZoning,
@@ -539,11 +541,6 @@ export function PrescriptionDialog({
   };
 
   const handleGenerateZoning = async () => {
-    if (needsRotationDecision) {
-      setMobileCollapsed(false);
-      setRotationMode(true);
-      return;
-    }
     await generateZoningWithAngle(gridAngleDeg);
   };
 
@@ -781,12 +778,14 @@ export function PrescriptionDialog({
                 <span>
                   <strong>
                     {prescriptionAreaReady
-                      ? "Zona de cultivo delimitada"
+                      ? areaFromRoi ? "Dibujar otra área (opcional)" : "Zona de cultivo delimitada"
                       : "Dibujar zona de cultivo"}
                   </strong>
                   <small>
                     {prescriptionAreaReady
-                      ? "Puedes redibujar el poligono antes de generar."
+                      ? areaFromRoi
+                        ? "Si no dibujas otra área, la zonificación usa el ROI recortado."
+                        : "Puedes redibujar el poligono antes de generar."
                       : "Traza el limite que se usara para calcular la prescripcion."}
                   </small>
                 </span>
@@ -1244,7 +1243,7 @@ export function PrescriptionDialog({
             <button
               type="button"
               className="prescription-generate"
-              disabled={busy || cellSizeM < 1 || cellSizeM > 50}
+              disabled={busy || !prescriptionAreaReady || cellSizeM < 1 || cellSizeM > 50}
               onClick={() => void handleGenerateZoning()}
             >
               {busy ? (
@@ -1254,9 +1253,7 @@ export function PrescriptionDialog({
               )}
               {busy
                 ? "Generando zonificacion..."
-                : needsRotationDecision
-                  ? "Definir rotacion"
-                  : `Generar zonificacion ${activeIndexName}`}
+                : `Generar zonificacion ${activeIndexName}`}
             </button>
           ) : shouldRegenerateZoning ? (
             <button
